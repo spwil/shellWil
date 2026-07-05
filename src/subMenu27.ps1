@@ -5,10 +5,10 @@
             #cabecera con informacion del autor
             cabecera
             Write-Header " 27. #####)) Herramientas en INTERNET - ONLINE #####"
-            Write-Host "  1. Revision Teclado PC online - wikiversus.com"
+            Write-Host "  1. Revision TECLADO PC online - wikiversus.com"
             Write-Host "  2. Revision Teclado PC online - https://en.key-test.ru"
             Write-Host "  3. Revision Teclado PC online - https://www.onlinemictest.com/es/prueba-de-teclado"
-            Write-Host "  4. Revisar Mouse PC online - https://keyboardtester.co/mouse-click-tester"
+            Write-Host "  4. Revisar MOUSE PC online - https://keyboardtester.co/mouse-click-tester"
             Write-Host "  5. Web Recortar Videos - https://online-video-cutter.com/es."
             Write-Host "  ------------------------------------------------------"
             Write-Host "  10. Testear Monitor PC - https://www.eizo.be/monitor-test."
