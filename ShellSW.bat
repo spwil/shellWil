@@ -1,4 +1,4 @@
-<# :
+﻿<# :
 @echo off
 :: Guardamos la ruta exacta antes de entrar a PowerShell, estos fragmentos son para que que powershell se ejecute en una extension .bat;; Script Híbrido (Polyglot)
 set "SCRIPT_PATH=%~f0"
@@ -81,8 +81,33 @@ function cabecera {
 }
 #************************************************** FIN CABECERA ******************************************************************
 
+function psReconstruirSiDesarrollo {
+    $ruta = $env:SCRIPT_PATH
+    if ($ruta) {
+        # Resolver el directorio padre
+        $parentDir = Split-Path $ruta
+        $buildScript = Join-Path $parentDir "build.ps1"
+        if (Test-Path $buildScript) {
+            Write-Host "`n[DEV] Entorno de desarrollo detectado." -ForegroundColor Yellow
+            Write-Host "[DEV] Ejecutando build.ps1 para actualizar ShellSW.bat..." -ForegroundColor Yellow
+            try {
+                # Iniciar la reconstrucción de forma síncrona
+                $p = Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$buildScript`"" -NoNewWindow -PassThru -Wait
+                if ($p.ExitCode -eq 0) {
+                    Write-Host "[DEV] Reconstruccion completa y exitosa." -ForegroundColor Green
+                } else {
+                    Write-Host "[DEV] Error en la reconstruccion (Codigo de salida: $($p.ExitCode))." -ForegroundColor Red
+                }
+            } catch {
+                Write-Host "[DEV] Fallo al ejecutar el script de ensamblado: $_" -ForegroundColor Red
+            }
+        }
+    }
+}
+
 #******************************************************** SUB MENU.20 *************************************************************
 #**********************************************************************************************************************************
+
 function psSubMenu20 {
     $salirSub = $false
     do {
@@ -4407,6 +4432,9 @@ function psSubMenu25 {
 
                     Write-Host "`n[!] Reiniciando herramienta..." -ForegroundColor Cyan
 
+                    # Si estamos en entorno de desarrollo, reconstruir primero
+                    psReconstruirSiDesarrollo
+
                     # Start-Sleep -Milliseconds 500
                     Start-Sleep -Seconds 2
                     
@@ -5072,6 +5100,9 @@ function psSubMenu26 {
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op26"
 
                     Write-Host "`n[!] Reiniciando herramienta..." -ForegroundColor Cyan
+
+                    # Si estamos en entorno de desarrollo, reconstruir primero
+                    psReconstruirSiDesarrollo
 
                     # Start-Sleep -Milliseconds 500
                     Start-Sleep -Seconds 2
@@ -5831,6 +5862,9 @@ function menuPrincipal {
                         cabecera
                         Write-Host "`n[!] Reiniciando herramienta..." -ForegroundColor Cyan
 
+                        # Si estamos en entorno de desarrollo, reconstruir primero
+                        psReconstruirSiDesarrollo
+
                         # Start-Sleep -Milliseconds 500
                         Start-Sleep -Seconds 2
                         
@@ -5896,6 +5930,7 @@ function menuPrincipal {
 }
 #************************************************* FIN PRINCIPAL ******************************************************************
 #**********************************************************************************************************************************
+
 
 # Ejecutar el MENU PRINCIPAL
 menuPrincipal
