@@ -34,12 +34,12 @@ function menuPrincipal {
             Write-Host "  10. Ping Infraestructura"
             Write-Host "  11. Revisar Unidades (CHKDSK) - Reparar, localizar y desmontar - chkdsk.exe /F /R /X." -ForegroundColor DarkCyan
             Write-Host "  12. Mostrar Todo el Contenido de UNIDAD (ATTRIB)."
-            Write-Host "  13. Abrir Google Chrome con Buscador (Modo Incognito)."
+            Write-Host "  13. Abrir Google CHROME con Buscador (Modo Incognito)."
             Write-Host "  14. Abrir Propiedades de INTERNET EXPLORER."
             Write-Host "  15. Cerrar Proceso Explorer.exe (explorer)." -ForegroundColor DarkCyan
             Write-Host "  16. Abrir Proceso Explorer.exe (explorer)."
             Write-Host "  17. Abrir Administrador de Tareas (taskmgr)."
-            Write-Host "  18. Abrir Simbolo de Sistema (cmd)."
+            Write-Host "  18. Abrir Simbolo de SISTEMA (cmd)."
             Write-Host "  19. Abrir PowerShell Administrador"
             Write-Host "  20. -----)) INFORMACION SISTEMA CMD [RAM] [HDD] - DISM - RESETEAR RED."
             Write-Host "  21. -----)) VENTANAS ADMINISTRACION WINDOWS - ANTIVIRUS."
