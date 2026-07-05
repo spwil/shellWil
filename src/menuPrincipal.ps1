@@ -17,14 +17,14 @@ function menuPrincipal {
 
             Write-Header " ESTA HERRAMIENTA REALIZA CAMBIOS EN EL SISTEMA OPERATIVO"
             #Write-Host "======================================================================" -ForegroundColor Cyan -BackgroundColor Black
-            Write-Host "  1.  Mostrar IP Local (Ipconfig)"
-            Write-Host "  2.  Mostrar Nombre (Hostname)"
+            Write-Host "  1.  Mostrar IP LOCAL (Ipconfig)"
+            Write-Host "  2.  Mostrar Nombre (HOSTNAME)"
             Write-Host "  3.  Desfragmentar Unidad C: (Principal)" -ForegroundColor DarkCyan
             Write-Host "  4.  Desfragmentar Otras Unidades (HDD)"
             Write-Host "    4.1 Optimizar Unidades de SSD (alternativa a defrag)."
             Write-Host "  5.  Eliminar Archivos Temporales S.O." -ForegroundColor DarkCyan
             Write-Host "  6.  Liberar Recursos" -ForegroundColor Green
-            Write-Host "    6.1 Eliminar Archivos Temporales Carpetas" -ForegroundColor DarkCyan
+            Write-Host "    6.1 Eliminar Archivos TEMPORALES CARPETAS" -ForegroundColor DarkCyan
             Write-Host "    6.2 Eliminar Archivos Temporales ProgramData." -ForegroundColor DarkCyan
             Write-Host "    6.3 Liberar RAM." -ForegroundColor DarkCyan
             Write-Host "    6.4 Liberar Procesador." -ForegroundColor DarkCyan
@@ -369,7 +369,7 @@ function menuPrincipal {
                             # start: abre nueva ventana
                             # cmd /k: ejecuta el comando y mantiene la ventana abierta
                             # ping -t: ping continuo en CMD
-                            start cmd.exe "/k ping $ip -t"
+                            Start-Process cmd.exe "/k ping $ip -t"
                         }
 
                         Write-Host ""
