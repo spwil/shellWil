@@ -15,7 +15,7 @@ function menuPrincipal {
             #cabecera con informacion del autor
             cabecera
 
-            Write-Header " ESTA HERRAMIENTA REALIZA CAMBIOS EN EL SISTEMA OPERATIVO"
+            Write-Header " ATENCION: ESTA HERRAMIENTA REALIZA CAMBIOS EN EL SISTEMA OPERATIVO"
             #Write-Host "======================================================================" -ForegroundColor Cyan -BackgroundColor Black
             Write-Host "  1.  Mostrar IP LOCAL (Ipconfig)"
             Write-Host "  2.  Mostrar Nombre (HOSTNAME)"
