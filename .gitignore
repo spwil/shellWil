@@ -1,0 +1,15 @@
+# Ignorar archivos temporales comunes de Windows y PowerShell
+*.log
+*.tmp
+*.bak
+*.temp
+
+# Ignorar volcados de memoria y reportes
+*.dmp
+*.xml
+
+# Ignorar carpetas de editores o herramientas locales
+.vscode/
+.idea/
+.agents/
+scratch/
