@@ -67,9 +67,10 @@ function cabecera {
     $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
     $fecha = Get-Date -Format "dd/MM/yyyy HH:mm:ss"
 
+    # Datos de ejecucion
     Write-Host " SO: $($os.Caption) ; Version S.O.: $($os.Version)"  -ForegroundColor Cyan
     Write-Host " Usuario: $user  ;  Fecha:   $fecha"  -ForegroundColor Cyan
-    Write-Host " Ing. Wilson Yucra - Soft. Administracion y Gestion del Sistema Operativo" -ForegroundColor Cyan
+    Write-Host " Ing. Wilson Yucra - Soft. Administrador y Gestion del Sistema Operativo" -ForegroundColor Cyan
     Write-Host " ------------------------------------------------------------------------"  -ForegroundColor Cyan
 }
 #************************************************** FIN CABECERA ******************************************************************
