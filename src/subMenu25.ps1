@@ -29,6 +29,16 @@ function psSubMenu25 {
             Write-Host "    10.1 Impresora HABILITADO en PC REMOTA" -ForegroundColor Cyan
             Write-Host "    10.2 Mostrar Impresoras con P.S. en PC Remota."
             Write-Host "  ----------------------------------------"
+            Write-Host "  11. Habilitacion de RSAT - LOCAL"
+            Write-Host "    11.1 Habilitar ejecucion remota y de scripts (Local)" -ForegroundColor Cyan
+            Write-Host "    11.2 Denegar/Deshabilitar ejecucion remota (Local)" -ForegroundColor Yellow
+            Write-Host "    11.3 Instalar todos los componentes de RSAT (Local)" -ForegroundColor Green
+            Write-Host "  ----------------------------------------"
+            Write-Host "  12. Habilitacion de RSAT - REMOTO"
+            Write-Host "    12.1 Habilitar ejecucion de scripts (Remoto)" -ForegroundColor Cyan
+            Write-Host "    12.2 Denegar/Deshabilitar ejecucion de scripts (Remoto)" -ForegroundColor Yellow
+            Write-Host "    12.3 Instalar todos los componentes de RSAT (Remoto)" -ForegroundColor Green
+            Write-Host "  ----------------------------------------"
             Write-Host "  30. REFRESH." -ForegroundColor Red
             Write-Host ""
             Write-Host "  0. V O L V E R   A L   M E N U    P R I N C I P A L"
@@ -1539,22 +1549,246 @@ function psSubMenu25 {
                 "11" { 
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
+                    Write-Host "Por favor seleccione una sub-opcion especifica (11.1, 11.2 o 11.3)" -ForegroundColor Yellow
+                }
 
+                "11.1" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
+                    Write-Host "Habilitando ejecucion remota y de scripts localmente..." -ForegroundColor Cyan
                     
-                    
-                    Write-Host " "
-                    Read-Host "Presione ENTER para continuar..."
+                    # 1. Habilitar PSRemoting sin verificación de red pública
+                    try {
+                        Write-Host "Iniciando servicio WinRM (PSRemoting)..." -ForegroundColor Gray
+                        Enable-PSRemoting -SkipNetworkProfileCheck -Force -ErrorAction Stop
+                        Write-Host "[OK] PSRemoting habilitado localmente." -ForegroundColor Green
+                    } catch {
+                        Write-Host "ADVERTENCIA: No se pudo habilitar PSRemoting localmente." -ForegroundColor Yellow
+                        Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
+                    }
 
+                    # 2. Configurar ExecutionPolicy con escalamiento de ámbitos
+                    try {
+                        Write-Host "Estableciendo politica de ejecucion a RemoteSigned (LocalMachine)..." -ForegroundColor Gray
+                        Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force -ErrorAction Stop
+                        Write-Host "[OK] Politica establecida a RemoteSigned para LocalMachine." -ForegroundColor Green
+                    } catch {
+                        Write-Host "Restriccion detectada para LocalMachine. Intentando para CurrentUser..." -ForegroundColor Yellow
+                        try {
+                            Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force -ErrorAction Stop
+                            Write-Host "[OK] Politica establecida a RemoteSigned para CurrentUser." -ForegroundColor Green
+                        } catch {
+                            Write-Host "GPO bloquea cambios de politica de ejecucion persistentes." -ForegroundColor Red
+                            Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
+                            Write-Host "Intentando habilitar temporalmente para este proceso..." -ForegroundColor Cyan
+                            Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
+                            Write-Host "[OK] Politica establecida a Bypass para el proceso actual." -ForegroundColor Green
+                        }
+                    }
+                }
+
+                "11.2" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
+                    Write-Host "Deshabilitando ejecucion remota y de scripts localmente..." -ForegroundColor Cyan
+                    
+                    # 1. Deshabilitar PSRemoting
+                    try {
+                        Write-Host "Deteniendo y deshabilitando servicio WinRM..." -ForegroundColor Gray
+                        Disable-PSRemoting -Force -ErrorAction Stop
+                        Write-Host "[OK] PSRemoting deshabilitado localmente." -ForegroundColor Green
+                    } catch {
+                        Write-Host "ADVERTENCIA: No se pudo deshabilitar PSRemoting localmente." -ForegroundColor Yellow
+                        Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
+                    }
+
+                    # 2. Configurar ExecutionPolicy a Restricted
+                    try {
+                        Write-Host "Estableciendo politica de ejecucion a Restricted (LocalMachine)..." -ForegroundColor Gray
+                        Set-ExecutionPolicy -ExecutionPolicy Restricted -Scope LocalMachine -Force -ErrorAction Stop
+                        Write-Host "[OK] Politica establecida a Restricted para LocalMachine." -ForegroundColor Green
+                    } catch {
+                        Write-Host "Restriccion detectada para LocalMachine. Intentando para CurrentUser..." -ForegroundColor Yellow
+                        try {
+                            Set-ExecutionPolicy -ExecutionPolicy Restricted -Scope CurrentUser -Force -ErrorAction Stop
+                            Write-Host "[OK] Politica establecida a Restricted para CurrentUser." -ForegroundColor Green
+                        } catch {
+                            Write-Host "GPO bloquea cambios de politica de ejecucion." -ForegroundColor Red
+                            Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
+                        }
+                    }
+                }
+
+                "11.3" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
+                    Write-Host "Buscando componentes de RSAT localmente..." -ForegroundColor Cyan
+                    try {
+                        $capabilities = Get-WindowsCapability -Online | Where-Object { $_.Name -like "Rsat.*" -and $_.State -eq "NotPresent" }
+                        if ($capabilities.Count -eq 0) {
+                            Write-Host "Todos los componentes de RSAT ya estan instalados." -ForegroundColor Green
+                        } else {
+                            Write-Host "Se encontraron $($capabilities.Count) componentes para instalar." -ForegroundColor Cyan
+                            foreach ($cap in $capabilities) {
+                                Write-Host "Instalando $($cap.Name)..." -ForegroundColor Yellow
+                                Add-WindowsCapability -Online -Name $cap.Name | Out-Null
+                                Write-Host "Instalado: $($cap.Name)" -ForegroundColor Green
+                            }
+                            Write-Host "Instalacion de RSAT completada." -ForegroundColor Green
+                        }
+                    } catch {
+                        Write-Host "Error al instalar RSAT localmente: $($_.Exception.Message)" -ForegroundColor Red
+                    }
                 }
 
                 "12" { 
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
+                    Write-Host "Por favor seleccione una sub-opcion especifica (12.1, 12.2 o 12.3)" -ForegroundColor Yellow
+                }
 
-                                        
-                    Write-Host " "
-                    Read-Host "Presione ENTER para continuar..."
+                "12.1" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
+                    $baseIP = "192.168.176."
+                    $ultimoOcteto = Read-Host "Ingrese el ultimo octeto de la IP (192.168.176.XXX) o IP completa"
+                    if ($ultimoOcteto -eq "") { 
+                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                    } else {
+                        $ipRemota = if ($ultimoOcteto -match "\.") { $ultimoOcteto } else { $baseIP + $ultimoOcteto }
+                        
+                        Write-Host "Habilitando ejecucion remota en $ipRemota..." -ForegroundColor Cyan
+                        $process = Get-WmiObject -List -ComputerName $ipRemota -Class Win32_Process -ErrorAction SilentlyContinue
+                        if ($process) {
+                            $cmd = "powershell.exe -NoProfile -Command `"try { Enable-PSRemoting -SkipNetworkProfileCheck -Force } catch {}; try { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force } catch { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force }`""
+                            $result = $process.Create($cmd)
+                            if ($result.ReturnValue -eq 0) {
+                                Write-Host "Comando de habilitacion enviado correctamente via WMI. Esperando 5 segundos..." -ForegroundColor Green
+                                Start-Sleep -Seconds 5
+                            } else {
+                                Write-Host "Error al crear proceso via WMI (Codigo: $($result.ReturnValue))." -ForegroundColor Red
+                            }
+                        } else {
+                            Write-Host "WMI no responde. Intentando via PsExec si esta disponible..." -ForegroundColor Yellow
+                            $psexecPath = "C:\PSTools\PsExec.exe"
+                            if (Test-Path $psexecPath) {
+                                $arg = "\\$ipRemota -accepteula -s powershell.exe -NoProfile -Command `"try { Enable-PSRemoting -SkipNetworkProfileCheck -Force } catch {}; try { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force } catch { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force }`""
+                                Start-Process -FilePath $psexecPath -ArgumentList $arg -Wait -NoNewWindow
+                                Write-Host "Comando enviado via PsExec." -ForegroundColor Green
+                            } else {
+                                Write-Host "ERROR: No se pudo conectar via WMI ni se encontro PsExec en C:\PSTools\PsExec.exe" -ForegroundColor Red
+                            }
+                        }
+                    }
+                }
 
+                "12.2" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
+                    $baseIP = "192.168.176."
+                    $ultimoOcteto = Read-Host "Ingrese el ultimo octeto de la IP (192.168.176.XXX) o IP completa"
+                    if ($ultimoOcteto -eq "") { 
+                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                    } else {
+                        $ipRemota = if ($ultimoOcteto -match "\.") { $ultimoOcteto } else { $baseIP + $ultimoOcteto }
+                        
+                        Write-Host "Deshabilitando ejecucion remota en $ipRemota..." -ForegroundColor Cyan
+                        $process = Get-WmiObject -List -ComputerName $ipRemota -Class Win32_Process -ErrorAction SilentlyContinue
+                        if ($process) {
+                            $cmd = "powershell.exe -NoProfile -Command `"try { Disable-PSRemoting -Force } catch {}; try { Set-ExecutionPolicy -ExecutionPolicy Restricted -Scope LocalMachine -Force } catch { Set-ExecutionPolicy -ExecutionPolicy Restricted -Scope CurrentUser -Force }`""
+                            $result = $process.Create($cmd)
+                            if ($result.ReturnValue -eq 0) {
+                                Write-Host "Comando de deshabilitacion enviado correctamente via WMI. Esperando 5 segundos..." -ForegroundColor Green
+                                Start-Sleep -Seconds 5
+                            } else {
+                                Write-Host "Error al crear proceso via WMI (Codigo: $($result.ReturnValue))." -ForegroundColor Red
+                            }
+                        } else {
+                            Write-Host "WMI no responde. Intentando via PsExec si esta disponible..." -ForegroundColor Yellow
+                            $psexecPath = "C:\PSTools\PsExec.exe"
+                            if (Test-Path $psexecPath) {
+                                $arg = "\\$ipRemota -accepteula -s powershell.exe -NoProfile -Command `"try { Disable-PSRemoting -Force } catch {}; try { Set-ExecutionPolicy -ExecutionPolicy Restricted -Scope LocalMachine -Force } catch { Set-ExecutionPolicy -ExecutionPolicy Restricted -Scope CurrentUser -Force }`""
+                                Start-Process -FilePath $psexecPath -ArgumentList $arg -Wait -NoNewWindow
+                                Write-Host "Comando enviado via PsExec." -ForegroundColor Green
+                            } else {
+                                Write-Host "ERROR: No se pudo conectar via WMI ni se encontro PsExec en C:\PSTools\PsExec.exe" -ForegroundColor Red
+                            }
+                        }
+                    }
+                }
+
+                "12.3" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
+                    $baseIP = "192.168.176."
+                    $ultimoOcteto = Read-Host "Ingrese el ultimo octeto de la IP (192.168.176.XXX), IP completa o Nombre de Equipo"
+                    if ($ultimoOcteto -eq "") { 
+                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                    } else {
+                        # Determinar si es IP o Hostname directamente
+                        $targetMachine = ""
+                        $ipRemota = ""
+                        
+                        if ($ultimoOcteto -match "^[a-zA-Z]") {
+                            # Es un hostname directo
+                            $targetMachine = $ultimoOcteto
+                            Write-Host "Usando Nombre de Equipo proporcionado: $targetMachine" -ForegroundColor Green
+                        } else {
+                            # Es un octeto o IP
+                            $ipRemota = if ($ultimoOcteto -match "\.") { $ultimoOcteto } else { $baseIP + $ultimoOcteto }
+                            Write-Host "Direccion IP de destino: $ipRemota" -ForegroundColor Cyan
+                            
+                            # Intentar resolver a Hostname para Kerberos / WinRM
+                            Write-Host "Resolviendo nombre de equipo (Hostname) necesario para WinRM..." -ForegroundColor Cyan
+                            try {
+                                # 1. Intento por WMI (RPC/DCOM)
+                                $sys = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $ipRemota -ErrorAction Stop
+                                $targetMachine = $sys.CSName
+                                Write-Host "Nombre de equipo resuelto exitosamente via WMI: $targetMachine" -ForegroundColor Green
+                            } catch {
+                                try {
+                                    # 2. Fallback a DNS reverso
+                                    $targetMachine = [System.Net.Dns]::GetHostEntry($ipRemota).HostName
+                                    Write-Host "Nombre de equipo resuelto via DNS: $targetMachine" -ForegroundColor Green
+                                } catch {
+                                    # 3. Fallback manual si falla la resolucion automatica
+                                    Write-Host "ADVERTENCIA: No se pudo resolver la IP a un Nombre de Equipo automaticamente." -ForegroundColor Yellow
+                                    Write-Host "WinRM requiere el NOMBRE DE EQUIPO en un dominio AD para autenticar." -ForegroundColor Yellow
+                                    $manualHost = Read-Host "Ingrese el NOMBRE DE EQUIPO (Hostname) del equipo remoto manualmente"
+                                    if ($manualHost -ne "") {
+                                        $targetMachine = $manualHost
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if ([string]::IsNullOrEmpty($targetMachine)) {
+                            Write-Host "ERROR: Se requiere un nombre de equipo para continuar." -ForegroundColor Red
+                        } else {
+                            Write-Host "Iniciando instalacion de todos los componentes RSAT en $targetMachine..." -ForegroundColor Cyan
+                            try {
+                                Invoke-Command -ComputerName $targetMachine -ScriptBlock {
+                                    Write-Output "Buscando componentes de RSAT..."
+                                    $capabilities = Get-WindowsCapability -Online | Where-Object { $_.Name -like "Rsat.*" -and $_.State -eq "NotPresent" }
+                                    if ($capabilities.Count -eq 0) {
+                                        Write-Output "Todos los componentes de RSAT ya estan instalados."
+                                    } else {
+                                        Write-Output "Se encontraron $($capabilities.Count) componentes para instalar."
+                                        foreach ($cap in $capabilities) {
+                                            Write-Output "Instalando $($cap.Name)..."
+                                            Add-WindowsCapability -Online -Name $cap.Name | Out-Null
+                                            Write-Output "Instalado: $($cap.Name)"
+                                        }
+                                        Write-Output "Instalacion de RSAT completada."
+                                    }
+                                } -ErrorAction Stop
+                            } catch {
+                                Write-Host "ERROR al ejecutar Invoke-Command en $targetMachine." -ForegroundColor Red
+                                Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
+                                Write-Host "Asegurese de que la ejecucion remota este habilitada y tenga permisos de administrador." -ForegroundColor Yellow
+                            }
+                        }
+                    }
                 }
 
                 "13" { 

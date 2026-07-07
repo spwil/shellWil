@@ -4,7 +4,7 @@ Herramienta híbrida (Batch + PowerShell) diseñada para optimizar, diagnosticar
 
 ## 🧑‍💻 Autoría y Versión
 * **Autor**: Ing. Wilson Yucra - spWil
-* **Versión**: 1.6.0
+* **Versión**: 1.7.0
 * **Derechos**: Derechos Reservados © spWil
 
 ---

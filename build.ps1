@@ -23,6 +23,7 @@ $modules = @(
     "subMenu25.ps1",
     "subMenu26.ps1",
     "subMenu27.ps1",
+    "subMenu28.ps1",
     "menuPrincipal.ps1"
 )
 
@@ -38,7 +39,8 @@ foreach ($module in $modules) {
             $content += "`r`n"
         }
         $content += $moduleContent
-    } else {
+    }
+    else {
         Write-Error "Error: No se encontró el módulo $modulePath"
         exit 1
     }
@@ -50,9 +52,10 @@ if (-not $content.EndsWith("`r`n") -and -not $content.EndsWith("`n")) {
 }
 $content += "`r`n# Ejecutar el MENU PRINCIPAL`r`nmenuPrincipal`r`n"
 
-# 5. Escribir el archivo compilado en formato UTF-8
+# 5. Escribir el archivo compilado en formato UTF-8 sin BOM (evita error '´╗┐' en CMD)
 # Resolvemos la ruta de destino absoluta
 $absoluteTarget = [System.IO.Path]::GetFullPath($targetFile)
-[System.IO.File]::WriteAllText($absoluteTarget, $content, [System.Text.Encoding]::UTF8)
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($absoluteTarget, $content, $utf8NoBom)
 
-Write-Host "Compilación exitosa. Archivo generado: $targetFile`n" -ForegroundColor Green
+Write-Host "Compilacion EXITOSA. Archivo generado: $targetFile`n" -ForegroundColor Green

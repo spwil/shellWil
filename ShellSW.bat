@@ -1,4 +1,4 @@
-﻿<# :
+<# :
 @echo off
 :: Guardamos la ruta exacta antes de entrar a PowerShell, estos fragmentos son para que que powershell se ejecute en una extension .bat;; Script Híbrido (Polyglot)
 set "SCRIPT_PATH=%~f0"
@@ -69,7 +69,7 @@ function menuOpcion {
 function cabecera {
 
     Clear-Host
-    $Host.UI.RawUI.WindowTitle = "Bienvenido: $env:COMPUTERNAME\$env:USERNAME ;; Copyright  spWil Derechos Reservados ;; Version 1.6.0"
+    $Host.UI.RawUI.WindowTitle = "Bienvenido: $env:COMPUTERNAME\$env:USERNAME ;; Copyright  spWil Derechos Reservados ;; Version 1.7.0"
     $os = Get-WmiObject Win32_OperatingSystem
     $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
     $fecha = Get-Date -Format "dd/MM/yyyy HH:mm:ss"
@@ -2889,6 +2889,16 @@ function psSubMenu25 {
             Write-Host "    10.1 Impresora HABILITADO en PC REMOTA" -ForegroundColor Cyan
             Write-Host "    10.2 Mostrar Impresoras con P.S. en PC Remota."
             Write-Host "  ----------------------------------------"
+            Write-Host "  11. Habilitacion de RSAT - LOCAL"
+            Write-Host "    11.1 Habilitar ejecucion remota y de scripts (Local)" -ForegroundColor Cyan
+            Write-Host "    11.2 Denegar/Deshabilitar ejecucion remota (Local)" -ForegroundColor Yellow
+            Write-Host "    11.3 Instalar todos los componentes de RSAT (Local)" -ForegroundColor Green
+            Write-Host "  ----------------------------------------"
+            Write-Host "  12. Habilitacion de RSAT - REMOTO"
+            Write-Host "    12.1 Habilitar ejecucion de scripts (Remoto)" -ForegroundColor Cyan
+            Write-Host "    12.2 Denegar/Deshabilitar ejecucion de scripts (Remoto)" -ForegroundColor Yellow
+            Write-Host "    12.3 Instalar todos los componentes de RSAT (Remoto)" -ForegroundColor Green
+            Write-Host "  ----------------------------------------"
             Write-Host "  30. REFRESH." -ForegroundColor Red
             Write-Host ""
             Write-Host "  0. V O L V E R   A L   M E N U    P R I N C I P A L"
@@ -4399,22 +4409,246 @@ function psSubMenu25 {
                 "11" { 
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
+                    Write-Host "Por favor seleccione una sub-opcion especifica (11.1, 11.2 o 11.3)" -ForegroundColor Yellow
+                }
 
+                "11.1" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
+                    Write-Host "Habilitando ejecucion remota y de scripts localmente..." -ForegroundColor Cyan
                     
-                    
-                    Write-Host " "
-                    Read-Host "Presione ENTER para continuar..."
+                    # 1. Habilitar PSRemoting sin verificación de red pública
+                    try {
+                        Write-Host "Iniciando servicio WinRM (PSRemoting)..." -ForegroundColor Gray
+                        Enable-PSRemoting -SkipNetworkProfileCheck -Force -ErrorAction Stop
+                        Write-Host "[OK] PSRemoting habilitado localmente." -ForegroundColor Green
+                    } catch {
+                        Write-Host "ADVERTENCIA: No se pudo habilitar PSRemoting localmente." -ForegroundColor Yellow
+                        Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
+                    }
 
+                    # 2. Configurar ExecutionPolicy con escalamiento de ámbitos
+                    try {
+                        Write-Host "Estableciendo politica de ejecucion a RemoteSigned (LocalMachine)..." -ForegroundColor Gray
+                        Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force -ErrorAction Stop
+                        Write-Host "[OK] Politica establecida a RemoteSigned para LocalMachine." -ForegroundColor Green
+                    } catch {
+                        Write-Host "Restriccion detectada para LocalMachine. Intentando para CurrentUser..." -ForegroundColor Yellow
+                        try {
+                            Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force -ErrorAction Stop
+                            Write-Host "[OK] Politica establecida a RemoteSigned para CurrentUser." -ForegroundColor Green
+                        } catch {
+                            Write-Host "GPO bloquea cambios de politica de ejecucion persistentes." -ForegroundColor Red
+                            Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
+                            Write-Host "Intentando habilitar temporalmente para este proceso..." -ForegroundColor Cyan
+                            Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
+                            Write-Host "[OK] Politica establecida a Bypass para el proceso actual." -ForegroundColor Green
+                        }
+                    }
+                }
+
+                "11.2" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
+                    Write-Host "Deshabilitando ejecucion remota y de scripts localmente..." -ForegroundColor Cyan
+                    
+                    # 1. Deshabilitar PSRemoting
+                    try {
+                        Write-Host "Deteniendo y deshabilitando servicio WinRM..." -ForegroundColor Gray
+                        Disable-PSRemoting -Force -ErrorAction Stop
+                        Write-Host "[OK] PSRemoting deshabilitado localmente." -ForegroundColor Green
+                    } catch {
+                        Write-Host "ADVERTENCIA: No se pudo deshabilitar PSRemoting localmente." -ForegroundColor Yellow
+                        Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
+                    }
+
+                    # 2. Configurar ExecutionPolicy a Restricted
+                    try {
+                        Write-Host "Estableciendo politica de ejecucion a Restricted (LocalMachine)..." -ForegroundColor Gray
+                        Set-ExecutionPolicy -ExecutionPolicy Restricted -Scope LocalMachine -Force -ErrorAction Stop
+                        Write-Host "[OK] Politica establecida a Restricted para LocalMachine." -ForegroundColor Green
+                    } catch {
+                        Write-Host "Restriccion detectada para LocalMachine. Intentando para CurrentUser..." -ForegroundColor Yellow
+                        try {
+                            Set-ExecutionPolicy -ExecutionPolicy Restricted -Scope CurrentUser -Force -ErrorAction Stop
+                            Write-Host "[OK] Politica establecida a Restricted para CurrentUser." -ForegroundColor Green
+                        } catch {
+                            Write-Host "GPO bloquea cambios de politica de ejecucion." -ForegroundColor Red
+                            Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
+                        }
+                    }
+                }
+
+                "11.3" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
+                    Write-Host "Buscando componentes de RSAT localmente..." -ForegroundColor Cyan
+                    try {
+                        $capabilities = Get-WindowsCapability -Online | Where-Object { $_.Name -like "Rsat.*" -and $_.State -eq "NotPresent" }
+                        if ($capabilities.Count -eq 0) {
+                            Write-Host "Todos los componentes de RSAT ya estan instalados." -ForegroundColor Green
+                        } else {
+                            Write-Host "Se encontraron $($capabilities.Count) componentes para instalar." -ForegroundColor Cyan
+                            foreach ($cap in $capabilities) {
+                                Write-Host "Instalando $($cap.Name)..." -ForegroundColor Yellow
+                                Add-WindowsCapability -Online -Name $cap.Name | Out-Null
+                                Write-Host "Instalado: $($cap.Name)" -ForegroundColor Green
+                            }
+                            Write-Host "Instalacion de RSAT completada." -ForegroundColor Green
+                        }
+                    } catch {
+                        Write-Host "Error al instalar RSAT localmente: $($_.Exception.Message)" -ForegroundColor Red
+                    }
                 }
 
                 "12" { 
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
+                    Write-Host "Por favor seleccione una sub-opcion especifica (12.1, 12.2 o 12.3)" -ForegroundColor Yellow
+                }
 
-                                        
-                    Write-Host " "
-                    Read-Host "Presione ENTER para continuar..."
+                "12.1" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
+                    $baseIP = "192.168.176."
+                    $ultimoOcteto = Read-Host "Ingrese el ultimo octeto de la IP (192.168.176.XXX) o IP completa"
+                    if ($ultimoOcteto -eq "") { 
+                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                    } else {
+                        $ipRemota = if ($ultimoOcteto -match "\.") { $ultimoOcteto } else { $baseIP + $ultimoOcteto }
+                        
+                        Write-Host "Habilitando ejecucion remota en $ipRemota..." -ForegroundColor Cyan
+                        $process = Get-WmiObject -List -ComputerName $ipRemota -Class Win32_Process -ErrorAction SilentlyContinue
+                        if ($process) {
+                            $cmd = "powershell.exe -NoProfile -Command `"try { Enable-PSRemoting -SkipNetworkProfileCheck -Force } catch {}; try { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force } catch { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force }`""
+                            $result = $process.Create($cmd)
+                            if ($result.ReturnValue -eq 0) {
+                                Write-Host "Comando de habilitacion enviado correctamente via WMI. Esperando 5 segundos..." -ForegroundColor Green
+                                Start-Sleep -Seconds 5
+                            } else {
+                                Write-Host "Error al crear proceso via WMI (Codigo: $($result.ReturnValue))." -ForegroundColor Red
+                            }
+                        } else {
+                            Write-Host "WMI no responde. Intentando via PsExec si esta disponible..." -ForegroundColor Yellow
+                            $psexecPath = "C:\PSTools\PsExec.exe"
+                            if (Test-Path $psexecPath) {
+                                $arg = "\\$ipRemota -accepteula -s powershell.exe -NoProfile -Command `"try { Enable-PSRemoting -SkipNetworkProfileCheck -Force } catch {}; try { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force } catch { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force }`""
+                                Start-Process -FilePath $psexecPath -ArgumentList $arg -Wait -NoNewWindow
+                                Write-Host "Comando enviado via PsExec." -ForegroundColor Green
+                            } else {
+                                Write-Host "ERROR: No se pudo conectar via WMI ni se encontro PsExec en C:\PSTools\PsExec.exe" -ForegroundColor Red
+                            }
+                        }
+                    }
+                }
 
+                "12.2" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
+                    $baseIP = "192.168.176."
+                    $ultimoOcteto = Read-Host "Ingrese el ultimo octeto de la IP (192.168.176.XXX) o IP completa"
+                    if ($ultimoOcteto -eq "") { 
+                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                    } else {
+                        $ipRemota = if ($ultimoOcteto -match "\.") { $ultimoOcteto } else { $baseIP + $ultimoOcteto }
+                        
+                        Write-Host "Deshabilitando ejecucion remota en $ipRemota..." -ForegroundColor Cyan
+                        $process = Get-WmiObject -List -ComputerName $ipRemota -Class Win32_Process -ErrorAction SilentlyContinue
+                        if ($process) {
+                            $cmd = "powershell.exe -NoProfile -Command `"try { Disable-PSRemoting -Force } catch {}; try { Set-ExecutionPolicy -ExecutionPolicy Restricted -Scope LocalMachine -Force } catch { Set-ExecutionPolicy -ExecutionPolicy Restricted -Scope CurrentUser -Force }`""
+                            $result = $process.Create($cmd)
+                            if ($result.ReturnValue -eq 0) {
+                                Write-Host "Comando de deshabilitacion enviado correctamente via WMI. Esperando 5 segundos..." -ForegroundColor Green
+                                Start-Sleep -Seconds 5
+                            } else {
+                                Write-Host "Error al crear proceso via WMI (Codigo: $($result.ReturnValue))." -ForegroundColor Red
+                            }
+                        } else {
+                            Write-Host "WMI no responde. Intentando via PsExec si esta disponible..." -ForegroundColor Yellow
+                            $psexecPath = "C:\PSTools\PsExec.exe"
+                            if (Test-Path $psexecPath) {
+                                $arg = "\\$ipRemota -accepteula -s powershell.exe -NoProfile -Command `"try { Disable-PSRemoting -Force } catch {}; try { Set-ExecutionPolicy -ExecutionPolicy Restricted -Scope LocalMachine -Force } catch { Set-ExecutionPolicy -ExecutionPolicy Restricted -Scope CurrentUser -Force }`""
+                                Start-Process -FilePath $psexecPath -ArgumentList $arg -Wait -NoNewWindow
+                                Write-Host "Comando enviado via PsExec." -ForegroundColor Green
+                            } else {
+                                Write-Host "ERROR: No se pudo conectar via WMI ni se encontro PsExec en C:\PSTools\PsExec.exe" -ForegroundColor Red
+                            }
+                        }
+                    }
+                }
+
+                "12.3" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
+                    $baseIP = "192.168.176."
+                    $ultimoOcteto = Read-Host "Ingrese el ultimo octeto de la IP (192.168.176.XXX), IP completa o Nombre de Equipo"
+                    if ($ultimoOcteto -eq "") { 
+                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                    } else {
+                        # Determinar si es IP o Hostname directamente
+                        $targetMachine = ""
+                        $ipRemota = ""
+                        
+                        if ($ultimoOcteto -match "^[a-zA-Z]") {
+                            # Es un hostname directo
+                            $targetMachine = $ultimoOcteto
+                            Write-Host "Usando Nombre de Equipo proporcionado: $targetMachine" -ForegroundColor Green
+                        } else {
+                            # Es un octeto o IP
+                            $ipRemota = if ($ultimoOcteto -match "\.") { $ultimoOcteto } else { $baseIP + $ultimoOcteto }
+                            Write-Host "Direccion IP de destino: $ipRemota" -ForegroundColor Cyan
+                            
+                            # Intentar resolver a Hostname para Kerberos / WinRM
+                            Write-Host "Resolviendo nombre de equipo (Hostname) necesario para WinRM..." -ForegroundColor Cyan
+                            try {
+                                # 1. Intento por WMI (RPC/DCOM)
+                                $sys = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $ipRemota -ErrorAction Stop
+                                $targetMachine = $sys.CSName
+                                Write-Host "Nombre de equipo resuelto exitosamente via WMI: $targetMachine" -ForegroundColor Green
+                            } catch {
+                                try {
+                                    # 2. Fallback a DNS reverso
+                                    $targetMachine = [System.Net.Dns]::GetHostEntry($ipRemota).HostName
+                                    Write-Host "Nombre de equipo resuelto via DNS: $targetMachine" -ForegroundColor Green
+                                } catch {
+                                    # 3. Fallback manual si falla la resolucion automatica
+                                    Write-Host "ADVERTENCIA: No se pudo resolver la IP a un Nombre de Equipo automaticamente." -ForegroundColor Yellow
+                                    Write-Host "WinRM requiere el NOMBRE DE EQUIPO en un dominio AD para autenticar." -ForegroundColor Yellow
+                                    $manualHost = Read-Host "Ingrese el NOMBRE DE EQUIPO (Hostname) del equipo remoto manualmente"
+                                    if ($manualHost -ne "") {
+                                        $targetMachine = $manualHost
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if ([string]::IsNullOrEmpty($targetMachine)) {
+                            Write-Host "ERROR: Se requiere un nombre de equipo para continuar." -ForegroundColor Red
+                        } else {
+                            Write-Host "Iniciando instalacion de todos los componentes RSAT en $targetMachine..." -ForegroundColor Cyan
+                            try {
+                                Invoke-Command -ComputerName $targetMachine -ScriptBlock {
+                                    Write-Output "Buscando componentes de RSAT..."
+                                    $capabilities = Get-WindowsCapability -Online | Where-Object { $_.Name -like "Rsat.*" -and $_.State -eq "NotPresent" }
+                                    if ($capabilities.Count -eq 0) {
+                                        Write-Output "Todos los componentes de RSAT ya estan instalados."
+                                    } else {
+                                        Write-Output "Se encontraron $($capabilities.Count) componentes para instalar."
+                                        foreach ($cap in $capabilities) {
+                                            Write-Output "Instalando $($cap.Name)..."
+                                            Add-WindowsCapability -Online -Name $cap.Name | Out-Null
+                                            Write-Output "Instalado: $($cap.Name)"
+                                        }
+                                        Write-Output "Instalacion de RSAT completada."
+                                    }
+                                } -ErrorAction Stop
+                            } catch {
+                                Write-Host "ERROR al ejecutar Invoke-Command en $targetMachine." -ForegroundColor Red
+                                Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
+                                Write-Host "Asegurese de que la ejecucion remota este habilitada y tenga permisos de administrador." -ForegroundColor Yellow
+                            }
+                        }
+                    }
                 }
 
                 "13" { 
@@ -5296,6 +5530,320 @@ function psSubMenu27 {
 
 #************************************************ MENU PRINCIPAL ******************************************************************
 #**********************************************************************************************************************************
+function psSubMenu28 {
+    $salirSub = $false
+    do {
+        try {
+            cabecera
+            Write-Header " 28. -----)) GESTION HELPDESK REMOTO -----"
+            Write-Host "  1. Habilitar ejecucion remota de scripts (en PC REMOTA)" -ForegroundColor Cyan
+            Write-Host "  2. Ejecutar GPUPDATE /FORCE en PC REMOTA" -ForegroundColor Yellow
+            Write-Host "  3. Mostrar Caracteristicas de PC Remoto (Info Hardware/OS/Red)" -ForegroundColor Green
+            Write-Host "  ------------------------------------------------------"
+            Write-Host "  0. V O L V E R   A L   M E N U    P R I N C I P A L"
+            Write-Host ""
+            Write-Header "==============================="
+            
+            $op28 = Read-Host "Seleccione la tarea a realizar"
+
+            # Helper para pedir IP / Hostname y resolverlo
+            $obtenerDestino = {
+                $baseIP = "192.168.176."
+                $ultimoOcteto = Read-Host "Ingrese el ultimo octeto de la IP (192.168.176.XXX), IP completa o Nombre de Equipo"
+                if ($ultimoOcteto -eq "") { return $null }
+                
+                $ipRemota = ""
+                $targetMachine = ""
+                
+                if ($ultimoOcteto -match "^[a-zA-Z]") {
+                    # Es un hostname directo
+                    $targetMachine = $ultimoOcteto
+                } else {
+                    # Es un octeto o IP
+                    $ipRemota = if ($ultimoOcteto -match "\.") { $ultimoOcteto } else { $baseIP + $ultimoOcteto }
+                    Write-Host "Resolviendo nombre de equipo (Hostname) necesario para WinRM..." -ForegroundColor Cyan
+                    try {
+                        $sys = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $ipRemota -ErrorAction Stop
+                        $targetMachine = $sys.CSName
+                        Write-Host "Nombre de equipo resuelto: $targetMachine" -ForegroundColor Green
+                    } catch {
+                        try {
+                            $targetMachine = [System.Net.Dns]::GetHostEntry($ipRemota).HostName
+                            Write-Host "Nombre de equipo resuelto via DNS: $targetMachine" -ForegroundColor Green
+                        } catch {
+                            Write-Host "ADVERTENCIA: No se pudo resolver la IP automaticamente." -ForegroundColor Yellow
+                            $manualHost = Read-Host "Ingrese el NOMBRE DE EQUIPO (Hostname) del equipo remoto manualmente"
+                            if ($manualHost -ne "") {
+                                $targetMachine = $manualHost
+                            } else {
+                                $targetMachine = $ipRemota # fallback a la IP
+                            }
+                        }
+                    }
+                }
+                return @{ IP = $ipRemota; Hostname = $targetMachine }
+            }
+
+            switch ($op28) {
+                "1" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op28"
+                    $destino = & $obtenerDestino
+                    if ($destino) {
+                        $target = $destino.Hostname
+                        $ip = if ($destino.IP) { $destino.IP } else { $target }
+                        
+                        Write-Host "Habilitando ejecucion remota de scripts en $target ($ip)..." -ForegroundColor Cyan
+                        
+                        # Usamos WMI primero (RPC/DCOM) por máxima compatibilidad en habilitación inicial
+                        $process = Get-WmiObject -List -ComputerName $ip -Class Win32_Process -ErrorAction SilentlyContinue
+                        if ($process) {
+                            $cmd = "powershell.exe -NoProfile -Command `"try { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force } catch {}; try { Enable-PSRemoting -SkipNetworkProfileCheck -Force } catch {}`""
+                            $result = $process.Create($cmd)
+                            if ($result.ReturnValue -eq 0) {
+                                Write-Host "[OK] Comando de habilitacion enviado correctamente via WMI." -ForegroundColor Green
+                            } else {
+                                Write-Host "Error al enviar comando via WMI (Codigo: $($result.ReturnValue))." -ForegroundColor Red
+                            }
+                        } else {
+                            $psexecPath = "C:\PSTools\PsExec.exe"
+                            if (Test-Path $psexecPath) {
+                                $arg = "\\$ip -accepteula -s powershell.exe -NoProfile -Command `"try { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force } catch {}; try { Enable-PSRemoting -SkipNetworkProfileCheck -Force } catch {}`""
+                                Start-Process -FilePath $psexecPath -ArgumentList $arg -Wait -NoNewWindow
+                                Write-Host "[OK] Comando enviado via PsExec." -ForegroundColor Green
+                            } else {
+                                Write-Host "ERROR: No se pudo conectar via WMI ni se encontro PsExec en C:\PSTools\PsExec.exe" -ForegroundColor Red
+                            }
+                        }
+                    }
+                }
+                "2" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op28"
+                    $destino = & $obtenerDestino
+                    if ($destino) {
+                        $target = $destino.Hostname
+                        $ip = if ($destino.IP) { $destino.IP } else { $target }
+                        
+                        Write-Host "Ejecutando GPUPDATE /FORCE en $target..." -ForegroundColor Cyan
+                        
+                        try {
+                            # Intentamos usar WinRM interactivo para ver los resultados en tiempo real
+                            Invoke-Command -ComputerName $target -ScriptBlock {
+                                gpupdate /force
+                            } -ErrorAction Stop
+                        } catch {
+                            Write-Host "WinRM no disponible. Intentando ejecucion en segundo plano via WMI..." -ForegroundColor Yellow
+                            $process = Get-WmiObject -List -ComputerName $ip -Class Win32_Process -ErrorAction SilentlyContinue
+                            if ($process) {
+                                $result = $process.Create("cmd.exe /c gpupdate /force")
+                                if ($result.ReturnValue -eq 0) {
+                                    Write-Host "[OK] Proceso gpupdate lanzado en segundo plano via WMI." -ForegroundColor Green
+                                } else {
+                                    Write-Host "Error al ejecutar gpupdate via WMI (Codigo: $($result.ReturnValue))." -ForegroundColor Red
+                                }
+                            } else {
+                                $psexecPath = "C:\PSTools\PsExec.exe"
+                                if (Test-Path $psexecPath) {
+                                    & $psexecPath \\$ip -accepteula -s cmd.exe /c "gpupdate /force"
+                                    Write-Host "[OK] GPUPDATE ejecutado via PsExec." -ForegroundColor Green
+                                } else {
+                                    Write-Host "ERROR: No se pudo realizar la conexion." -ForegroundColor Red
+                                }
+                            }
+                        }
+                    }
+                }
+                "3" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op28"
+                    
+                    # Para WMI, preferimos usar la IP si está disponible, o el Hostname
+                    $baseIP = "192.168.176."
+                    $ultimoOcteto = Read-Host "Ingrese el ultimo octeto de la IP (192.168.176.XXX), IP completa o Nombre de Equipo"
+                    if ($ultimoOcteto -ne "") {
+                        $ip = if ($ultimoOcteto -match "^[a-zA-Z]") { $ultimoOcteto } elseif ($ultimoOcteto -match "\.") { $ultimoOcteto } else { $baseIP + $ultimoOcteto }
+                        
+                        Write-Host "`nConsultando caracteristicas extendidas en: $ip..." -ForegroundColor Cyan
+                        try {
+                            # 1. Sistema Operativo y Hostname
+                            $os = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $ip -ErrorAction Stop
+                            $cs = Get-WmiObject -Class Win32_ComputerSystem -ComputerName $ip -ErrorAction Stop
+                            $cpu = Get-WmiObject -Class Win32_Processor -ComputerName $ip -ErrorAction Stop | Select-Object -First 1
+                            
+                            # 2. Determinar Tipo de Arranque (UEFI vs Legacy) y Tabla (GPT vs MBR)
+                            $bootStyle = "LEGACY (BIOS)"
+                            $partitionStyle = "MBR"
+                            
+                            $partitions = Get-WmiObject -Class Win32_DiskPartition -ComputerName $ip -ErrorAction SilentlyContinue
+                            if ($partitions) {
+                                if ($partitions | Where-Object { $_.Type -like "*GPT*" -or $_.Type -like "*EFI*" -or $_.Name -like "*EFI*" }) {
+                                    $bootStyle = "UEFI"
+                                } else {
+                                    if (Test-Path "\\$ip\c$\Windows\Boot\EFI" -ErrorAction SilentlyContinue) {
+                                        $bootStyle = "UEFI"
+                                    }
+                                }
+                                if ($partitions | Where-Object { $_.Type -like "*GPT*" }) {
+                                    $partitionStyle = "GPT"
+                                }
+                            } else {
+                                if (Test-Path "\\$ip\c$\Windows\Boot\EFI" -ErrorAction SilentlyContinue) {
+                                    $bootStyle = "UEFI"
+                                    $partitionStyle = "GPT"
+                                }
+                            }
+                            
+                            # Intentar afinar partición de disco de sistema 0
+                            try {
+                                $bootDisk = Get-WmiObject -Class Win32_DiskDrive -ComputerName $ip | Where-Object { $_.Index -eq 0 } -ErrorAction SilentlyContinue
+                                if ($bootDisk -and $bootDisk.GPTSignature -ne $null) {
+                                    $partitionStyle = "GPT"
+                                }
+                            } catch {}
+
+                            # 3. Detectar Usuario Activo (Local o Dominio)
+                            $activeUser = "Ninguno (Sin sesion activa)"
+                            try {
+                                $explorers = Get-WmiObject -Class Win32_Process -ComputerName $ip -Filter "Name='explorer.exe'" -ErrorAction Stop
+                                if ($explorers) {
+                                    $users = @()
+                                    foreach ($exp in $explorers) {
+                                        $owner = $exp.GetOwner()
+                                        if ($owner.ReturnValue -eq 0) {
+                                            $users += "$($owner.Domain)\$($owner.User)"
+                                        }
+                                    }
+                                    if ($users.Count -gt 0) {
+                                        $activeUser = ($users | Select-Object -Unique) -join ", "
+                                    }
+                                } else {
+                                    if ($cs.UserName) { $activeUser = $cs.UserName }
+                                }
+                            } catch {
+                                if ($cs.UserName) { $activeUser = $cs.UserName }
+                            }
+                            
+                            # 4. Discos Físicos (HDD vs SSD)
+                            $disksInfo = try {
+                                Get-WmiObject -Namespace root\Microsoft\Windows\Storage -Class MSFT_PhysicalDisk -ComputerName $ip -ErrorAction Stop | ForEach-Object {
+                                    $type = if ($_.MediaType -eq 3) { "HDD" } elseif ($_.MediaType -eq 4) { "SSD" } else { "Desconocido" }
+                                    "   - Disco $($_.DeviceId): $($_.Model.Trim()) ($type)"
+                                }
+                            } catch {
+                                Get-WmiObject -Class Win32_DiskDrive -ComputerName $ip | ForEach-Object {
+                                    "   - Disco $($_.Index): $($_.Model.Trim()) (Interfaz: $($_.InterfaceType))"
+                                }
+                            }
+
+                            # 5. Unidades Lógicas disponibles
+                            $logicalDrivesInfo = try {
+                                Get-WmiObject -Class Win32_LogicalDisk -ComputerName $ip -Filter "DriveType=3" -ErrorAction Stop | ForEach-Object {
+                                    $totalGB = [Math]::Round($_.Size / 1GB, 2)
+                                    $freeGB = [Math]::Round($_.FreeSpace / 1GB, 2)
+                                    $pctFree = if ($_.Size -gt 0) { [Math]::Round(($_.FreeSpace / $_.Size) * 100, 1) } else { 0 }
+                                    "   - Unidad $($_.DeviceID) ($($_.VolumeName)) [$($_.FileSystem)] -> Total: $totalGB GB | Libre: $freeGB GB ($pctFree% libre)"
+                                }
+                            } catch {
+                                @("   - No se pudieron consultar las unidades logicas.")
+                            }
+                            
+                            # 6. Adaptadores de Red activos (Detalle completo)
+                            $adaptersInfo = Get-WmiObject -Class Win32_NetworkAdapter -ComputerName $ip | 
+                                Where-Object { $_.PhysicalAdapter -and $_.NetConnectionStatus -eq 2 } | 
+                                ForEach-Object {
+                                    $config = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -ComputerName $ip -Filter "Index=$($_.Index)" -ErrorAction SilentlyContinue
+                                    $ips = "N/A"
+                                    $masks = "N/A"
+                                    $gateways = "N/A"
+                                    $dns = "N/A"
+                                    if ($config) {
+                                        if ($config.IPAddress) { $ips = $config.IPAddress[0] }
+                                        if ($config.IPSubnet) { $masks = $config.IPSubnet[0] }
+                                        if ($config.DefaultIPGateway) { $gateways = $config.DefaultIPGateway -join ", " }
+                                        if ($config.DNSServerSearchOrder) { $dns = $config.DNSServerSearchOrder -join ", " }
+                                    }
+                                    $netType = if ($_.Name -match "Wireless|Wi-Fi|WiFi|802\.11") { "Wi-Fi" } else { "Ethernet" }
+                                    "   - $($_.Name) ($netType)`n     IP: $ips | Mascara: $masks`n     Gateway: $gateways`n     DNS: $dns`n     MAC: $($_.MACAddress)"
+                                }
+
+                            # 7. Gestión de Impresoras (Predeterminada vs Disponibles con Estado)
+                            $defaultPrinterInfo = "Ninguna o sin informacion."
+                            $availablePrinters = @()
+                            try {
+                                $printers = Get-WmiObject -Class Win32_Printer -ComputerName $ip -ErrorAction Stop
+                                if ($printers) {
+                                    foreach ($p in $printers) {
+                                        $estado = if ($p.WorkOffline -or $p.PrinterStatus -eq 7) { "No Activo" } else { "Activo" }
+                                        $desc = "$($p.Name) [Puerto: $($p.PortName)] (Estado: $estado)"
+                                        if ($p.Default) {
+                                            $defaultPrinterInfo = $desc
+                                        } else {
+                                            $availablePrinters += "   - $desc"
+                                        }
+                                    }
+                                }
+                            } catch {
+                                $defaultPrinterInfo = "Error al consultar impresoras."
+                            }
+
+                            # Imprimir Reporte Formateado Completo
+                            Write-Host "`n======================================================================" -ForegroundColor White
+                            Write-Host "          INFORMACION DETALLADA DE SOPORTE REMOTO: $($os.CSName)" -ForegroundColor Green
+                            Write-Host "======================================================================" -ForegroundColor White
+                            Write-Host " Hostname:            $($os.CSName)"
+                            Write-Host " Usuario Activo:      $activeUser" -ForegroundColor Cyan
+                            Write-Host " Sistema de Arranque: $bootStyle ($partitionStyle)" -ForegroundColor Yellow
+                            Write-Host " Sistema Operativo:   $($os.Caption) ($($os.OSArchitecture))"
+                            Write-Host " Version S.O.:        $($os.Version) (Build $($os.BuildNumber))"
+                            Write-Host " Procesador:          $($cpu.Name.Trim())"
+                            Write-Host " Memoria RAM:         $([Math]::Round($cs.TotalPhysicalMemory / 1GB, 2)) GB"
+                            
+                            Write-Host "`n Unidades de Disco Fisico:" -ForegroundColor Green
+                            if ($disksInfo) { $disksInfo | ForEach-Object { Write-Host $_ } } else { Write-Host "   No se detectaron unidades físicas." -ForegroundColor Yellow }
+                            
+                            Write-Host "`n Unidades Logicas Disponibles:" -ForegroundColor Green
+                            if ($logicalDrivesInfo) { $logicalDrivesInfo | ForEach-Object { Write-Host $_ } } else { Write-Host "   No se detectaron unidades lógicas." -ForegroundColor Yellow }
+                            
+                            Write-Host "`n Adaptadores de Red Activos:" -ForegroundColor Green
+                            if ($adaptersInfo) { $adaptersInfo | ForEach-Object { Write-Host $_ } } else { Write-Host "   No se encontraron adaptadores de red activos." -ForegroundColor Yellow }
+                            
+                            Write-Host "`n Gestion de Impresion:" -ForegroundColor Green
+                            Write-Host "  * Impresora Predeterminada:" -ForegroundColor White
+                            Write-Host "    $defaultPrinterInfo" -ForegroundColor Cyan
+                            if ($availablePrinters) {
+                                Write-Host "  * Otras Impresoras Disponibles:" -ForegroundColor White
+                                $availablePrinters | ForEach-Object { Write-Host $_ }
+                            }
+                            Write-Host "======================================================================`n" -ForegroundColor White
+                            
+                        } catch {
+                            Write-Host "ERROR: No se pudo conectar o extraer informacion del equipo $ip." -ForegroundColor Red
+                            Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
+                        }
+                    }
+                }
+                "0" {
+                    menuPrincipal
+                }
+                Default {
+                    Write-Host "Opcion invalida." -ForegroundColor Red
+                }
+            }
+            if (-not $salirSub) { Read-Host "SUB_MENU 28: Presione ENTER para continuar..." }
+        } catch {
+            Write-Host "`n[ERROR NO ESPERADO]: $($_.Exception.Message)" -ForegroundColor Red
+            Read-Host "Presione Enter para continuar..."
+        } finally {
+            [System.GC]::Collect()
+            [System.GC]::WaitForPendingFinalizers()
+            Get-Variable | Where-Object { 
+                $_.Name -notmatch 'salirPrincipal|opcion|SCRIPT_PATH|PWD|PS|HOME|Error|PID' 
+            } | Remove-Variable -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 200
+        }
+    } while (-not $salirSub)
+}
 function menuPrincipal {
     Clear-Host
     $salirPrincipal = $false
@@ -5313,7 +5861,7 @@ function menuPrincipal {
             #cabecera con informacion del autor
             cabecera
 
-            Write-Header " ESTA HERRAMIENTA REALIZA CAMBIOS EN EL SISTEMA OPERATIVO"
+            Write-Header " ATENCION: ESTA HERRAMIENTA REALIZA CAMBIOS EN EL SISTEMA OPERATIVO"
             #Write-Host "======================================================================" -ForegroundColor Cyan -BackgroundColor Black
             Write-Host "  1.  Mostrar IP LOCAL (Ipconfig)"
             Write-Host "  2.  Mostrar Nombre (HOSTNAME)"
@@ -5347,8 +5895,10 @@ function menuPrincipal {
             Write-Host "  25. +++++)) COMANDOS RED - ADMINISTRACION REMOTA +++++" -ForegroundColor Cyan
             Write-Host "  26. =====)) COMANDOS AD =====" -ForegroundColor Cyan
             Write-Host "  27. #####)) Herramientas en INTERNET - ONLINE #####"
-            Write-Host "  28. Apagar PC." -ForegroundColor Green
-            Write-Host "  29. Reiniciar Sistema Operativo (shutdown)." -ForegroundColor Green
+            Write-Host "  28. -----)) GESTION HELPDESK REMOTO -----" -ForegroundColor Cyan
+            Write-Host "  29. *****)) APAGADO Y REINICIADO DE PC *****"
+            Write-Host "    29.1 Apagar PC." -ForegroundColor Green
+            Write-Host "    29.2 Reiniciar Sistema Operativo (shutdown)." -ForegroundColor Green
             Write-Host "  30 Refresh"
             Write-Host "  0.  Salir"
             Write-Host "======================================================================" -ForegroundColor Yellow
@@ -5357,548 +5907,553 @@ function menuPrincipal {
 
             # 3. Bucle Principal
 
-                $opcion = Read-Host "Seleccione una opcion"
+            $opcion = Read-Host "Seleccione una opcion"
 
-                switch ($opcion) {
-                    "1" { 
-                        # Clear-Host 
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
+            switch ($opcion) {
+                "1" { 
+                    # Clear-Host 
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
 
-                        Write-Host "--- Configuracion IP ---" -ForegroundColor Yellow
-                        ipconfig 
+                    Write-Host "--- Configuracion IP ---" -ForegroundColor Yellow
+                    ipconfig 
 
-                        #Read-Host "Presione Enter para volver..."
-                        Write-Host " "
+                    #Read-Host "Presione Enter para volver..."
+                    Write-Host " "
+                }
+                "2" { 
+                    # Clear-Host 
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
+
+                    Write-Host "Nombre del Equipo: $(hostname)" -ForegroundColor Green 
+                    Write-Host " "
+                        
+                }
+                "3" { 
+                    # clear-Host 
+                    cabecera
+                    menuOpcion "Haz elegido la opcion:  $opcion"
+
+                    Write-Host "Desfragmentando C:..." -ForegroundColor Green
+                    DEFRAG.exe C:\ /B /U /V /H
+                    # El parámetro /B en el comando defrag se usa para realizar una optimización de arranque
+                    Write-Host " "
+                }
+                "4" { 
+                    # clear-Host
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
+
+                    # $u = Read-Host "Letra de unidad (ej. D:)"
+                    # if ($u) { defrag $u /U /V } 
+                        
+                    fsutil fsinfo drives
+                    powershell.exe Get-Volume
+                    $unit = Read-Host "Letra de la unidad a desfragmentar y presiona ENTER"
+                    DEFRAG.exe /U /O /V /H ${unit}":"
+                        
+                    # /A /U /V /H
+                        
+                    #Read-Host "Presione Enter para volver..."
+                    Write-Host " "
+                }
+
+                "4.1" { 
+                    # clear-Host
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
+                        
+                    fsutil fsinfo drives
+                    # powershell.exe Get-WmiObject Win32_LogicalDisk
+                    powershell.exe Get-Volume
+                    Write-Host ""
+                    $unidad = Read-Host "Letra de la unidad a desfragmentar y presiona ENTER"
+                    Optimize-Volume -DriveLetter ${unidad} -ReTrim -Verbose
+                        
+                    Write-Host " "
+                }
+                "5" { 
+                    # clear-Host
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
+                        
+                    Write-Host "Iniciando Liberador de espacio (Configuracion 64)..." -ForegroundColor Yellow
+                    try {
+                        # Ejecuta el proceso de limpieza
+                        Start-Process "cleanmgr.exe" -ArgumentList "/sagerun:64" -Wait
+                        Write-Host "Limpieza completada con exito." -ForegroundColor Green
                     }
-                    "2" { 
-                        # Clear-Host 
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
-
-                        Write-Host "Nombre del Equipo: $(hostname)" -ForegroundColor Green 
-                        Write-Host " "
-                        
+                    catch {
+                        Write-Host "Error al ejecutar Cleanmgr." -ForegroundColor Red
                     }
-                    "3" { 
-                        # clear-Host 
-                        cabecera
-                        menuOpcion "Haz elegido la opcion:  $opcion"
+                        
+                    Write-Host " "
+                }
+                "6.1" { 
+                    # clear-Host
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
+                        
+                    # 1. Definir rutas usando variables de entorno de forma segura
+                    $userTemp = "$env:TEMP"             # C:\Users\Nombre\AppData\Local\Temp
+                    $systemTemp = "$env:SystemRoot\Temp"  # C:\Windows\Temp
+                    $prefetch = "$env:SystemRoot\Prefetch"
 
-                        Write-Host "Desfragmentando C:..." -ForegroundColor Green
-                        DEFRAG.exe C:\ /B /U /V /H
-                        # El parámetro /B en el comando defrag se usa para realizar una optimización de arranque
-                        Write-Host " "
-                    }
-                    "4" { 
-                        # clear-Host
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
+                    Write-Host "Iniciando limpieza profunda de temporales..." -ForegroundColor Yellow
 
-                        # $u = Read-Host "Letra de unidad (ej. D:)"
-                        # if ($u) { defrag $u /U /V } 
-                        
-                        fsutil fsinfo drives
-                        powershell.exe Get-Volume
-                        $unit = Read-Host "Letra de la unidad a desfragmentar y presiona ENTER"
-                        DEFRAG.exe /U /O /V /H ${unit}":"
-                        
-                        # /A /U /V /H
-                        
-                        #Read-Host "Presione Enter para volver..."
-                        Write-Host " "
-                    }
+                    # 2. Limpieza de Temporales de Usuario
+                    Write-Host " > Limpiando Temp de Usuario..." -NoNewline
+                    Remove-Item -Path "$userTemp\*" -Recurse -Force -ErrorAction SilentlyContinue
+                    Write-Host " [OK]" -ForegroundColor Green
 
-                    "4.1" { 
-                        # clear-Host
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
+                    # 3. Limpieza de Temporales del Sistema
+                    Write-Host " > Limpiando Temp de Windows..." -NoNewline
+                    Remove-Item -Path "$systemTemp\*" -Recurse -Force -ErrorAction SilentlyContinue
+                    Write-Host " [OK]" -ForegroundColor Green
+
+                    # 4. Limpieza de Prefetch
+                    Write-Host " > Limpiando Prefetch..." -NoNewline
+                    Remove-Item -Path "$prefetch\*" -Recurse -Force -ErrorAction SilentlyContinue
+                    Write-Host " [OK]" -ForegroundColor Green
+
+                    # 5. Abrir carpetas para verificación (Opcional, emulando tu .bat)
+                    Start-Process explorer.exe $userTemp
+                    Start-Process explorer.exe $prefetch
+
+                    Write-Host "Limpieza finalizada correctamente." -ForegroundColor White -BackgroundColor DarkGreen
                         
-                        fsutil fsinfo drives
-                        # powershell.exe Get-WmiObject Win32_LogicalDisk
-                        powershell.exe Get-Volume
-                        Write-Host ""
-                        $unidad = Read-Host "Letra de la unidad a desfragmentar y presiona ENTER"
-                        Optimize-Volume -DriveLetter ${unidad} -ReTrim -Verbose
+                    Write-Host ""
+                }
+                "6.2" { 
+                    # clear-Host
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
                         
-                        Write-Host " "
-                    }
-                    "5" { 
-                        # clear-Host
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
-                        
-                        Write-Host "Iniciando Liberador de espacio (Configuracion 64)..." -ForegroundColor Yellow
-                        try {
-                            # Ejecuta el proceso de limpieza
-                            Start-Process "cleanmgr.exe" -ArgumentList "/sagerun:64" -Wait
-                            Write-Host "Limpieza completada con exito." -ForegroundColor Green
+                    # 1. Definimos las carpetas que NO queremos tocar bajo ninguna circunstancia
+                    $excluir = @("*Microsoft*", "*Package Cache*", "*Antivirus*", "*SoftwareLicensing*", "*NVIDIA*")
+
+                    # 2. Ejecutamos la búsqueda con filtros de seguridad
+                    Get-ChildItem -Path "C:\ProgramData" -Recurse -File -Force -ErrorAction SilentlyContinue | 
+                    Where-Object {
+                        # Filtro 1: Que no esté en la lista de exclusión
+                        $itemPath = $_.FullName
+                        $safe = $true
+                        foreach ($pattern in $excluir) {
+                            if ($itemPath -like $pattern) { $safe = $false; break }
                         }
-                        catch {
-                            Write-Host "Error al ejecutar Cleanmgr." -ForegroundColor Red
-                        }
+
+                        # Filtro 2: Solo extensiones típicas de basura y con más de 7 días
+                        $safe -and 
+                        ($_.Extension -match "\.(tmp|log|bak|old|chk|temp)$") -and 
+                        ($_.LastWriteTime -lt (Get-Date).AddDays(-7))
+                    } | 
+                    Remove-Item -Force -ErrorAction SilentlyContinue
                         
-                        Write-Host " "
-                    }
-                    "6.1" { 
-                        # clear-Host
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
+                    Write-Host "Proceso finalizado" -ForegroundColor Green
+                    Write-Host ""
                         
-                        # 1. Definir rutas usando variables de entorno de forma segura
-                        $userTemp   = "$env:TEMP"             # C:\Users\Nombre\AppData\Local\Temp
-                        $systemTemp = "$env:SystemRoot\Temp"  # C:\Windows\Temp
-                        $prefetch   = "$env:SystemRoot\Prefetch"
+                }
 
-                        Write-Host "Iniciando limpieza profunda de temporales..." -ForegroundColor Yellow
+                "6.3" {
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
+                    psLimpiarRAM
 
-                        # 2. Limpieza de Temporales de Usuario
-                        Write-Host " > Limpiando Temp de Usuario..." -NoNewline
-                        Remove-Item -Path "$userTemp\*" -Recurse -Force -ErrorAction SilentlyContinue
-                        Write-Host " [OK]" -ForegroundColor Green
+                    Write-Host "Presione Enter para volver..." -ForegroundColor Green
 
-                        # 3. Limpieza de Temporales del Sistema
-                        Write-Host " > Limpiando Temp de Windows..." -NoNewline
-                        Remove-Item -Path "$systemTemp\*" -Recurse -Force -ErrorAction SilentlyContinue
-                        Write-Host " [OK]" -ForegroundColor Green
+                }
 
-                        # 4. Limpieza de Prefetch
-                        Write-Host " > Limpiando Prefetch..." -NoNewline
-                        Remove-Item -Path "$prefetch\*" -Recurse -Force -ErrorAction SilentlyContinue
-                        Write-Host " [OK]" -ForegroundColor Green
+                "6.4" {
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
 
-                        # 5. Abrir carpetas para verificación (Opcional, emulando tu .bat)
-                        Start-Process explorer.exe $userTemp
-                        Start-Process explorer.exe $prefetch
+                    # ==============================================================================
+                    # Script: Optimizar_CPU.ps1
+                    # Compatibilidad: Windows 7, 8.1, 10, 11 (PowerShell 2.0+)
+                    # Descripción: Identifica y ajusta procesos con alto consumo de recursos.
+                    # ==============================================================================
 
-                        Write-Host "Limpieza finalizada correctamente." -ForegroundColor White -BackgroundColor DarkGreen
-                        
-                        Write-Host ""
-                    }
-                    "6.2" { 
-                        # clear-Host
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
-                        
-                            # 1. Definimos las carpetas que NO queremos tocar bajo ninguna circunstancia
-                            $excluir = @("*Microsoft*", "*Package Cache*", "*Antivirus*", "*SoftwareLicensing*", "*NVIDIA*")
+                    Write-Host "--- Reporte de Estado Inicial del Procesador ---" -ForegroundColor Yellow
 
-                            # 2. Ejecutamos la búsqueda con filtros de seguridad
-                            Get-ChildItem -Path "C:\ProgramData" -Recurse -File -Force -ErrorAction SilentlyContinue | 
-                                Where-Object {
-                                    # Filtro 1: Que no esté en la lista de exclusión
-                                    $itemPath = $_.FullName
-                                    $safe = $true
-                                    foreach ($pattern in $excluir) {
-                                        if ($itemPath -like $pattern) { $safe = $false; break }
-                                    }
+                    # 1. Obtener carga total del procesador usando WMI (Máxima compatibilidad)
+                    $cpuLoad = (Get-WmiObject Win32_Processor).LoadPercentage
+                    Write-Host "Carga actual del sistema: $cpuLoad%" -ForegroundColor Cyan
 
-                                    # Filtro 2: Solo extensiones típicas de basura y con más de 7 días
-                                    $safe -and 
-                                    ($_.Extension -match "\.(tmp|log|bak|old|chk|temp)$") -and 
-                                    ($_.LastWriteTime -lt (Get-Date).AddDays(-7))
-                                } | 
-                                Remove-Item -Force -ErrorAction SilentlyContinue
-                        
-                        Write-Host "Proceso finalizado" -ForegroundColor Green
-                        Write-Host ""
-                        
-                    }
+                    # 2. Identificar procesos que consumen más del 20% de CPU
+                    # Usamos Get-Process y seleccionamos los primeros 10 por uso de tiempo de CPU
+                    $procesosPesados = Get-Process | Sort-Object CPU -Descending | Select-Object -First 10
 
-                    "6.3" {
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
-                        psLimpiarRAM
+                    Write-Host "`nTop 10 procesos por consumo acumulado:" -ForegroundColor Yellow
+                    $procesosPesados | Format-Table Name, ID, CPU, PriorityClass -AutoSize
 
-                         Write-Host "Presione Enter para volver..." -ForegroundColor Green
-
-                    }
-
-                    "6.4" {
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
-
-                        # ==============================================================================
-                        # Script: Optimizar_CPU.ps1
-                        # Compatibilidad: Windows 7, 8.1, 10, 11 (PowerShell 2.0+)
-                        # Descripción: Identifica y ajusta procesos con alto consumo de recursos.
-                        # ==============================================================================
-
-                        Write-Host "--- Reporte de Estado Inicial del Procesador ---" -ForegroundColor Yellow
-
-                        # 1. Obtener carga total del procesador usando WMI (Máxima compatibilidad)
-                        $cpuLoad = (Get-WmiObject Win32_Processor).LoadPercentage
-                        Write-Host "Carga actual del sistema: $cpuLoad%" -ForegroundColor Cyan
-
-                        # 2. Identificar procesos que consumen más del 20% de CPU
-                        # Usamos Get-Process y seleccionamos los primeros 10 por uso de tiempo de CPU
-                        $procesosPesados = Get-Process | Sort-Object CPU -Descending | Select-Object -First 10
-
-                        Write-Host "`nTop 10 procesos por consumo acumulado:" -ForegroundColor Yellow
-                        $procesosPesados | Format-Table Name, ID, CPU, PriorityClass -AutoSize
-
-                        # 3. Acción de optimización: Cambiar prioridad a 'BelowNormal' 
-                        # Esto evita que los procesos "estrangulen" el sistema sin llegar a cerrarlos bruscamente.
-                        foreach ($proc in $procesosPesados) {
-                            if ($proc.Name -ne "Idle" -and $proc.Name -ne "powershell") {
-                                try {
-                                    $proc.PriorityClass = "BelowNormal"
-                                    Write-Host "Prioridad ajustada para: $($proc.Name) (ID: $($proc.Id))" -ForegroundColor Green
-                                }
-                                catch {
-                                    Write-Host "No se pudo cambiar prioridad de: $($proc.Name) (Permisos insuficientes)" -ForegroundColor Gray
-                                }
+                    # 3. Acción de optimización: Cambiar prioridad a 'BelowNormal' 
+                    # Esto evita que los procesos "estrangulen" el sistema sin llegar a cerrarlos bruscamente.
+                    foreach ($proc in $procesosPesados) {
+                        if ($proc.Name -ne "Idle" -and $proc.Name -ne "powershell") {
+                            try {
+                                $proc.PriorityClass = "BelowNormal"
+                                Write-Host "Prioridad ajustada para: $($proc.Name) (ID: $($proc.Id))" -ForegroundColor Green
+                            }
+                            catch {
+                                Write-Host "No se pudo cambiar prioridad de: $($proc.Name) (Permisos insuficientes)" -ForegroundColor Gray
                             }
                         }
-
-                        # 4. Limpieza de memoria de trabajo (Working Set)
-                        # Ayuda a liberar presión indirecta sobre el procesador al reducir el paginado
-                        Write-Host "`nLiberando memoria de trabajo innecesaria..." -ForegroundColor Yellow
-                        [System.GC]::Collect()
-
-                        Write-Host "`nOptimizacion completada." -ForegroundColor White
-
-                        # 5. Opción de cierre (Basado en el archivo previo 'Cerrar Ventana PowerShell')
-                        Write-Host "`nProceso finalizado..." -ForegroundColor Yellow
-                        Write-Host ""
-                        
-                        # $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-                        
-                        
-
                     }
 
-                    "7" { 
-                        # clear-Host
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
+                    # 4. Limpieza de memoria de trabajo (Working Set)
+                    # Ayuda a liberar presión indirecta sobre el procesador al reducir el paginado
+                    Write-Host "`nLiberando memoria de trabajo innecesaria..." -ForegroundColor Yellow
+                    [System.GC]::Collect()
 
-                        Start-Process iexplore.exe
-                        taskkill.exe /F /IM iexplore.exe /T
+                    Write-Host "`nOptimizacion completada." -ForegroundColor White
 
-                        # Limpiar todo (Equivalente a 255)
-                        Write-Host "Iniciado limpieza de todo lo (Equivalente a 255)"
-                        Start-Process "rundll32.exe" -ArgumentList "InetCpl.cpl,ClearMyTracksByProcess 255" -Wait
-                        Write-Host " [OK]" -ForegroundColor Green
+                    # 5. Opción de cierre (Basado en el archivo previo 'Cerrar Ventana PowerShell')
+                    Write-Host "`nProceso finalizado..." -ForegroundColor Yellow
+                    Write-Host ""
+                        
+                    # $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+                        
+                        
 
-                        # Limpiar datos específicos incluyendo complementos (Equivalente a 4351)
-                        Write-Host "Iniciado limpieza de datos específicos incluyendo complementos (Equivalente a 4351)"
-                        Start-Process "rundll32.exe" -ArgumentList "InetCpl.cpl,ClearMyTracksByProcess 4351" -Wait
-                        Write-Host " [OK]" -ForegroundColor Green
+                }
 
-                        Start-Process "rundll32.exe" -ArgumentList "inetcpl.cpl,ResetIEtoDefaults" -Wait
-                        Write-Host "Proceso de restablecimiento finalizado." -ForegroundColor Green
+                "7" { 
+                    # clear-Host
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
 
-                        Write-Host ""
+                    Start-Process iexplore.exe
+                    taskkill.exe /F /IM iexplore.exe /T
 
+                    # Limpiar todo (Equivalente a 255)
+                    Write-Host "Iniciado limpieza de todo lo (Equivalente a 255)"
+                    Start-Process "rundll32.exe" -ArgumentList "InetCpl.cpl,ClearMyTracksByProcess 255" -Wait
+                    Write-Host " [OK]" -ForegroundColor Green
+
+                    # Limpiar datos específicos incluyendo complementos (Equivalente a 4351)
+                    Write-Host "Iniciado limpieza de datos específicos incluyendo complementos (Equivalente a 4351)"
+                    Start-Process "rundll32.exe" -ArgumentList "InetCpl.cpl,ClearMyTracksByProcess 4351" -Wait
+                    Write-Host " [OK]" -ForegroundColor Green
+
+                    Start-Process "rundll32.exe" -ArgumentList "inetcpl.cpl,ResetIEtoDefaults" -Wait
+                    Write-Host "Proceso de restablecimiento finalizado." -ForegroundColor Green
+
+                    Write-Host ""
+
+                }
+                "8" { 
+                    # clear-Host
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
+                        
+                    Write-Host "ipconfig /flushdns: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
+                    ipconfig /flushdns
+                    ipconfig /registerdns
+                    ipconfig /displaydns
+                        
+                    Write-Host "netsh interface ip delete arpcache: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
+                    netsh interface ip delete arpcache
+                        
+                    Write-Host "netsh winsock reset catalog: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
+                    netsh winsock reset catalog
+                        
+                    Write-Host "wuauclt /detectnow: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
+                    wuauclt /detectnow
+                        
+                    Write-Host "GPUPDATE /FORCE: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
+                    GPUPDATE /FORCE
+
+                    Write-Host "Proceso realizado..." -ForegroundColor Green
+                    Write-Host ""
+                }
+                "9" { 
+                    # clear-Host
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
+                        
+
+                    Write-Host "Iniciando IE..." -ForegroundColor Yellow
+                    Start-Process -FilePath "C:\Program Files\Internet Explorer\iexplore.exe" -ArgumentList "https://topacioprod.gmsantacruz.gob.bo/"
+
+                    Write-Host ""
+
+                }
+                "10" { 
+                    # clear-Host
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
+
+                    # Definimos las IPs y sus etiquetas en una tabla para facilitar cambios
+                    $destinos = @(
+                        @{Nombre = "DNS Google 1 - 8.8.8.8"; IP = "8.8.8.8" },
+                        @{Nombre = "Bolivianita - 192.168.13.249"; IP = "192.168.13.249" },
+                        @{Nombre = "Berilo 1 - 192.168.13.243"; IP = "192.168.13.243" },
+                        @{Nombre = "Berilo 2 - 192.168.13.36"; IP = "192.168.13.36" },
+                        @{Nombre = "SRV H. PLAN - 192.168.176.254"; IP = "192.168.176.254" },
+                        @{Nombre = "DNS 1 GAM - 172.25.108.100"; IP = "172.25.108.100" },
+                        @{Nombre = "DNS 2 GAM - 192.168.13.214"; IP = "192.168.13.214" }
+                    )
+
+                    Write-Host "Iniciando monitoreo de red en ventanas independientes..." -ForegroundColor Cyan
+
+                    foreach ($item in $destinos) {
+                        # Ejecutamos CMD, le pasamos el título y el comando Ping infinito (-t)
+                        Start-Process cmd.exe -ArgumentList "/c title $($item.Nombre) && ping $($item.IP) -t"
                     }
-                    "8" { 
-                        # clear-Host
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
-                        
-                        Write-Host "ipconfig /flushdns: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
-                        ipconfig /flushdns
-                        ipconfig /registerdns
-                        ipconfig /displaydns
-                        
-                        Write-Host "netsh interface ip delete arpcache: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
-                        netsh interface ip delete arpcache
-                        
-                        Write-Host "netsh winsock reset catalog: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
-                        netsh winsock reset catalog
-                        
-                        Write-Host "wuauclt /detectnow: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
-                        wuauclt /detectnow
-                        
-                        Write-Host "GPUPDATE /FORCE: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
-                        GPUPDATE /FORCE
 
-                        Write-Host "Proceso realizado..." -ForegroundColor Green
-                        Write-Host ""
+                        
+                    Write-Host ""
+
+                }
+                "10.1" { 
+                    # clear-Host
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
+
+                    $ip = Read-Host "IP/Host para Ping"
+
+                    if ($ip) {
+                        # start: abre nueva ventana
+                        # cmd /k: ejecuta el comando y mantiene la ventana abierta
+                        # ping -t: ping continuo en CMD
+                        Start-Process cmd.exe "/k ping $ip -t"
                     }
-                    "9" { 
-                        # clear-Host
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
+
+                    Write-Host ""
+                }
+                "11" { 
+                    # clear-Host
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
                         
+                    # 1. Mostrar información de las unidades de forma legible
+                    Write-Host "--- UNIDADES DETECTADAS ---" -ForegroundColor Cyan
+                    Get-WmiObject Win32_LogicalDisk | Select-Object DeviceID, VolumeName, 
+                    @{Name = "Tipo"; Expression = { $_.Description } }, 
+                    @{Name = "Tamaño(GB)"; Expression = { [Math]::Round($_.Size / 1GB, 2) } } | Format-Table -AutoSize
 
-                        Write-Host "Iniciando IE..." -ForegroundColor Yellow
-                        Start-Process -FilePath "C:\Program Files\Internet Explorer\iexplore.exe" -ArgumentList "https://topacioprod.gmsantacruz.gob.bo/"
+                    # 2. CAPTURA DE DATO: Solicitar la letra de la unidad
+                    $letra = Read-Host "Escribe la letra de la unidad a REVISAR (ejemplo: D)"
 
-                        Write-Host ""
+                    # Limpiar la entrada (por si el usuario escribió "D:" o "d ")
+                    $unidad = $letra.Replace(":", "").Trim().ToUpper()
 
-                    }
-                    "10" { 
-                        # clear-Host
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
-
-                        # Definimos las IPs y sus etiquetas en una tabla para facilitar cambios
-                        $destinos = @(
-                            @{Nombre="DNS Google 1 - 8.8.8.8"; IP="8.8.8.8"},
-                            @{Nombre="Bolivianita - 192.168.13.249"; IP="192.168.13.249"},
-                            @{Nombre="Berilo 1 - 192.168.13.243"; IP="192.168.13.243"},
-                            @{Nombre="Berilo 2 - 192.168.13.36"; IP="192.168.13.36"},
-                            @{Nombre="SRV H. PLAN - 192.168.176.254"; IP="192.168.176.254"},
-                            @{Nombre="DNS 1 GAM - 172.25.108.100"; IP="172.25.108.100"},
-                            @{Nombre="DNS 2 GAM - 192.168.13.214"; IP="192.168.13.214"}
-                        )
-
-                        Write-Host "Iniciando monitoreo de red en ventanas independientes..." -ForegroundColor Cyan
-
-                        foreach ($item in $destinos) {
-                            # Ejecutamos CMD, le pasamos el título y el comando Ping infinito (-t)
-                            Start-Process cmd.exe -ArgumentList "/c title $($item.Nombre) && ping $($item.IP) -t"
-                        }
-
-                        
-                        Write-Host ""
-
-                    }
-                    "10.1" { 
-                        # clear-Host
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
-
-                        $ip = Read-Host "IP/Host para Ping"
-
-                        if ($ip) {
-                            # start: abre nueva ventana
-                            # cmd /k: ejecuta el comando y mantiene la ventana abierta
-                            # ping -t: ping continuo en CMD
-                            Start-Process cmd.exe "/k ping $ip -t"
-                        }
-
-                        Write-Host ""
-                    }
-                    "11" { 
-                        # clear-Host
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
-                        
-                        # 1. Mostrar información de las unidades de forma legible
-                        Write-Host "--- UNIDADES DETECTADAS ---" -ForegroundColor Cyan
-                        Get-WmiObject Win32_LogicalDisk | Select-Object DeviceID, VolumeName, 
-                            @{Name="Tipo"; Expression={$_.Description}}, 
-                            @{Name="Tamaño(GB)"; Expression={[Math]::Round($_.Size / 1GB, 2)}} | Format-Table -AutoSize
-
-                        # 2. CAPTURA DE DATO: Solicitar la letra de la unidad
-                        $letra = Read-Host "Escribe la letra de la unidad a REVISAR (ejemplo: D)"
-
-                        # Limpiar la entrada (por si el usuario escribió "D:" o "d ")
-                        $unidad = $letra.Replace(":", "").Trim().ToUpper()
-
-                        # 3. Validación y ejecución
-                        if (-not [string]::IsNullOrWhiteSpace($unidad) -and $unidad.Length -eq 1) {
+                    # 3. Validación y ejecución
+                    if (-not [string]::IsNullOrWhiteSpace($unidad) -and $unidad.Length -eq 1) {
                             
-                            $pathUnidad = "${unidad}:"
-                            Write-Host "Preparando CHKDSK para la unidad $pathUnidad..." -ForegroundColor Yellow
-                            Write-Host "Nota: Si la unidad está en uso, se solicitara programar para el proximo reinicio." -ForegroundColor Gray
+                        $pathUnidad = "${unidad}:"
+                        Write-Host "Preparando CHKDSK para la unidad $pathUnidad..." -ForegroundColor Yellow
+                        Write-Host "Nota: Si la unidad está en uso, se solicitara programar para el proximo reinicio." -ForegroundColor Gray
 
-                            # Ejecución de chkdsk con los parámetros originales
-                            # /F (Corregir), /R (Recuperar sectores), /X (Forzar desmontaje)
-                            chkdsk.exe $pathUnidad /F /R /X
-                        }
-                        else {
-                            Write-Host "Error: Letra de unidad no valida." -ForegroundColor Red
-                        }                
-
-                        Write-Host ""
+                        # Ejecución de chkdsk con los parámetros originales
+                        # /F (Corregir), /R (Recuperar sectores), /X (Forzar desmontaje)
+                        chkdsk.exe $pathUnidad /F /R /X
                     }
-                    "12" { 
-                        # clear-Host
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
+                    else {
+                        Write-Host "Error: Letra de unidad no valida." -ForegroundColor Red
+                    }                
 
-                        # 1. Mostrar información de las unidades de forma profesional
-                        Write-Host "--- UNIDADES DISPONIBLES ---" -ForegroundColor Cyan
-                        Get-WmiObject Win32_LogicalDisk | Select-Object DeviceID, VolumeName, Description | Format-Table -AutoSize
+                    Write-Host ""
+                }
+                "12" { 
+                    # clear-Host
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
 
-                        # 2. CAPTURA DE DATO: Solicitar la letra de la unidad
-                        $letraInput = Read-Host "Escribe la letra de la UNIDAD para quitar atributos"
-                        $unidad = $letraInput.Replace(":", "").Trim().ToUpper() + ":\"
+                    # 1. Mostrar información de las unidades de forma profesional
+                    Write-Host "--- UNIDADES DISPONIBLES ---" -ForegroundColor Cyan
+                    Get-WmiObject Win32_LogicalDisk | Select-Object DeviceID, VolumeName, Description | Format-Table -AutoSize
 
-                        # 3. Validación de existencia
-                        if (Test-Path $unidad) {
-                            Write-Host "`nQuitando atributos (Solo lectura, Sistema, Oculto) en $unidad..." -ForegroundColor Yellow
+                    # 2. CAPTURA DE DATO: Solicitar la letra de la unidad
+                    $letraInput = Read-Host "Escribe la letra de la UNIDAD para quitar atributos"
+                    $unidad = $letraInput.Replace(":", "").Trim().ToUpper() + ":\"
+
+                    # 3. Validación de existencia
+                    if (Test-Path $unidad) {
+                        Write-Host "`nQuitando atributos (Solo lectura, Sistema, Oculto) en $unidad..." -ForegroundColor Yellow
                             
-                            # Buscamos todos los archivos y carpetas de forma recursiva
-                            $elementos = Get-ChildItem -Path $unidad -Recurse -Force -ErrorAction SilentlyContinue
+                        # Buscamos todos los archivos y carpetas de forma recursiva
+                        $elementos = Get-ChildItem -Path $unidad -Recurse -Force -ErrorAction SilentlyContinue
 
-                            foreach ($item in $elementos) {
-                                try {
-                                    # Establecemos los atributos a "Normal" (equivale a quitar R, S, H, A)
-                                    Set-ItemProperty -Path $item.FullName -Name Attributes -Value "Normal"
-                                }
-                                catch {
-                                    # Algunos archivos del sistema pueden estar bloqueados, los ignoramos
-                                    continue
-                                }
+                        foreach ($item in $elementos) {
+                            try {
+                                # Establecemos los atributos a "Normal" (equivale a quitar R, S, H, A)
+                                Set-ItemProperty -Path $item.FullName -Name Attributes -Value "Normal"
                             }
+                            catch {
+                                # Algunos archivos del sistema pueden estar bloqueados, los ignoramos
+                                continue
+                            }
+                        }
                             
-                            Write-Host "Proceso completado en $unidad" -ForegroundColor Green
-                        }
-                        else {
-                            Write-Host "Error: La unidad $unidad no existe o no es válida." -ForegroundColor Red
-                        }
-
-                        Write-Host ""
+                        Write-Host "Proceso completado en $unidad" -ForegroundColor Green
                     }
-                    "13" { 
-                        # clear-Host
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
-
-                        Start-Process "chrome.exe" -ArgumentList "--incognito"
-
-                        Write-Host ""
+                    else {
+                        Write-Host "Error: La unidad $unidad no existe o no es válida." -ForegroundColor Red
                     }
-                    "14" { 
-                        # clear-Host
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
+
+                    Write-Host ""
+                }
+                "13" { 
+                    # clear-Host
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
+
+                    Start-Process "chrome.exe" -ArgumentList "--incognito"
+
+                    Write-Host ""
+                }
+                "14" { 
+                    # clear-Host
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
                         
-                        Start-Process "control.exe" -ArgumentList "inetcpl.cpl"
+                    Start-Process "control.exe" -ArgumentList "inetcpl.cpl"
 
-                        Write-Host ""
-                    }
-                    "15" { 
-                        # clear-Host
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
+                    Write-Host ""
+                }
+                "15" { 
+                    # clear-Host
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
 
-                        Start-Process "taskkill.exe" -ArgumentList "/F /IM explorer.exe" -NoNewWindow -Wait
+                    Start-Process "taskkill.exe" -ArgumentList "/F /IM explorer.exe" -NoNewWindow -Wait
 
-                        Write-Host ""
-                    }
-                    "16" { 
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
+                    Write-Host ""
+                }
+                "16" { 
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
 
-                        Start-Process "explorer.exe"               
+                    Start-Process "explorer.exe"               
 
-                        Write-Host ""
-                    }
+                    Write-Host ""
+                }
 
-                    "17" { 
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
+                "17" { 
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
 
-                        Start-Process taskmgr
+                    Start-Process taskmgr
 
-                        Write-Host ""
-                    }
+                    Write-Host ""
+                }
 
-                    "18" { 
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
+                "18" { 
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
 
-                        Start-Process cmd
+                    Start-Process cmd
 
-                        Write-Host ""
-                    }
+                    Write-Host ""
+                }
 
-                    "19" { 
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
+                "19" { 
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
 
-                        Start-Process "PowerShell.exe"
+                    Start-Process "PowerShell.exe"
 
-                        Write-Host ""
-                    }
+                    Write-Host ""
+                }
 
-                    "20" { 
-                        # Llamada a submenu.20
-                        psSubMenu20
-                    }
-                    "21" { 
-                        # Llamada a submenu.21
-                        psSubMenu21
-                    }
-                    "22" { 
-                        # Llamada a submenu.22
-                        psSubMenu22
-                    }
-                    "23" { 
-                        # Llamada a submenu.23
-                        psSubMenu23
-                    }
-                    "24" { 
-                        # Llamada a submenu.24
-                        psSubMenu24
-                    }
-                    "25" { 
-                        # Llamada a submenu.25
-                        psSubMenu25
-                    }
-                    "26" { 
-                        # Llamada a submenu.26
-                        psSubMenu26
-                    }
-                    "27" { 
-                        # Llamada a submenu.27
-                        psSubMenu27
-                    }
+                "20" { 
+                    # Llamada a submenu.20
+                    psSubMenu20
+                }
+                "21" { 
+                    # Llamada a submenu.21
+                    psSubMenu21
+                }
+                "22" { 
+                    # Llamada a submenu.22
+                    psSubMenu22
+                }
+                "23" { 
+                    # Llamada a submenu.23
+                    psSubMenu23
+                }
+                "24" { 
+                    # Llamada a submenu.24
+                    psSubMenu24
+                }
+                "25" { 
+                    # Llamada a submenu.25
+                    psSubMenu25
+                }
+                "26" { 
+                    # Llamada a submenu.26
+                    psSubMenu26
+                }
+                "27" { 
+                    # Llamada a submenu.27
+                    psSubMenu27
+                }
+                "28" {
+                    # Llamada a submenu.28
+                    psSubMenu28
+                }
                 
-                    "28" {
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
+                "29.1" {
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
 
-                        Start-Process "shutdown.exe" -ArgumentList "/s /f /t 5"
+                    Start-Process "shutdown.exe" -ArgumentList "/s /f /t 5"
 
-                        Write-Host ""
+                    Write-Host ""
                         
+                }
+                "29.2" {
+                    cabecera
+                    menuOpcion "Haz elegido la opcion: $opcion"
+
+                    Start-Process "shutdown.exe" -ArgumentList "/g /f /t 5"
+
+                    Write-Host ""
+                        
+                }
+                "30" {
+                    cabecera
+                    Write-Host "`n[!] Reiniciando herramienta..." -ForegroundColor Cyan
+
+                    # Si estamos en entorno de desarrollo, reconstruir primero
+                    psReconstruirSiDesarrollo
+
+                    # Start-Sleep -Milliseconds 500
+                    Start-Sleep -Seconds 2
+                        
+                    # Recuperamos la ruta que guardamos en la cabecera .bat
+                    $ruta = $env:SCRIPT_PATH
+                    Write-Host "Ruta del Software:....... $ruta" -ForegroundColor Green
+                    Start-Sleep -Seconds 3
+                        
+                    if ($ruta -and (Test-Path $ruta)) {
+                        # Lanzamos el proceso usando CMD para que interprete el .bat correctamente
+                        Start-Process cmd.exe -ArgumentList "/c `"$ruta`""
+                        exit
                     }
-                    "29" {
-                        cabecera
-                        menuOpcion "Haz elegido la opcion: $opcion"
-
-                        Start-Process "shutdown.exe" -ArgumentList "/g /f /t 5"
-
-                        Write-Host ""
-                        
+                    else {
+                        Write-Error "Error: No se pudo localizar la variable SCRIPT_PATH."
+                        Pause
                     }
-                    "30" {
-                        cabecera
-                        Write-Host "`n[!] Reiniciando herramienta..." -ForegroundColor Cyan
+                }
 
-                        # Si estamos en entorno de desarrollo, reconstruir primero
-                        psReconstruirSiDesarrollo
+                "0" { 
+                    #$salirPrincipal = $true 
+                    Write-Host "C E R R A N D O   A P L I C A C I O N  ..." -ForegroundColor Magenta
 
-                        # Start-Sleep -Milliseconds 500
-                        Start-Sleep -Seconds 2
-                        
-                        # Recuperamos la ruta que guardamos en la cabecera .bat
-                        $ruta = $env:SCRIPT_PATH
-                        Write-Host "Ruta del Software:....... $ruta" -ForegroundColor Green
-                        Start-Sleep -Seconds 3
-                        
-                        if ($ruta -and (Test-Path $ruta)) {
-                            # Lanzamos el proceso usando CMD para que interprete el .bat correctamente
-                            Start-Process cmd.exe -ArgumentList "/c `"$ruta`""
-                            exit
-                        } else {
-                            Write-Error "Error: No se pudo localizar la variable SCRIPT_PATH."
-                            Pause
-                        }
-                    }
+                    Write-Host "La tarea ha finalizado. La consola se cerrara en 3 segundos..." -ForegroundColor Cyan
+                    Start-Sleep -Seconds 3
 
-                    "0" { 
-                            #$salirPrincipal = $true 
-                            Write-Host "C E R R A N D O   A P L I C A C I O N  ..." -ForegroundColor Magenta
+                    # Comando para cerrar
+                    exit
+                }
 
-                            Write-Host "La tarea ha finalizado. La consola se cerrara en 3 segundos..." -ForegroundColor Cyan
-                            Start-Sleep -Seconds 3
-
-                            # Comando para cerrar
-                            exit
-                        }
-
-                    Default { 
-                            Write-Host "OPCION INVALIDO." -ForegroundColor Red 
-                            Start-Sleep -Seconds 1
-                        }
+                Default { 
+                    Write-Host "OPCION INVALIDO." -ForegroundColor Red 
+                    Start-Sleep -Seconds 1
+                }
             } # Cierra switch
             if (-not $salirSub) { Read-Host "MENU PRINCIPAL: Presione ENTER para continuar..." }
         } # Cierra try

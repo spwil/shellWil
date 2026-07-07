@@ -62,7 +62,7 @@ function menuOpcion {
 function cabecera {
 
     Clear-Host
-    $Host.UI.RawUI.WindowTitle = "Bienvenido: $env:COMPUTERNAME\$env:USERNAME ;; Copyright  spWil Derechos Reservados ;; Version 1.6.0"
+    $Host.UI.RawUI.WindowTitle = "Bienvenido: $env:COMPUTERNAME\$env:USERNAME ;; Copyright  spWil Derechos Reservados ;; Version 1.7.0"
     $os = Get-WmiObject Win32_OperatingSystem
     $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
     $fecha = Get-Date -Format "dd/MM/yyyy HH:mm:ss"
