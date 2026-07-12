@@ -14,6 +14,7 @@ function psSubMenu25 {
             Write-Host "    1.6 || HABILITAR || INTERFACES de RED - en PC REMOTO." -ForegroundColor Green
             Write-Host "    1.7 || DESHABILITAR || ZONA CUBIERTA MOVIL - en PC REMOTO." -ForegroundColor Yellow
             Write-Host "    1.8 || HABILITAR || ZONA CUBIERTA MOVIL - en PC REMOTO." -ForegroundColor Yellow
+            Write-Host "    1.9 || HABILITAR || WMI, RPC y PSRemoting - en PC REMOTO." -ForegroundColor Green
             Write-Host "  2. Red Grupo de Trabajo y/o Dominio"
             Write-Host "    2.1 Listar Equipos de un Dominio (todo el segmento)"
             Write-Host "  3. Reinciar PC remotamente." -ForegroundColor Green
@@ -90,13 +91,32 @@ function psSubMenu25 {
                         Write-Warning "El equipo $ipRemota no responde a ping. Es posible que este apagado o tenga el firewall activo."
                     }
 
+                    # Resolución de Hostname para soporte Kerberos en Dominio
+                    $computerTarget = $ipRemota
+                    Write-Host "[*] Resolviendo Hostname de $ipRemota..." -ForegroundColor Gray
                     try {
-                        # 2. Consultas WMI Optimizadas
-                        # Obtenemos el nombre del equipo
-                        $sysInfo = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $ipRemota -ErrorAction Stop
+                        $entry = [System.Net.Dns]::GetHostEntry($ipRemota)
+                        $computerTarget = $entry.HostName.Split('.')[0]
+                        Write-Host "[+] Hostname resuelto: $computerTarget (Kerberos habilitado)" -ForegroundColor Green
+                    }
+                    catch {
+                        # Intento por NetBIOS/nbtstat
+                        $nbt = nbtstat -a $ipRemota
+                        $lineaName = $nbt | Where-Object { $_ -match "<\x00>.*UNIQUE" } | Select-Object -First 1
+                        if ($lineaName -and $lineaName -match "^\s*([A-Za-z0-9\-]+)") {
+                            $computerTarget = $Matches[1].Trim()
+                            Write-Host "[+] Hostname resuelto via NetBIOS: $computerTarget" -ForegroundColor Green
+                        } else {
+                            Write-Host "[-] No se pudo resolver Hostname. Usando IP directamente (NTLM)." -ForegroundColor Yellow
+                        }
+                    }
+
+                    try {
+                        # 2. Consultas WMI Optimizadas usando el Hostname (o IP fallback)
+                        $sysInfo = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $computerTarget -ErrorAction Stop
                         
                         # Obtenemos la configuracion de red filtrando solo adaptadores físicos activos
-                        $nic = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -ComputerName $ipRemota `
+                        $nic = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -ComputerName $computerTarget `
                             -Filter "IPEnabled = TRUE" -ErrorAction Stop | 
                         Where-Object { $_.Description -notmatch "Virtual|Pseudo|Bluetooth|VPN" } | 
                         Select-Object -First 1
@@ -131,7 +151,7 @@ function psSubMenu25 {
                         }
                     }
                     catch {
-                        Write-Host "ERROR: No se pudo establecer conexion con $ipRemota." -ForegroundColor Red
+                        Write-Host "ERROR: No se pudo establecer conexion con $ipRemota ($computerTarget)." -ForegroundColor Red
                         Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
                     }
 
@@ -745,7 +765,149 @@ function psSubMenu25 {
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
 
-                    
+                    # --- HABILITACIÓN REMOTA DE ADMINISTRACIÓN ---
+                    $baseIP = "192.168.176."
+                    $ultimoOcteto = Read-Host "Ingrese el ultimo octeto de la IP (192.168.176.XXX) o la IP completa"
+                    if ($ultimoOcteto -eq "") {
+                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                    }
+                    else {
+                        $ipRemota = $ultimoOcteto
+                        if ($ultimoOcteto -notmatch "\.") {
+                            $ipRemota = $baseIP + $ultimoOcteto
+                        }
+
+                        # 1. Resolución de Hostname
+                        $computerTarget = $ipRemota
+                        Write-Host "`n[*] Resolviendo Hostname de $ipRemota para habilitar Kerberos..." -ForegroundColor Yellow
+                        try {
+                            $entry = [System.Net.Dns]::GetHostEntry($ipRemota)
+                            $computerTarget = $entry.HostName.Split('.')[0]
+                            Write-Host "[+] Hostname resuelto: $computerTarget (Kerberos habilitado)" -ForegroundColor Green
+                        }
+                        catch {
+                            $nbt = nbtstat -a $ipRemota
+                            $lineaName = $nbt | Where-Object { $_ -match "<\x00>.*UNIQUE" } | Select-Object -First 1
+                            if ($lineaName -and $lineaName -match "^\s*([A-Za-z0-9\-]+)") {
+                                $computerTarget = $Matches[1].Trim()
+                                Write-Host "[+] Hostname resuelto via NetBIOS: $computerTarget" -ForegroundColor Green
+                            } else {
+                                Write-Host "[-] No se pudo resolver Hostname. Usando IP directamente ($ipRemota)." -ForegroundColor Yellow
+                            }
+                        }
+
+                        # 2. Verificar conectividad
+                        Write-Host "`n[*] Verificando enlace con $computerTarget (Ping)..." -ForegroundColor Yellow
+                        if (-not (Test-Connection -ComputerName $computerTarget -Count 1 -Quiet)) {
+                            Write-Warning "El equipo $computerTarget no responde a ping. Es posible que este apagado o tenga el firewall activo."
+                        }
+
+                        # 3. Construcción del Bloque de Comandos de Firewall y Servicios
+                        $cmds = @(
+                            'netsh advfirewall firewall set rule group="Windows Management Instrumentation (WMI)" new enable=yes',
+                            'netsh advfirewall firewall set rule group="Instrumentacion de administracion de Windows (WMI)" new enable=yes',
+                            'netsh advfirewall firewall set rule group="Windows Remote Management" new enable=yes',
+                            'netsh advfirewall firewall set rule group="Administracion remota de Windows" new enable=yes',
+                            'netsh advfirewall firewall set rule group="File and Printer Sharing" new enable=yes',
+                            'netsh advfirewall firewall set rule group="Compartir archivos e impresoras" new enable=yes',
+                            'netsh advfirewall firewall set rule group="Remote Administration" new enable=yes',
+                            'netsh advfirewall firewall set rule group="Administracion remota" new enable=yes'
+                        )
+                        $cmdFirewall = $cmds -join " & "
+                        $cmdPS = "powershell.exe -NoProfile -Command `"try { Enable-PSRemoting -SkipNetworkProfileCheck -Force } catch {}; try { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force } catch {}`""
+                        $fullCommand = "cmd.exe /c $cmdFirewall & $cmdPS"
+
+                        $exito = $false
+
+                        # A. Método 1: PsExec (Puerto SMB 445)
+                        $psexecPath = "C:\PSTools\PsExec.exe"
+                        $psexecFound = $false
+                        if (Test-Path $psexecPath) {
+                            $psexecFound = $true
+                        } else {
+                            $where = Get-Command psexec -ErrorAction SilentlyContinue
+                            if ($where) {
+                                $psexecPath = $where.Definition
+                                $psexecFound = $true
+                            }
+                        }
+
+                        if ($psexecFound) {
+                            Write-Host "[*] Intentando habilitacion via PsExec (SMB puerto 445)..." -ForegroundColor Yellow
+                            $argsList = "\\$computerTarget -accepteula -s cmd.exe /c $fullCommand"
+                            $p = Start-Process -FilePath $psexecPath -ArgumentList $argsList -Wait -NoNewWindow -PassThru -ErrorAction SilentlyContinue
+                            if ($p -and $p.ExitCode -eq 0) {
+                                Write-Host "[OK] Habilitacion remota ejecutada exitosamente via PsExec!" -ForegroundColor Green
+                                $exito = $true
+                            } else {
+                                $code = if ($p) { $p.ExitCode } else { "N/A" }
+                                Write-Host "[-] PsExec no pudo completar la accion (Codigo: $code)." -ForegroundColor Yellow
+                            }
+                        } else {
+                            Write-Host "[-] PsExec.exe no detectado en C:\PSTools ni en el PATH. Omitiendo." -ForegroundColor Gray
+                        }
+
+                        # B. Método 2: WinRM / PSRemoting (WS-Man 5985)
+                        if (-not $exito) {
+                            Write-Host "[*] Intentando habilitacion via WinRM (PowerShell Remoting)..." -ForegroundColor Yellow
+                            try {
+                                Invoke-Command -ComputerName $computerTarget -ScriptBlock {
+                                    netsh advfirewall firewall set rule group="Windows Management Instrumentation (WMI)" new enable=yes
+                                    netsh advfirewall firewall set rule group="Instrumentacion de administracion de Windows (WMI)" new enable=yes
+                                    netsh advfirewall firewall set rule group="File and Printer Sharing" new enable=yes
+                                    netsh advfirewall firewall set rule group="Compartir archivos e impresoras" new enable=yes
+                                    netsh advfirewall firewall set rule group="Remote Administration" new enable=yes
+                                    netsh advfirewall firewall set rule group="Administracion remota" new enable=yes
+                                } -ErrorAction Stop | Out-Null
+                                Write-Host "[OK] Habilitacion remota ejecutada exitosamente via WinRM!" -ForegroundColor Green
+                                $exito = $true
+                            }
+                            catch {
+                                Write-Host "[-] WinRM no esta disponible en ${computerTarget}: $($_.Exception.Message)" -ForegroundColor Yellow
+                            }
+                        }
+
+                        # C. Método 3: WMI (WMI 135)
+                        if (-not $exito) {
+                            Write-Host "[*] Intentando habilitacion via WMI (Win32_Process)..." -ForegroundColor Yellow
+                            try {
+                                $result = Invoke-WmiMethod -Class Win32_Process -Name Create -ComputerName $computerTarget -ArgumentList $fullCommand -ErrorAction Stop
+                                if ($result -and $result.ReturnValue -eq 0) {
+                                    Write-Host "[OK] Comando enviado via WMI con exito!" -ForegroundColor Green
+                                    $exito = $true
+                                } else {
+                                    $val = if ($result) { $result.ReturnValue } else { "N/A" }
+                                    Write-Host "[-] WMI retorno codigo de error: $val" -ForegroundColor Yellow
+                                }
+                            }
+                            catch {
+                                Write-Host "[-] WMI/RPC no esta disponible en ${computerTarget}: $($_.Exception.Message)" -ForegroundColor Yellow
+                            }
+                        }
+
+                        # 4. Reporte final
+                        if ($exito) {
+                            Write-Host "`n================================================" -ForegroundColor White
+                            Write-Host "   CONFIGURACION DE ADMINISTRACION HABILITADA" -ForegroundColor Green
+                            Write-Host "================================================" -ForegroundColor White
+                            Write-Host "El equipo remoto $computerTarget ahora deberia aceptar"
+                            Write-Host "consultas de red, WMI, ping y PSRemoting."
+                            Write-Host "================================================" -ForegroundColor White
+                        } else {
+                            Write-Host "`n================================================" -ForegroundColor White
+                            Write-Host "       ERROR: NO SE PUDO CONFIGURAR EL EQUIPO" -ForegroundColor Red
+                            Write-Host "================================================" -ForegroundColor White
+                            Write-Host "No se pudo conectar por WMI, WinRM ni PsExec."
+                            Write-Host "Asegurese de:"
+                            Write-Host "1. Que PsExec este en C:\PSTools\PsExec.exe"
+                            Write-Host "2. Que su usuario tenga privilegios de Administrador"
+                            Write-Host "   en el equipo remoto $computerTarget."
+                            Write-Host "================================================" -ForegroundColor White
+                        }
+                    }
+
+                    Read-Host "Presione ENTER para continuar..."
+
                 }
 
                 "2.1" { 
@@ -1700,16 +1862,55 @@ function psSubMenu25 {
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
                     Write-Host "Buscando componentes de RSAT localmente..." -ForegroundColor Cyan
                     try {
+                        # Importar explícitamente Dism
+                        Import-Module -Name Dism -ErrorAction SilentlyContinue
+
+                        if (-not (Get-Command -Name Get-WindowsCapability -ErrorAction SilentlyContinue)) {
+                            throw "El cmdlet 'Get-WindowsCapability' no está disponible en este equipo."
+                        }
+
                         $capabilities = Get-WindowsCapability -Online | Where-Object { $_.Name -like "Rsat.*" -and $_.State -eq "NotPresent" }
                         if ($capabilities.Count -eq 0) {
                             Write-Host "Todos los componentes de RSAT ya estan instalados." -ForegroundColor Green
                         }
                         else {
                             Write-Host "Se encontraron $($capabilities.Count) componentes para instalar." -ForegroundColor Cyan
-                            foreach ($cap in $capabilities) {
-                                Write-Host "Instalando $($cap.Name)..." -ForegroundColor Yellow
-                                Add-WindowsCapability -Online -Name $cap.Name | Out-Null
-                                Write-Host "Instalado: $($cap.Name)" -ForegroundColor Green
+                            
+                            # Bypass temporal de WSUS si aplica localmente
+                            $regPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
+                            $wsusBypassed = $false
+                            $originalUseWUServer = $null
+                            
+                            if (Test-Path $regPath) {
+                                $val = Get-ItemProperty -Path $regPath -Name "UseWUServer" -ErrorAction SilentlyContinue
+                                if ($val -and $val.UseWUServer -eq 1) {
+                                    Write-Host "Detectado WSUS activo. Desactivando temporalmente para descargar directamente de Windows Update..." -ForegroundColor Yellow
+                                    $originalUseWUServer = 1
+                                    Set-ItemProperty -Path $regPath -Name "UseWUServer" -Value 0 -Force -ErrorAction SilentlyContinue
+                                    Restart-Service -Name "wuauserv" -Force -ErrorAction SilentlyContinue
+                                    $wsusBypassed = $true
+                                }
+                            }
+
+                            try {
+                                foreach ($cap in $capabilities) {
+                                    Write-Host "Instalando $($cap.Name)..." -ForegroundColor Yellow
+                                    try {
+                                        Add-WindowsCapability -Online -Name $cap.Name -ErrorAction Stop | Out-Null
+                                        Write-Host "Instalado con éxito: $($cap.Name)" -ForegroundColor Green
+                                    }
+                                    catch {
+                                        Write-Host "ERROR al instalar $($cap.Name): $($_.Exception.Message)" -ForegroundColor Red
+                                    }
+                                }
+                            }
+                            finally {
+                                # Restaurar configuración original de WSUS
+                                if ($wsusBypassed -and $originalUseWUServer -ne $null) {
+                                    Write-Host "Restaurando configuracion original de WSUS..." -ForegroundColor Gray
+                                    Set-ItemProperty -Path $regPath -Name "UseWUServer" -Value $originalUseWUServer -Force -ErrorAction SilentlyContinue
+                                    Restart-Service -Name "wuauserv" -Force -ErrorAction SilentlyContinue
+                                }
                             }
                             Write-Host "Instalacion de RSAT completada." -ForegroundColor Green
                         }
@@ -1868,6 +2069,16 @@ function psSubMenu25 {
                             Write-Host "Iniciando instalacion de todos los componentes RSAT en $targetMachine..." -ForegroundColor Cyan
                             try {
                                 Invoke-Command -ComputerName $targetMachine -ScriptBlock {
+                                    # Asegurar directivas de ejecución para cargar el módulo
+                                    Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
+
+                                    # Importar explícitamente el módulo DISM
+                                    Import-Module -Name Dism -ErrorAction SilentlyContinue
+
+                                    if (-not (Get-Command -Name Get-WindowsCapability -ErrorAction SilentlyContinue)) {
+                                        throw "El cmdlet 'Get-WindowsCapability' no está disponible en este equipo. Verifique si es una versión de Windows antigua (Windows 7/8.1/Server 2012) o si tiene problemas con el módulo DISM."
+                                    }
+
                                     Write-Output "Buscando componentes de RSAT..."
                                     $capabilities = Get-WindowsCapability -Online | Where-Object { $_.Name -like "Rsat.*" -and $_.State -eq "NotPresent" }
                                     if ($capabilities.Count -eq 0) {
@@ -1875,10 +2086,42 @@ function psSubMenu25 {
                                     }
                                     else {
                                         Write-Output "Se encontraron $($capabilities.Count) componentes para instalar."
-                                        foreach ($cap in $capabilities) {
-                                            Write-Output "Instalando $($cap.Name)..."
-                                            Add-WindowsCapability -Online -Name $cap.Name | Out-Null
-                                            Write-Output "Instalado: $($cap.Name)"
+                                        
+                                        # Bypass temporal de WSUS si aplica
+                                        $regPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
+                                        $wsusBypassed = $false
+                                        $originalUseWUServer = $null
+                                        
+                                        if (Test-Path $regPath) {
+                                            $val = Get-ItemProperty -Path $regPath -Name "UseWUServer" -ErrorAction SilentlyContinue
+                                            if ($val -and $val.UseWUServer -eq 1) {
+                                                Write-Output "Detectado WSUS activo. Desactivando temporalmente para descargar directamente de Windows Update..."
+                                                $originalUseWUServer = 1
+                                                Set-ItemProperty -Path $regPath -Name "UseWUServer" -Value 0 -Force -ErrorAction SilentlyContinue
+                                                Restart-Service -Name "wuauserv" -Force -ErrorAction SilentlyContinue
+                                                $wsusBypassed = $true
+                                            }
+                                        }
+                                        
+                                        try {
+                                            foreach ($cap in $capabilities) {
+                                                Write-Output "Instalando $($cap.Name)..."
+                                                try {
+                                                    Add-WindowsCapability -Online -Name $cap.Name -ErrorAction Stop | Out-Null
+                                                    Write-Output "Instalado: $($cap.Name)"
+                                                }
+                                                catch {
+                                                    Write-Output "ERROR al instalar $($cap.Name): $($_.Exception.Message)"
+                                                }
+                                            }
+                                        }
+                                        finally {
+                                            # Restaurar configuración de WSUS
+                                            if ($wsusBypassed -and $originalUseWUServer -ne $null) {
+                                                Write-Output "Restaurando configuracion original de WSUS..."
+                                                Set-ItemProperty -Path $regPath -Name "UseWUServer" -Value $originalUseWUServer -Force -ErrorAction SilentlyContinue
+                                                Restart-Service -Name "wuauserv" -Force -ErrorAction SilentlyContinue
+                                            }
                                         }
                                         Write-Output "Instalacion de RSAT completada."
                                     }
