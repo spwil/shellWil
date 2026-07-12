@@ -21,6 +21,7 @@ function psSubMenu26 {
             Write-Host "    3.1 Cambiar contrasenia de USUARIO LOCAL en PC REMOTO" -ForegroundColor Cyan            
             Write-Host ""
             Write-Host "  30. REFRESH." -ForegroundColor Red
+            Write-Host "  31. REFRESH DESDE GITHUB (ONLINE)." -ForegroundColor Cyan
             Write-Host ""
             Write-Host "  0. V O L V E R   A L   M E N U    P R I N C I P A L"
             Write-Header "==============================="
@@ -622,6 +623,15 @@ function psSubMenu26 {
                         Write-Error "Error: No se pudo localizar la variable SCRIPT_PATH."
                         Pause
                     }
+                }
+
+                "31" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op26"
+                    Write-Host "`n[!] Descargando y reiniciando desde repositorio remoto..." -ForegroundColor Cyan
+                    Start-Sleep -Seconds 2
+                    Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://raw.githubusercontent.com/spwil/shellWil/main/ShellSW.bat | iex"
+                    exit
                 }
                 
                 "0" { 

@@ -54,6 +54,7 @@ function menuPrincipal {
             Write-Host "    29.1 Apagar PC." -ForegroundColor Green
             Write-Host "    29.2 Reiniciar Sistema Operativo (shutdown)." -ForegroundColor Green
             Write-Host "  30 Refresh"
+            Write-Host "  31 Refresh desde GitHub (Online)" -ForegroundColor Cyan
             Write-Host "  0.  Salir"
             Write-Host "======================================================================" -ForegroundColor Yellow
             
@@ -591,6 +592,14 @@ function menuPrincipal {
                         Write-Error "Error: No se pudo localizar la variable SCRIPT_PATH."
                         Pause
                     }
+                }
+
+                "31" {
+                    cabecera
+                    Write-Host "`n[!] Descargando y reiniciando desde repositorio remoto..." -ForegroundColor Cyan
+                    Start-Sleep -Seconds 2
+                    Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://raw.githubusercontent.com/spwil/shellWil/main/ShellSW.bat | iex"
+                    exit
                 }
 
                 "0" { 
