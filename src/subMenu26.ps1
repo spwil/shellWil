@@ -1,10 +1,10 @@
 function psSubMenu26 {
     $salirSub = $false
     do {
-        try{
+        try {
             #cabecera con informacion del autor
             cabecera
-            Write-Header " 26. =====)) COMANDOS AD ====="
+            Write-Header " 26. ===)) REMOTO: COMANDOS AD ====="
             Write-Host "  1. GESTION DE USUARIO DE DOMINIO | ACTIVE DIRECTORY |"
             Write-Host "    1.1 Mostrar Datos de Usuario de Dominio con C.I, Cargo, Lugar."
             Write-Host "    1.2 Mostrar ultima conexion de Usuario"
@@ -20,7 +20,7 @@ function psSubMenu26 {
             Write-Host "  3. GESTION DE USUARIO | USUARIO LOCAL |"
             Write-Host "    3.1 Cambiar contrasenia de USUARIO LOCAL en PC REMOTO" -ForegroundColor Cyan            
             Write-Host ""
-            Write-Host "  30. REFRESH (Modo LOCAL)." -ForegroundColor Red
+            Write-Host "  30. REFRESH." -ForegroundColor Red
             Write-Host "  31. REFRESH DESDE GITHUB (ONLINE)." -ForegroundColor Cyan
             Write-Host ""
             Write-Host "  0. V O L V E R   A L   M E N U    P R I N C I P A L"
@@ -35,7 +35,7 @@ function psSubMenu26 {
 
                     Write-Host "OfficePhone : Carnet de Identidad de persona" -ForegroundColor Cyan
                     Write-Host ""
-                # 1. Solicitar el nombre de usuario
+                    # 1. Solicitar el nombre de usuario
                     $dato = Read-Host "Introduzca el usuario de dominio"
 
                     # 2. Definir las propiedades extendidas que queremos extraer
@@ -54,22 +54,22 @@ function psSubMenu26 {
                         # Ejecutar la consulta y forzar el formato de lista detallada
                         Get-ADUser -Identity $dato -Properties $propiedades | Format-List `
                             DistinguishedName, 
-                            Enabled, 
-                            GivenName, 
-                            Name, 
-                            ObjectClass, 
-                            ObjectGUID, 
-                            @{Label="Cargo"; Expression={$_.Title}},
-                            @{Label="Descripcion"; Expression={$_.Description}},
-                            @{Label="Oficina"; Expression={$_.Office}},
-                            @{Label="Area"; Expression={$_.Department}},
-                            @{Label="Dependencia (Manager)"; Expression={$_.Manager}},
-                            OfficePhone, 
-                            PostalCode, 
-                            SamAccountName, 
-                            SID, 
-                            Surname, 
-                            UserPrincipalName
+                        Enabled, 
+                        GivenName, 
+                        Name, 
+                        ObjectClass, 
+                        ObjectGUID, 
+                        @{Label = "Cargo"; Expression = { $_.Title } },
+                        @{Label = "Descripcion"; Expression = { $_.Description } },
+                        @{Label = "Oficina"; Expression = { $_.Office } },
+                        @{Label = "Area"; Expression = { $_.Department } },
+                        @{Label = "Dependencia (Manager)"; Expression = { $_.Manager } },
+                        OfficePhone, 
+                        PostalCode, 
+                        SamAccountName, 
+                        SID, 
+                        Surname, 
+                        UserPrincipalName
                     }
                     catch {
                         Write-Host "Error: No se encontro al usuario '$dato' o no hay conexion con el AD." -ForegroundColor Red
@@ -99,8 +99,8 @@ function psSubMenu26 {
                             
                             $hoy = Get-Date
                             $eventos = Get-WinEvent -FilterHashtable @{
-                                LogName = 'Security'; 
-                                ID = 4624; 
+                                LogName   = 'Security'; 
+                                ID        = 4624; 
                                 StartTime = $hoy.AddDays(-7) # Últimos 7 días
                             } -ErrorAction SilentlyContinue | Where-Object {
                                 $_.Properties[5].Value -eq $usuario
@@ -115,7 +115,8 @@ function psSubMenu26 {
                                         Write-Host "- [$fecha] en el equipo: $computadora"
                                     }
                                 } | Select-Object -Unique
-                            } else {
+                            }
+                            else {
                                 Write-Host "No se encontraron registros recientes en los logs locales de este equipo." -ForegroundColor Gray
                             }
                         }
@@ -146,20 +147,20 @@ function psSubMenu26 {
 
                         # 3. Determinar lógica de expiración de cuenta
                         $estadoExp = if ($null -eq $user.AccountExpirationDate) { "Sin fecha de expiracion" } 
-                                    else { "Expira el: $($user.AccountExpirationDate)" }
+                        else { "Expira el: $($user.AccountExpirationDate)" }
 
                         # 4. Mostrar Resumen Corto pero Completo
                         Write-Host "--- RESUMEN DE USUARIO: $($user.DisplayName) ---" -ForegroundColor Cyan
                         
                         $user | Select-Object `
-                            @{Label="Nombre Completo"; Expression={$_.DisplayName}},
-                            @{Label="Estado Cuenta"; Expression={if($_.Enabled){"Activo"}else{"Deshabilitado"}}},
-                            @{Label="Oficina"; Expression={$_.Office}},
-                            @{Label="Descripcion"; Expression={$_.Description}},
-                            @{Label="Ultimo Cambio Pass"; Expression={$_.PasswordLastSet}},
-                            @{Label="Pass Expirada"; Expression={$_.PasswordExpired}},
-                            @{Label="Pass Nunca Expira"; Expression={$_.PasswordNeverExpires}},
-                            @{Label="Expiracion de Usuario"; Expression={$estadoExp}} | 
+                        @{Label = "Nombre Completo"; Expression = { $_.DisplayName } },
+                        @{Label = "Estado Cuenta"; Expression = { if ($_.Enabled) { "Activo" }else { "Deshabilitado" } } },
+                        @{Label = "Oficina"; Expression = { $_.Office } },
+                        @{Label = "Descripcion"; Expression = { $_.Description } },
+                        @{Label = "Ultimo Cambio Pass"; Expression = { $_.PasswordLastSet } },
+                        @{Label = "Pass Expirada"; Expression = { $_.PasswordExpired } },
+                        @{Label = "Pass Nunca Expira"; Expression = { $_.PasswordNeverExpires } },
+                        @{Label = "Expiracion de Usuario"; Expression = { $estadoExp } } | 
                         Format-List
 
                         # Apartado de Grupos (Resumen corto)
@@ -225,7 +226,7 @@ function psSubMenu26 {
 
                             # --- NUEVO APARTADO: DATOS DE FILIACIÓN ---
                             Write-Host "[*] DATOS GENERALES:" -ForegroundColor Yellow
-                            $estado = if($user.Enabled) { "ACTIVO" } else { "DESHABILITADO" }
+                            $estado = if ($user.Enabled) { "ACTIVO" } else { "DESHABILITADO" }
                             Write-Host "    Estado Usuario: $estado"
                             Write-Host "    Oficina:        $($user.Office)"
                             Write-Host "    Descripcion:    $($user.Description)"
@@ -236,7 +237,8 @@ function psSubMenu26 {
                             Write-Host "`n[*] FECHA ULTIMO CAMBIO DE CONTRASENIA:" -ForegroundColor Yellow
                             if ($user.PasswordLastSet) { 
                                 Write-Host "    $($user.PasswordLastSet)" 
-                            } else { 
+                            }
+                            else { 
                                 Write-Host "    El usuario nunca ha cambiado su contrasenia." 
                             }
                             
@@ -244,7 +246,8 @@ function psSubMenu26 {
                             Write-Host "`n[*] ULTIMA CONEXION ESTABLECIDA:" -ForegroundColor Yellow
                             if ($user.LastLogonDate) { 
                                 Write-Host "    $($user.LastLogonDate)" 
-                            } else { 
+                            }
+                            else { 
                                 Write-Host "    Nunca ha iniciado sesión o el dato no se ha replicado." 
                             }
 
@@ -252,7 +255,8 @@ function psSubMenu26 {
                             Write-Host "`n[*] ESTADO DE LA CUENTA Y EXPIRACION:" -ForegroundColor Yellow
                             if ($null -eq $user.AccountExpirationDate) {
                                 Write-Host "    La cuenta no tiene fecha de expiracion (Nunca expira)."
-                            } else {
+                            }
+                            else {
                                 $fechaExp = $user.AccountExpirationDate
                                 Write-Host "    FECHA DE EXPIRACION: $fechaExp"
                                 if ($fechaExp -lt (Get-Date)) {
@@ -267,14 +271,15 @@ function psSubMenu26 {
                                     $nombreGrupo = ($grupoDN -split ",")[0].Replace("CN=", "")
                                     Write-Host "    - $nombreGrupo"
                                 }
-                            } else {
+                            }
+                            else {
                                 Write-Host "    El usuario no pertenece a grupos adicionales."
                             }
 
                             # --- APARTADO: RASTREO DE EQUIPOS ---
                             Write-Host "`n[*] RASTREO DE EQUIPOS RECIENTES (LOGS LOCALES):" -ForegroundColor Yellow
-                            $eventos = Get-WinEvent -FilterHashtable @{LogName='Security';ID=4624} -MaxEvents 100 -ErrorAction SilentlyContinue | 
-                                    Where-Object {$_.Properties[5].Value -eq $dato}
+                            $eventos = Get-WinEvent -FilterHashtable @{LogName = 'Security'; ID = 4624 } -MaxEvents 100 -ErrorAction SilentlyContinue | 
+                            Where-Object { $_.Properties[5].Value -eq $dato }
                             
                             if ($eventos) {
                                 $eventos | ForEach-Object {
@@ -283,7 +288,8 @@ function psSubMenu26 {
                                         Write-Host "    - Detectado en: $pc ($($_.TimeCreated))" 
                                     }
                                 } | Select-Object -Unique
-                            } else {
+                            }
+                            else {
                                 Write-Host "    No se hallaron registros en este equipo."
                             }
                             Write-Host "====================================================" -ForegroundColor Cyan
@@ -377,7 +383,8 @@ function psSubMenu26 {
                         Write-Host "Usuario Activo Actualmente:" -ForegroundColor White
                         if ($null -eq $usuarioActual) {
                             Write-Host "  No hay ningun usuario con sesion iniciada." -ForegroundColor Gray
-                        } else {
+                        }
+                        else {
                             Write-Host "  $usuarioActual" -ForegroundColor Cyan
                         }
 
@@ -393,11 +400,13 @@ function psSubMenu26 {
 
                         if ($null -eq $listaUsuarios) {
                             Write-Host "  No se encontraron perfiles de usuario adicionales." -ForegroundColor Gray
-                        } else {
+                        }
+                        else {
                             $listaUsuarios | Sort-Object Usuario | Format-Table -AutoSize
                         }
 
-                    } catch {
+                    }
+                    catch {
                         Write-Host "`n[ERROR] No se pudo conectar al equipo $ip." -ForegroundColor Red
                         Write-Host "Razon: $_" -ForegroundColor Red
                         Write-Host "Asegurese de tener permisos de administrador en la maquina remota." -ForegroundColor Yellow
@@ -425,14 +434,14 @@ function psSubMenu26 {
                             # Filtramos Type=0 para mostrar solo carpetas compartidas por el usuario
                             # (Type 2147483648 son recursos administrativos ocultos)
                             $shares = Get-WmiObject -Class Win32_Share -ComputerName $targetIP -ErrorAction Stop | 
-                                    Where-Object { $_.Type -eq 0 }
+                            Where-Object { $_.Type -eq 0 }
 
                             if ($shares) {
                                 Write-Host "Recursos encontrados:" -ForegroundColor Green
-                                $shares | Select-Object @{Name="Carpeta"; Expression={$_.Name}}, 
-                                                        @{Name="Ruta Local"; Expression={$_.Path}}, 
-                                                        @{Name="Descripcion"; Expression={$_.Description}} | 
-                                        Format-Table -AutoSize
+                                $shares | Select-Object @{Name = "Carpeta"; Expression = { $_.Name } }, 
+                                @{Name = "Ruta Local"; Expression = { $_.Path } }, 
+                                @{Name = "Descripcion"; Expression = { $_.Description } } | 
+                                Format-Table -AutoSize
                             }
                             else {
                                 Write-Host "No se encontraron carpetas compartidas (públicas) en este equipo." -ForegroundColor Cyan
@@ -500,7 +509,8 @@ function psSubMenu26 {
                                 $username = $credenciales.UserName
                                 $password = $credenciales.GetNetworkCredential().Password
                                 $pcRemotaObj = New-Object System.DirectoryServices.DirectoryEntry("WinNT://$ipRemota,computer", $username, $password)
-                            } else {
+                            }
+                            else {
                                 $pcRemotaObj = [ADSI]"WinNT://$ipRemota,computer"
                             }
 
@@ -529,7 +539,8 @@ function psSubMenu26 {
                             
                             $listaVisual | Format-Table -AutoSize
                             
-                        } catch {
+                        }
+                        catch {
                             Write-Host "[ERROR CRITICO] No se pudo establecer la conexion remota via RPC/ADSI: $_" -ForegroundColor Red
                             break
                         }
@@ -564,7 +575,8 @@ function psSubMenu26 {
                                 $username = $credenciales.UserName
                                 $password = $credenciales.GetNetworkCredential().Password
                                 $usuarioObj = New-Object System.DirectoryServices.DirectoryEntry("WinNT://$ipRemota/$usuarioSeleccionado,user", $username, $password)
-                            } else {
+                            }
+                            else {
                                 $usuarioObj = [ADSI]"WinNT://$ipRemota/$usuarioSeleccionado,user"
                             }
 
@@ -574,7 +586,8 @@ function psSubMenu26 {
 
                             Write-Host "[EXITO] La contrasenia del usuario local '$usuarioSeleccionado' ha sido cambiada correctamente en $ipRemota." -ForegroundColor Green
 
-                        } catch {
+                        }
+                        catch {
                             Write-Host "[ERROR] Fallo al cambiar la contrasenia: $_" -ForegroundColor Red
                         }
 
@@ -619,7 +632,8 @@ function psSubMenu26 {
                         # Lanzamos el proceso usando CMD para que interprete el .bat correctamente
                         Start-Process cmd.exe -ArgumentList "/c `"$ruta`""
                         exit
-                    } else {
+                    }
+                    else {
                         Write-Error "Error: No se pudo localizar la variable SCRIPT_PATH."
                         Pause
                     }
@@ -630,7 +644,7 @@ function psSubMenu26 {
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op26"
                     Write-Host "`n[!] Descargando y reiniciando desde repositorio remoto..." -ForegroundColor Cyan
                     Start-Sleep -Seconds 2
-                    Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://raw.githubusercontent.com/spwil/shellWil/main/ShellSW.bat | iex"
+                    Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://raw.githubusercontent.com/spwil/shellSW/main/ShellSW.bat | iex"
                     exit
                 }
                 

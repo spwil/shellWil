@@ -115,7 +115,7 @@ function psSubMenu20 {
         try {
             #cabecera con informacion del autor
             cabecera
-            Write-Header "Opcion  20. -----)) INFORMACION SISTEMA CMD [RAM] [HDD] - DISM - RESETEAR RED."
+            Write-Header "Opcion  20. ---)) LOCAL: INFORMACION SISTEMA CMD [RAM] [HDD] - DISM - RESETEAR RED."
             Write-Host "1. Informacion de la MEMORIA RAM."
             Write-Host "2. Informacion del DISCO DURO."
             Write-Host "  2.1. Capacidad y tipo de DISCO DURO."
@@ -138,9 +138,6 @@ function psSubMenu20 {
             Write-Host "13. Limpia los componentes reemplazados "DISM 4" - Dism.exe /Online /Cleanup-Image /StartComponentCleanup"
             Write-Host "14. Revision Exhaustivo "ANALISIS PROFUNDO" (dism) - Escaneo, reparacion, limpieza y verificacion"
             Write-Host "***********************************************************"
-            Write-Host "15. Resetear IP Red LAN"
-            Write-Host "16. Resetear IP Red y Asignar DHCP"
-            Write-Host "  16.1 Mostrar Claves MAC Address"
             Write-Host "******************************************************************************************"
             Write-Host "17. Listar Usuarios Windows"
             Write-Host "18. Recursos Compartidos de Windows"
@@ -844,65 +841,7 @@ function psSubMenu20 {
                     Sfc /Scannow
                     Write-Host "Analisis terminado: Sfc /Scannow ::: OK" -ForegroundColor Green
                 }
-                "15" { 
-                    # clear-Host
-                    cabecera
-                    menuOpcion "Haz elegido el SUB_MENU: $opcion ;;; Opcion: $op"
 
-                    # netsh int ip reset c:\temp\resetLan.txt
-                    Write-Host "`n******* RESTABLECIMIENTO DE PROTOCOLO IP (TCP/IP) *******" -ForegroundColor Cyan
-                    Write-Host "------------------------------------------------------------------" -ForegroundColor Gray
-
-                    # Definimos la ruta del log
-                    $logPath = "C:\temp"
-                    $logFile = "$logPath\resetLan.txt"
-
-                    # 1. Aseguramos que la carpeta C:\temp exista para evitar errores de ruta
-                    if (-not (Test-Path $logPath)) {
-                        New-Item -Path $logPath -ItemType Directory -Force | Out-Null
-                    }
-
-                    Write-Host "Iniciando reset de interfaz IP..." -ForegroundColor Yellow
-
-                    # 2. Ejecutamos netsh nativo (Funciona igual en PS 2.0 y versiones actuales)
-                    # El operador & asegura la ejecución correcta del ejecutable externo
-                    & netsh int ip reset $logFile
-
-                    # 3. Verificamos el resultado ($LASTEXITCODE es el %errorlevel% de PowerShell)
-                    if ($LASTEXITCODE -eq 0) {
-                        Write-Host "El protocolo IP se restablecio correctamente." -ForegroundColor Green
-                        Write-Host "Log generado en: $logFile" -ForegroundColor Gray
-                        Write-Host "NOTA: ES NECESARIO REINICIAR EL EQUIPO PARA APLICAR CAMBIOS." -ForegroundColor Red -BackgroundColor White
-                    }
-                    else {
-                        Write-Host "Ocurrio un error al intentar restablecer el protocolo (Codigo: $LASTEXITCODE)." -ForegroundColor Red
-                    }
-
-                    Write-Host "------------------------------------------------------------------" -ForegroundColor Green
-                }
-                "16" { 
-                    # clear-Host
-                    cabecera
-                    menuOpcion "Haz elegido el SUB_MENU: $opcion ;;; Opcion: $op"
-
-                    Write-Host "Resetear IP Red y Asignar DHCP"
-                    netsh winsock reset
-                    netsh int ip reset c:\resetLan.txt
-                    ipconfig /release
-                    ipconfig /renew
-                    ipconfig /flushdns
-
-                    Write-Host "Presione Enter para volver..." -ForegroundColor Green
-                    Read-Host
-                }
-                "16.1" { 
-                    # clear-Host
-                    cabecera
-                    menuOpcion "Haz elegido el SUB_MENU: $opcion ;;; Opcion: $op"
-
-                    getmac /v /fo list
-
-                }
                 "17" { 
                     # clear-Host
                     cabecera
@@ -1485,7 +1424,7 @@ function psSubMenu21 {
         try {
             #cabecera con informacion del autor
             cabecera
-            Write-Header "21. -----)) VENTANAS ADMINISTRACION WINDOWS - ANTIVIRUS."
+            Write-Header "21. ---)) LOCAL: VENTANAS ADMINISTRACION WINDOWS - ANTIVIRUS."
             Write-Host "1. Reestablecer la tienda de Windows."
             Write-Host "2. Clave de Sistema Operativo Windows."
             Write-Host "3. Eliminar "Desktop.ini" (Aviso que se ejecuta automaticamente)."
@@ -1523,7 +1462,8 @@ function psSubMenu21 {
 
                     if ([string]::IsNullOrWhiteSpace($licencia)) {
                         Write-Warning "No se encontró una clave OA3.0 en el firmware de este equipo."
-                    } else {
+                    }
+                    else {
                         Write-Host "La clave detectada es: $licencia" -ForegroundColor Green
                     }
 
@@ -1678,7 +1618,7 @@ function psSubMenu22 {
         try {
             #cabecera con informacion del autor
             cabecera
-            Write-Header " 22. -----)) SERVICIOS WINDOWS - HERRAMIENTAS AVANZADOS."
+            Write-Header " 22. ---)) LOCAL: SERVICIOS WINDOWS - HERRAMIENTAS AVANZADOS."
             Write-Host "  1. Ver estado Servicio Actualizacion Windows 7 en adelante."
             Write-Host "  2. Detener Servicio Actualizacion Windows 7 en adelante."
             Write-Host "  3. Iniciar Servicio Actualizacion Windows 10."
@@ -1733,7 +1673,8 @@ function psSubMenu22 {
                             
                             Write-Host "Servicio: $($svc.DisplayName) ($nombreSvc)"
                             Write-Host "ESTADO: $estado" -ForegroundColor $color
-                        } else {
+                        }
+                        else {
                             # Si el servicio no existe (como UsoSvc en Win 7)
                             Write-Host "Servicio: $nombreSvc - [NO INSTALADO EN ESTE SISTEMA]" -ForegroundColor Gray
                         }
@@ -1791,7 +1732,8 @@ function psSubMenu22 {
                                 Set-ItemProperty -Path $fullPath -Name "ObjectName" -Value "Guest" -Force
                                 Write-Host "CRITICO: Credenciales de $svcName cambiadas a 'Guest'." -ForegroundColor Cyan
                             }
-                        } else {
+                        }
+                        else {
                             Write-Host "SKIP: $svcName no existe en este sistema (Normal en Windows 7)." -ForegroundColor Gray
                         }
                     }
@@ -1806,7 +1748,8 @@ function psSubMenu22 {
                                 Write-Host "Deteniendo $svcName..." -NoNewline
                                 Stop-Service -Name $svcName -Force -ErrorAction SilentlyContinue
                                 Write-Host " [HECHO]" -ForegroundColor Green
-                            } else {
+                            }
+                            else {
                                 Write-Host "$svcName ya se encuentra detenido." -ForegroundColor Gray
                             }
                         }
@@ -1867,7 +1810,8 @@ function psSubMenu22 {
                             
                             Write-Host "OK: $svcName restaurado a LocalSystem y modo Manual." -ForegroundColor Green
                             Start-Sleep -Seconds 2
-                        } else {
+                        }
+                        else {
                             Write-Host "SKIP: $svcName no existe en este sistema (ignorado)." -ForegroundColor Gray
                         }
                     }
@@ -1930,7 +1874,8 @@ function psSubMenu22 {
                         Write-Host "Configurando $key... " -NoNewline
                         if (Set-WindowsUpdatePolicy -Name $key -Value $val) {
                             Write-Host 'OK' -ForegroundColor Green
-                        } else {
+                        }
+                        else {
                             Write-Host 'FALLO' -ForegroundColor Red
                         }
                     }
@@ -2036,17 +1981,17 @@ function psSubMenu22 {
                         $ramMB = [Math]::Round($p.WorkingSet64 / 1MB, 2)
                         
                         New-Object PSObject -Property @{
-                            ID          = $p.Id
-                            Aplicacion  = $p.ProcessName
-                            Ventana     = if ($p.MainWindowTitle.Length -gt 45) { $p.MainWindowTitle.Substring(0, 42) + "..." } else { $p.MainWindowTitle }
-                            RAM_MB      = $ramMB
+                            ID         = $p.Id
+                            Aplicacion = $p.ProcessName
+                            Ventana    = if ($p.MainWindowTitle.Length -gt 45) { $p.MainWindowTitle.Substring(0, 42) + "..." } else { $p.MainWindowTitle }
+                            RAM_MB     = $ramMB
                         }
                     }
 
                     # 2. Mostrar tabla de aplicaciones
                     $reporteApps | Select-Object ID, Aplicacion, RAM_MB, Ventana | 
-                                Sort-Object RAM_MB -Descending | 
-                                Format-Table -AutoSize
+                    Sort-Object RAM_MB -Descending | 
+                    Format-Table -AutoSize
 
                     Write-Host ""
                     Write-Host "--- GESTION DE PROCESOS ---" -ForegroundColor Cyan
@@ -2085,14 +2030,14 @@ function psSubMenu22 {
                 "0" { 
                     #$salirSub = $true 
                     menuPrincipal
-                    }
+                }
                 Default { 
                     Write-Host "Opcion invalida." -ForegroundColor Red 
-                    }
+                }
             } # Cierra switch
             if (-not $salirSub) { 
                 Read-Host "SUB_MENU 22: Presione ENTER para continuar..." 
-                }
+            }
         } # Cierra try
 
         catch {
@@ -2132,7 +2077,7 @@ function psSubMenu23 {
         try {
             #cabecera con informacion del autor
             cabecera
-            Write-Header " 23. -----)) COMANDOS EN [[[POWERSHELL]]] - HERRAMIENTAS DE SISTEMA."
+            Write-Header " 23. ---)) LOCAL: HELPDESK LOCAL - HERRAMIENTAS DE SISTEMA."
             Write-Host "  1. Abrir PowerShell Administrador."
             Write-Host "  2. Mostrar Unidades Logicas de Almacenamiento."
             Write-Host "     2.1. Mostrar Unidadles logicas - DETALLE."
@@ -2141,8 +2086,9 @@ function psSubMenu23 {
             Write-Host "  4. Mostrar Direccion IP Ethernet Asignada."
             Write-Host "     4.1. Mostrar Interfaces con Direcciones IP Ethernet."
             Write-Host "     4.2. Mostrar Direccion IP PUBLICA"
-            Write-Host "  5. Vaciar Papelera de Reciclaje"
-            Write-Host "  6. Revisiones Instaladas de Windows."
+            Write-Host "  5. Gestion de Red Local." -ForegroundColor Green
+            Write-Host "  11. Vaciar Papelera de Reciclaje"
+            Write-Host "  12. Revisiones Instaladas de Windows."
             Write-Host "  ------------------------------------"
             Write-Host "  20. Estado de bateria Laptop."
             Write-Host ""
@@ -2168,18 +2114,18 @@ function psSubMenu23 {
                     # 1. Obtener Unidades Lógicas (Equivalente a Get-PSDrive)
                     Write-Host "--- UNIDADES LOGICAS DEL SISTEMA ---" -ForegroundColor Green
                     Get-PSDrive -PSProvider FileSystem | Select-Object Name, 
-                        @{Name="Used(GB)";Expression={"{0:N2}" -f ($_.Used / 1GB)}}, 
-                        @{Name="Free(GB)";Expression={"{0:N2}" -f ($_.Free / 1GB)}}, 
-                        @{Name="Total(GB)";Expression={"{0:N2}" -f (($_.Used + $_.Free) / 1GB)}} | Format-Table -AutoSize
+                    @{Name = "Used(GB)"; Expression = { "{0:N2}" -f ($_.Used / 1GB) } }, 
+                    @{Name = "Free(GB)"; Expression = { "{0:N2}" -f ($_.Free / 1GB) } }, 
+                    @{Name = "Total(GB)"; Expression = { "{0:N2}" -f (($_.Used + $_.Free) / 1GB) } } | Format-Table -AutoSize
 
                     Write-Host "`n--- DISCOS FISICOS DETECTADOS ---" -ForegroundColor Green
 
                     # 2. Obtener Discos Físicos (Compatible con Windows 7, 8, 10 y 11)
                     # Usamos Win32_DiskDrive porque Get-PhysicalDisk falla en Windows 7
                     Get-WmiObject -Class Win32_DiskDrive | Select-Object Model, 
-                        @{Name="Interface";Expression={$_.InterfaceType}}, 
-                        @{Name="Size(GB)";Expression={"{0:N2}" -f ($_.Size / 1GB)}}, 
-                        Status | Format-Table -AutoSize
+                    @{Name = "Interface"; Expression = { $_.InterfaceType } }, 
+                    @{Name = "Size(GB)"; Expression = { "{0:N2}" -f ($_.Size / 1GB) } }, 
+                    Status | Format-Table -AutoSize
 
                     Write-Host "`nPresione una tecla para salir..."
                     # $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
@@ -2212,20 +2158,21 @@ function psSubMenu23 {
                             if ($totalGB -gt 0) {
                                 $percentFree = [Math]::Round(($freeGB / $totalGB) * 100, 1)
                             }
-                        } else {
+                        }
+                        else {
                             $status = "No disponible / Sin medio"
                         }
 
                         # Creamos un objeto personalizado para un formato limpio
                         New-Object PSObject -Property @{
-                            'Letra'       = $d.Name
-                            'Etiqueta'    = if ($d.IsReady) { $d.VolumeLabel } else { "---" }
-                            'Formato'     = if ($d.IsReady) { $d.DriveFormat } else { "---" }
-                            'Tipo'        = $d.DriveType
-                            'Total(GB)'   = $totalGB
-                            'Libre(GB)'   = $freeGB
-                            'Libre(%)'    = $percentFree
-                            'Estado'      = $status
+                            'Letra'     = $d.Name
+                            'Etiqueta'  = if ($d.IsReady) { $d.VolumeLabel } else { "---" }
+                            'Formato'   = if ($d.IsReady) { $d.DriveFormat } else { "---" }
+                            'Tipo'      = $d.DriveType
+                            'Total(GB)' = $totalGB
+                            'Libre(GB)' = $freeGB
+                            'Libre(%)'  = $percentFree
+                            'Estado'    = $status
                         }
                     }
 
@@ -2298,21 +2245,22 @@ function psSubMenu23 {
                     # 2. Creamos un objeto con las propiedades más relevantes, limpiando datos técnicos innecesarios
                     $reporte = $cpuInfo | Select-Object `
                         Name, 
-                        Manufacturer, 
-                        @{Name="Nucleos_Fisicos"; Expression={$_.NumberOfCores}},
-                        @{Name="Hilos_Logicos"; Expression={$_.NumberOfLogicalProcessors}},
-                        @{Name="Velocidad_Max(MHz)"; Expression={$_.MaxClockSpeed}},
-                        @{Name="Arquitectura"; Expression={
-                            switch($_.Architecture) {
+                    Manufacturer, 
+                    @{Name = "Nucleos_Fisicos"; Expression = { $_.NumberOfCores } },
+                    @{Name = "Hilos_Logicos"; Expression = { $_.NumberOfLogicalProcessors } },
+                    @{Name = "Velocidad_Max(MHz)"; Expression = { $_.MaxClockSpeed } },
+                    @{Name = "Arquitectura"; Expression = {
+                            switch ($_.Architecture) {
                                 0 { "x86 (32-bit)" }
                                 6 { "Itanium" }
                                 9 { "x64 (64-bit)" }
                                 default { "Desconocida" }
                             }
-                        }},
-                        SocketDesignation,
-                        L2CacheSize,
-                        L3CacheSize
+                        }
+                    },
+                    SocketDesignation,
+                    L2CacheSize,
+                    L3CacheSize
 
                     # 3. Mostrar resultados en formato de lista para mejor lectura
                     $reporte | Format-List
@@ -2340,7 +2288,7 @@ function psSubMenu23 {
                         # Extraemos solo la primera direccion IPv4 (usualmente la principal)
                         # y eliminamos las llaves si existen
                         $ipPrincipal = $config.IPAddress[0]
-                        $macAddress  = $config.MACAddress
+                        $macAddress = $config.MACAddress
                         $descripcion = $config.Description
 
                         New-Object PSObject -Property @{
@@ -2396,7 +2344,7 @@ function psSubMenu23 {
                         elseif ($hw.Name -match "Virtual|VMware|VirtualBox|Hyper-V|TAP|VPN|Pseudo") { $tipo = "Virtual" }
 
                         # Estado de conexión
-                        $estado = switch($hw.NetConnectionStatus) {
+                        $estado = switch ($hw.NetConnectionStatus) {
                             2 { "Conectado" }
                             7 { "Deshabilitado" }
                             default { "Desconectado/Inactivo" }
@@ -2405,11 +2353,11 @@ function psSubMenu23 {
                         # Solo incluimos interfaces con MAC o que sean relevantes para el usuario
                         if ($hw.MACAddress -and $hw.NetConnectionID) {
                             New-Object PSObject -Property @{
-                                'Interface' = $hw.NetConnectionID
-                                'Tecnologia'= $tipo
-                                'Estado'    = $estado
+                                'Interface'    = $hw.NetConnectionID
+                                'Tecnologia'   = $tipo
+                                'Estado'       = $estado
                                 'Direccion_IP' = $ipv4
-                                'Mascara'   = $mask
+                                'Mascara'      = $mask
                             }
                         }
                     }
@@ -2468,7 +2416,113 @@ function psSubMenu23 {
                     Write-Host " "                
 
                 }
-                "5" { 
+                "5" {
+                    $salirSubRed = $false
+                    do {
+                        try {
+                            cabecera
+                            Write-Header "23.5. ---)) GESTION DE RED LOCAL."
+                            Write-Host "  1. Resetear IP Red LAN." -ForegroundColor Cyan
+                            Write-Host "  2. Resetear IP Red y Asignar DHCP." -ForegroundColor Cyan
+                            Write-Host "  3. Mostrar Claves MAC Address." -ForegroundColor Cyan
+                            Write-Host "  4. Actualizacion y Diagnostico de Politicas (gpupdate)." -ForegroundColor Cyan
+                            Write-Host ""
+                            Write-Host "  0. VOLVER AL SUBMENU ANTERIOR"
+                            Write-Header "===================================================================="
+
+                            $op23_5 = Read-Host "Seleccione la tarea de red"
+                            switch ($op23_5) {
+                                "1" {
+                                    cabecera
+                                    menuOpcion "Se encuentra en: Gestion de Red Local -> Resetear IP Red LAN"
+
+                                    Write-Host "`n******* RESTABLECIMIENTO DE PROTOCOLO IP (TCP/IP) *******" -ForegroundColor Cyan
+                                    Write-Host "------------------------------------------------------------------" -ForegroundColor Gray
+
+                                    $logPath = "C:\temp"
+                                    $logFile = "$logPath\resetLan.txt"
+
+                                    if (-not (Test-Path $logPath)) {
+                                        New-Item -Path $logPath -ItemType Directory -Force | Out-Null
+                                    }
+
+                                    Write-Host "Iniciando reset de interfaz IP..." -ForegroundColor Yellow
+
+                                    & netsh int ip reset $logFile
+
+                                    if ($LASTEXITCODE -eq 0) {
+                                        Write-Host "El protocolo IP se restablecio correctamente." -ForegroundColor Green
+                                        Write-Host "Log generado en: $logFile" -ForegroundColor Gray
+                                        Write-Host "NOTA: ES NECESARIO REINICIAR EL EQUIPO PARA APLICAR CAMBIOS." -ForegroundColor Red -BackgroundColor White
+                                    }
+                                    else {
+                                        Write-Host "Ocurrio un error al intentar restablecer el protocolo (Codigo: $LASTEXITCODE)." -ForegroundColor Red
+                                    }
+
+                                    Write-Host "------------------------------------------------------------------" -ForegroundColor Green
+                                }
+                                "2" {
+                                    cabecera
+                                    menuOpcion "Se encuentra en: Gestion de Red Local -> Resetear IP y Asignar DHCP"
+
+                                    Write-Host "Resetear IP Red y Asignar DHCP"
+                                    netsh winsock reset
+                                    netsh int ip reset c:\resetLan.txt
+                                    ipconfig /release
+                                    ipconfig /renew
+                                    ipconfig /flushdns
+
+                                    Write-Host "Presione Enter para volver..." -ForegroundColor Green
+                                    Read-Host
+                                }
+                                "3" {
+                                    cabecera
+                                    menuOpcion "Se encuentra en: Gestion de Red Local -> Mostrar Claves MAC Address"
+
+                                    getmac /v /fo list
+                                }
+                                "4" {
+                                    cabecera
+                                    menuOpcion "Se encuentra en: Gestion de Red Local -> Actualizacion y Diagnostico de Politicas"
+
+                                    Write-Host "ipconfig /flushdns: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
+                                    ipconfig /flushdns
+                                    ipconfig /registerdns
+                                    ipconfig /displaydns
+                                        
+                                    Write-Host "netsh interface ip delete arpcache: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
+                                    netsh interface ip delete arpcache
+                                        
+                                    Write-Host "netsh winsock reset catalog: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
+                                    netsh winsock reset catalog
+                                        
+                                    Write-Host "wuauclt /detectnow: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
+                                    wuauclt /detectnow
+                                        
+                                    Write-Host "GPUPDATE /FORCE: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
+                                    GPUPDATE /FORCE
+
+                                    Write-Host "Proceso realizado..." -ForegroundColor Green
+                                    Write-Host ""
+                                }
+                                "0" {
+                                    $salirSubRed = $true
+                                }
+                                Default {
+                                    Write-Host "OPCION INVALIDA." -ForegroundColor Red
+                                    Start-Sleep -Seconds 1
+                                }
+                            }
+                            if (-not $salirSubRed -and $op23_5 -ne "0") { Read-Host "Presione ENTER para continuar..." }
+                        }
+                        catch {
+                            Write-Host "`n[ERROR NO ESPERADO]: $($_.Exception.Message)" -ForegroundColor Red
+                            Read-Host "Presione Enter para continuar..."
+                        }
+                    } while (-not $salirSubRed)
+                }
+                "11" { 
+
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op23"
 
@@ -2499,7 +2553,7 @@ function psSubMenu23 {
                     Write-Host " "
 
                 }
-                "6" { 
+                "12" { 
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op23"
 
@@ -2513,10 +2567,10 @@ function psSubMenu23 {
                     # 2. Formatear y mostrar la información relevante
                     $reporte = foreach ($update in $updates) {
                         New-Object PSObject -Property @{
-                            'ID_Parche'   = $update.HotFixID
-                            'Descripcion' = $update.Description
+                            'ID_Parche'     = $update.HotFixID
+                            'Descripcion'   = $update.Description
                             'Instalado_Por' = $update.InstalledBy
-                            'Fecha'       = $update.InstalledOn
+                            'Fecha'         = $update.InstalledOn
                         }
                     }
 
@@ -2560,7 +2614,8 @@ function psSubMenu23 {
                     if ($capActual -and $capDiseno) {
                         $porcentajeVida = [Math]::Round(($capActual / $capDiseno) * 100, 1)
                         $porcentajeDesgaste = [Math]::Round(100 - $porcentajeVida, 1)
-                    } else {
+                    }
+                    else {
                         $porcentajeVida = "No disponible"
                         $porcentajeDesgaste = "No disponible"
                     }
@@ -2592,10 +2647,12 @@ function psSubMenu23 {
                                 Write-Host "Abriendo el reporte en el navegador..." -ForegroundColor Gray
                                 Start-Process $rutaHTML
                             }
-                        } catch {
+                        }
+                        catch {
                             Write-Host "Error al generar el HTML. Asegurese de ejecutar como Administrador." -ForegroundColor Red
                         }
-                    } else {
+                    }
+                    else {
                         Write-Host "`nNota: El comando /batteryreport no existe en Windows 7." -ForegroundColor Yellow
                         Write-Host "Se ha mostrado el resumen basado en datos de hardware WMI." -ForegroundColor Gray
                     }
@@ -2608,12 +2665,12 @@ function psSubMenu23 {
                 }
                 
                 "0" { 
-                        #$salirSub = $true 
-                        menuPrincipal
-                    }
+                    #$salirSub = $true 
+                    menuPrincipal
+                }
                 Default { 
-                        Write-Host "Opcion invalida." -ForegroundColor Red 
-                    }
+                    Write-Host "Opcion invalida." -ForegroundColor Red 
+                }
             } # Cierra switch            
             if (-not $salirSub) { Read-Host "SUB_MENU 23: Presione ENTER para continuar..." }
 
@@ -2657,7 +2714,7 @@ function psSubMenu24 {
         try {
             #cabecera con informacion del autor
             cabecera
-            Write-Header " 24. *****)) COMANDOS WINDOWS 11 *****"
+            Write-Header " 24. ***)) LOCAL: COMANDOS WINDOWS 11 *****"
             Write-Host "  1. Abrir Dispositivos e Impresoras."
             Write-Host "  2. Configuracion de Dispositivos General."
             Write-Host "  3. Accesibilidad - Filtros de Color."
@@ -2698,7 +2755,8 @@ function psSubMenu24 {
                     if ($osVersion -ge 10) {
                         Write-Host "Detectado Windows 10/11. Abriendo Configuracion Moderna..." -ForegroundColor Cyan
                         Start-Process "ms-settings:printers"
-                    } else {
+                    }
+                    else {
                         Write-Host "Detectado Windows antiguo. Abriendo Panel de Control clasico..." -ForegroundColor Yellow
                         Start-Process "control" -ArgumentList "printers"
                     }
@@ -2889,7 +2947,7 @@ function psSubMenu25 {
         try {
             #cabecera con informacion del autor
             cabecera
-            Write-Header " 25. +++++)) COMANDOS RED - ADMINISTRACION REMOTA - HMP3K +++++"
+            Write-Header " 25. +++)) REMOTO: COMANDOS RED - ADMINISTRACION REMOTA +++++"
             Write-Host "  1. Mostrar Hostname y MAC x IP."
             Write-Host "    1.1 Mostrar direccion IP de PC REMOTO."
             Write-Host "    1.2 Asignar direccion IP fija a PC REMOTO."
@@ -2924,7 +2982,7 @@ function psSubMenu25 {
             Write-Host "    12.2 Denegar/Deshabilitar ejecucion de scripts (Remoto)" -ForegroundColor Yellow
             Write-Host "    12.3 Instalar todos los componentes de RSAT (Remoto)" -ForegroundColor Green
             Write-Host "  ----------------------------------------"
-            Write-Host "  30. REFRESH (Modo LOCAL)." -ForegroundColor Red
+            Write-Host "  30. REFRESH." -ForegroundColor Red
             Write-Host "  31. REFRESH DESDE GITHUB (ONLINE)." -ForegroundColor Cyan
             Write-Host ""
             Write-Host "  0. V O L V E R   A L   M E N U    P R I N C I P A L"
@@ -2979,8 +3037,8 @@ function psSubMenu25 {
                         # Obtenemos la configuracion de red filtrando solo adaptadores físicos activos
                         $nic = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -ComputerName $ipRemota `
                             -Filter "IPEnabled = TRUE" -ErrorAction Stop | 
-                            Where-Object { $_.Description -notmatch "Virtual|Pseudo|Bluetooth|VPN" } | 
-                            Select-Object -First 1
+                        Where-Object { $_.Description -notmatch "Virtual|Pseudo|Bluetooth|VPN" } | 
+                        Select-Object -First 1
 
                         if ($nic) {
                             # 3. Formateo de la salida
@@ -3032,8 +3090,8 @@ function psSubMenu25 {
                         if (-not $nicInfo) { throw "No se pudo establecer comunicacion inicial con $ipRemota." }
                         
                         $interfaceName = (Get-WmiObject -Class Win32_NetworkAdapter -ComputerName $ipRemota -Filter "Index=$($nicInfo.Index)").NetConnectionId
-                        $macAddress    = $nicInfo.MACAddress
-                        $hostName      = (Get-WmiObject -Class Win32_OperatingSystem -ComputerName $ipRemota).CSName
+                        $macAddress = $nicInfo.MACAddress
+                        $hostName = (Get-WmiObject -Class Win32_OperatingSystem -ComputerName $ipRemota).CSName
 
                         # MOSTRAR REPORTE INICIAL
                         Write-Host "`n====================================================" -ForegroundColor White
@@ -3055,7 +3113,7 @@ function psSubMenu25 {
                         Write-Host "`n[!] Aplicando cambios forzados mediante inyeccion Netsh..." -ForegroundColor Magenta
 
                         # 3. CONSTRUCCIÓN E INYECCIÓN DE COMANDOS
-                        $cmdIP  = "netsh interface ip set address name=`"$interfaceName`" static $nuevaIP 255.255.255.0 $nuevoGW 1"
+                        $cmdIP = "netsh interface ip set address name=`"$interfaceName`" static $nuevaIP 255.255.255.0 $nuevoGW 1"
                         $cmdDNS1 = "netsh interface ip set dns name=`"$interfaceName`" static 172.25.108.100"
                         $cmdDNS2 = "netsh interface ip add dns name=`"$interfaceName`" 192.168.13.214 index=2"
                         
@@ -3128,8 +3186,8 @@ function psSubMenu25 {
                         
                         # Obtener nombre de interfaz, MAC y Hostname para el reporte
                         $interfaceName = (Get-WmiObject -Class Win32_NetworkAdapter -ComputerName $ipRemota -Filter "Index=$($nicInfo.Index)").NetConnectionId
-                        $macAddress    = $nicInfo.MACAddress
-                        $hostName      = (Get-WmiObject -Class Win32_OperatingSystem -ComputerName $ipRemota).CSName
+                        $macAddress = $nicInfo.MACAddress
+                        $hostName = (Get-WmiObject -Class Win32_OperatingSystem -ComputerName $ipRemota).CSName
 
                         # REPORTE INICIAL
                         Write-Host "`n====================================================" -ForegroundColor White
@@ -3145,7 +3203,7 @@ function psSubMenu25 {
 
                         # 2. CONSTRUCCIÓN DEL COMANDO (SIN OPERADORES DE FORMATO)
                         # Usamos concatenación simple para evitar el error de "cadena de entrada"
-                        $cmdIP  = "netsh interface ip set address name=`"$interfaceName`" source=dhcp"
+                        $cmdIP = "netsh interface ip set address name=`"$interfaceName`" source=dhcp"
                         $cmdDNS = "netsh interface ip set dns name=`"$interfaceName`" source=dhcp"
                         $fullCommand = "cmd.exe /c " + $cmdIP + " & " + $cmdDNS
 
@@ -3171,7 +3229,8 @@ function psSubMenu25 {
                             Write-Host " DNS:           AUTOMATICO"
                             Write-Host "====================================================" -ForegroundColor White
                             Write-Host "El equipo ya no depende de una IP fija." -ForegroundColor White
-                        } else {
+                        }
+                        else {
                             Write-Host "Fallo al iniciar el proceso remoto. Codigo: $($resultado.ReturnValue)" -ForegroundColor Red
                         }
                     }
@@ -3257,14 +3316,17 @@ function psSubMenu25 {
                                 if ($resultado.ReturnValue -eq 0) {
                                     Write-Host "[EXITO] Interfaz deshabilitada correctamente." -ForegroundColor Green
                                     Write-Host " "
-                                } else {
+                                }
+                                else {
                                     Write-Host "[ERROR] El sistema devolvio el codigo: $($resultado.ReturnValue). Se requieren privilegios de Administrador en el destino." -ForegroundColor Red
                                 }
-                            } else {
+                            }
+                            else {
                                 Write-Host "[INFO] Operacion cancelada por el usuario." -ForegroundColor Yellow
                                 Write-Host " "
                             }
-                        } else {
+                        }
+                        else {
                             Write-Host "[ERROR] Indice invalido." -ForegroundColor Red
                         }
                     }
@@ -3298,8 +3360,7 @@ function psSubMenu25 {
 
                     $Octeto = Read-Host "Ingrese el ultimo octeto del segmento 192.168.176.XXX"
 
-                    if ([string]::IsNullOrEmpty($Octeto))
-                    {
+                    if ([string]::IsNullOrEmpty($Octeto)) {
                         Write-Host ""
                         Write-Host "Debe ingresar un valor." -ForegroundColor Red
                         return
@@ -3317,8 +3378,7 @@ function psSubMenu25 {
 
                     Write-Host "Verificando conectividad..." -ForegroundColor Cyan
 
-                    if (!(Test-Connection -ComputerName $IP -Count 2 -Quiet))
-                    {
+                    if (!(Test-Connection -ComputerName $IP -Count 2 -Quiet)) {
                         Write-Host ""
                         Write-Host "ERROR"
                         Write-Host "El equipo no responde."
@@ -3334,8 +3394,7 @@ function psSubMenu25 {
 
                     Write-Host "Obteniendo nombre del equipo..." -ForegroundColor Cyan
 
-                    try
-                    {
+                    try {
                         $Equipo = Get-WmiObject `
                             Win32_ComputerSystem `
                             -ComputerName $IP `
@@ -3346,8 +3405,7 @@ function psSubMenu25 {
                         Write-Host "Nombre del equipo : $HostName" -ForegroundColor Yellow
 
                     }
-                    catch
-                    {
+                    catch {
                         Write-Host ""
                         Write-Host "ERROR"
                         Write-Host "No fue posible obtener el nombre del equipo."
@@ -3364,14 +3422,12 @@ function psSubMenu25 {
 
                     $WinRM = $true
 
-                    try
-                    {
+                    try {
                         Test-WSMan `
                             -ComputerName $HostName `
                             -ErrorAction Stop | Out-Null
                     }
-                    catch
-                    {
+                    catch {
                         $WinRM = $false
                     }
 
@@ -3379,14 +3435,12 @@ function psSubMenu25 {
                     # Habilitar WinRM
                     ##########################################################
 
-                    if (!$WinRM)
-                    {
+                    if (!$WinRM) {
                         Write-Host ""
                         Write-Host "WinRM no esta habilitado."
                         Write-Host "Intentando habilitar WinRM..."
 
-                        try
-                        {
+                        try {
                             Invoke-WmiMethod `
                                 -Class Win32_Process `
                                 -Name Create `
@@ -3403,8 +3457,7 @@ function psSubMenu25 {
                             Write-Host "WinRM habilitado correctamente." -ForegroundColor Green
 
                         }
-                        catch
-                        {
+                        catch {
                             Write-Host ""
                             Write-Host "ERROR"
                             Write-Host "No fue posible habilitar WinRM."
@@ -3420,41 +3473,39 @@ function psSubMenu25 {
                     Write-Host ""
                     Write-Host "Aplicando configuracion..." -ForegroundColor Yellow
 
-                    try
-                    {
+                    try {
                         Invoke-Command `
                             -ComputerName $HostName `
                             -Authentication Kerberos `
                             -ErrorAction Stop `
                             -ScriptBlock {
 
-                                $Ruta = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections"
+                            $Ruta = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections"
 
-                                if (!(Test-Path $Ruta))
-                                {
-                                    New-Item `
-                                        -Path $Ruta `
-                                        -Force | Out-Null
-                                }
-
-                                New-ItemProperty `
+                            if (!(Test-Path $Ruta)) {
+                                New-Item `
                                     -Path $Ruta `
-                                    -Name NC_ShowSharedAccessUI `
-                                    -PropertyType DWord `
-                                    -Value 0 `
                                     -Force | Out-Null
+                            }
 
-                                Set-Service `
-                                    SharedAccess `
-                                    -StartupType Disabled `
-                                    -ErrorAction SilentlyContinue
+                            New-ItemProperty `
+                                -Path $Ruta `
+                                -Name NC_ShowSharedAccessUI `
+                                -PropertyType DWord `
+                                -Value 0 `
+                                -Force | Out-Null
 
-                                Stop-Service `
-                                    SharedAccess `
-                                    -Force `
-                                    -ErrorAction SilentlyContinue
+                            Set-Service `
+                                SharedAccess `
+                                -StartupType Disabled `
+                                -ErrorAction SilentlyContinue
 
-                                return "OK"
+                            Stop-Service `
+                                SharedAccess `
+                                -Force `
+                                -ErrorAction SilentlyContinue
+
+                            return "OK"
                         }
                         Write-Host ""
                         Write-Host "=============================================="
@@ -3462,8 +3513,7 @@ function psSubMenu25 {
                         Write-Host "=============================================="
                         Write-Host ""
                     }
-                    catch
-                    {
+                    catch {
                         Write-Host ""
                         Write-Host "ERROR"
                         Write-Host ""
@@ -3488,8 +3538,7 @@ function psSubMenu25 {
 
                     $Octeto = Read-Host "Ingrese el ultimo octeto del segmento 192.168.176.XXX"
 
-                    if ([string]::IsNullOrEmpty($Octeto))
-                    {
+                    if ([string]::IsNullOrEmpty($Octeto)) {
                         Write-Host ""
                         Write-Host "Debe ingresar un valor." -ForegroundColor Red
                         return
@@ -3503,8 +3552,7 @@ function psSubMenu25 {
 
                     Write-Host "Verificando conectividad..." -ForegroundColor Cyan
 
-                    if (!(Test-Connection -ComputerName $IP -Count 2 -Quiet))
-                    {
+                    if (!(Test-Connection -ComputerName $IP -Count 2 -Quiet)) {
                         Write-Host ""
                         Write-Host "ERROR" -ForegroundColor Red
                         Write-Host "El equipo no responde."
@@ -3516,8 +3564,7 @@ function psSubMenu25 {
 
                     Write-Host "Obteniendo nombre del equipo..." -ForegroundColor Cyan
 
-                    try
-                    {
+                    try {
                         $Equipo = Get-WmiObject `
                             Win32_ComputerSystem `
                             -ComputerName $IP `
@@ -3527,8 +3574,7 @@ function psSubMenu25 {
 
                         Write-Host "Nombre del equipo : $HostName" -ForegroundColor Yellow
                     }
-                    catch
-                    {
+                    catch {
                         Write-Host ""
                         Write-Host "ERROR" -ForegroundColor Red
                         Write-Host $_.Exception.Message
@@ -3538,14 +3584,12 @@ function psSubMenu25 {
                     Write-Host ""
                     Write-Host "Verificando WinRM..."
 
-                    try
-                    {
+                    try {
                         Test-WSMan `
                             -ComputerName $HostName `
                             -ErrorAction Stop | Out-Null
                     }
-                    catch
-                    {
+                    catch {
                         Write-Host ""
                         Write-Host "ERROR" -ForegroundColor Red
                         Write-Host "WinRM no esta disponible."
@@ -3555,8 +3599,7 @@ function psSubMenu25 {
                     Write-Host ""
                     Write-Host "Restaurando configuracion..." -ForegroundColor Cyan
 
-                    try
-                    {
+                    try {
                         Invoke-Command `
                             -ComputerName $HostName `
                             -Authentication Kerberos `
@@ -3565,8 +3608,7 @@ function psSubMenu25 {
 
                             $Ruta = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections"
 
-                            if (Test-Path $Ruta)
-                            {
+                            if (Test-Path $Ruta) {
                                 Remove-ItemProperty `
                                     -Path $Ruta `
                                     -Name "NC_ShowSharedAccessUI" `
@@ -3595,8 +3637,7 @@ function psSubMenu25 {
                         Write-Host ""
 
                     }
-                    catch
-                    {
+                    catch {
                         Write-Host ""
                         Write-Host "ERROR"  -ForegroundColor Red
                         Write-Host $_.Exception.Message
@@ -3633,8 +3674,8 @@ function psSubMenu25 {
                                 # Consulta WMI para obtener configuración de red y nombre de host simultáneamente
                                 $nic = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -ComputerName $ipActual `
                                     -Filter "IPEnabled = TRUE" -ErrorAction Stop | 
-                                    Where-Object { $_.Description -notmatch "Virtual|VPN|Pseudo|Bluetooth" } | 
-                                    Select-Object -First 1
+                                Where-Object { $_.Description -notmatch "Virtual|VPN|Pseudo|Bluetooth" } | 
+                                Select-Object -First 1
 
                                 if ($nic) {
                                     $sys = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $ipActual
@@ -3670,7 +3711,8 @@ function psSubMenu25 {
                         $resultados | Sort-Object Estado | Format-Table -AutoSize
                         
                         Write-Host "Total de equipos detectados: $($resultados.Count)" -ForegroundColor Cyan
-                    } else {
+                    }
+                    else {
                         Write-Host "`nNo se detectaron equipos activos en el segmento." -ForegroundColor Red
                     }
 
@@ -3710,11 +3752,13 @@ function psSubMenu25 {
                         
                         if ($LASTEXITCODE -eq 0) {
                             Write-Host "EXITO: La orden de reinicio ha sido aceptada por $IPRemota." -ForegroundColor Green
-                        } else {
+                        }
+                        else {
                             Write-Host "ERROR: Acceso denegado o error de red (Codigo: $LASTEXITCODE)." -ForegroundColor Red
                             Write-Host "Asegurese de tener permisos de Admin y que el equipo remoto acepte comandos." -ForegroundColor Gray
                         }
-                    } else {
+                    }
+                    else {
                         Write-Host "ERROR: No se pudo establecer contacto con $IPRemota." -ForegroundColor Red
                         Write-Host "El equipo esta apagado o el firewall bloquea el trafico." -ForegroundColor Gray
                     }
@@ -3754,11 +3798,13 @@ function psSubMenu25 {
                         
                         if ($LASTEXITCODE -eq 0) {
                             Write-Host "EXITO: La orden de apagado ha sido aceptada por $IPRemota." -ForegroundColor Green
-                        } else {
+                        }
+                        else {
                             Write-Host "ERROR: Acceso denegado o error de red (Codigo: $LASTEXITCODE)." -ForegroundColor Red
                             Write-Host "Asegurese de tener permisos de Admin y que el equipo remoto acepte comandos." -ForegroundColor Gray
                         }
-                    } else {
+                    }
+                    else {
                         Write-Host "ERROR: No se pudo establecer contacto con $IPRemota." -ForegroundColor Red
                         Write-Host "El equipo esta apagado o el firewall bloquea el trafico." -ForegroundColor Gray
                     }
@@ -3819,7 +3865,8 @@ function psSubMenu25 {
                     if (Test-Path $rutaRemota) {
                         Write-Host "[OK] Conexion establecida. Abriendo carpeta..." -ForegroundColor Green
                         Start-Process explorer.exe -ArgumentList $rutaRemota
-                    } else {
+                    }
+                    else {
                         Write-Host "ERROR: No se pudo acceder a la ruta." -ForegroundColor Red
                         Write-Host "Verifique que:" -ForegroundColor Gray
                         Write-Host "1. El equipo remoto este encendido."
@@ -3876,7 +3923,8 @@ function psSubMenu25 {
                         Write-Host "[OK] Conexion exitosa. Abriendo carpeta StartUp..." -ForegroundColor Green
                         # Abre la carpeta en una nueva ventana del Explorador de Windows
                         Start-Process explorer.exe -ArgumentList $rutaStartUp
-                    } else {
+                    }
+                    else {
                         Write-Host "ERROR: No se pudo acceder a la ruta." -ForegroundColor Red
                         Write-Host "Verifique permisos de Admin y que el recurso c$ esté habilitado en $IPRemota." -ForegroundColor Gray
                     }
@@ -3896,7 +3944,8 @@ function psSubMenu25 {
                             Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force -ErrorAction SilentlyContinue
                         }
                         Write-Host "Politica de ejecucion activa: $(Get-ExecutionPolicy)" -ForegroundColor Cyan
-                    } catch {
+                    }
+                    catch {
                         Write-Host "Nota: Usando politica de ejecucion del sistema: $(Get-ExecutionPolicy)" -ForegroundColor Cyan
                     }
 
@@ -3961,7 +4010,8 @@ function psSubMenu25 {
                             Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force -ErrorAction SilentlyContinue
                         }
                         Write-Host "Politica de ejecucion activa: $(Get-ExecutionPolicy)" -ForegroundColor Cyan
-                    } catch {
+                    }
+                    catch {
                         Write-Host "Nota: Usando politica del sistema: $(Get-ExecutionPolicy)" -ForegroundColor Gray
                     }
 
@@ -4080,7 +4130,8 @@ function psSubMenu25 {
                                 Write-Host "================================================" -ForegroundColor White
                             }
 
-                        } else {
+                        }
+                        else {
                             Write-Host "ERROR: El equipo $ipRemota no responde (Offline)." -ForegroundColor Red
                         }
                     }
@@ -4137,11 +4188,11 @@ function psSubMenu25 {
                                     $encontradas++
                                     # Estructura WMIC CSV: [0]Node, [1]Default, [2]Name, [3]Network, [4]Status
                                     $esPredet = $data[1].Trim()
-                                    $nombre   = $data[2].Trim()
-                                    $esRed    = $data[3].Trim()
-                                    $estado   = $data[4].Trim()
+                                    $nombre = $data[2].Trim()
+                                    $esRed = $data[3].Trim()
+                                    $estado = $data[4].Trim()
 
-                                    $txtRed    = if ($esRed -eq "TRUE") { "SI" } else { "Local" }
+                                    $txtRed = if ($esRed -eq "TRUE") { "SI" } else { "Local" }
                                     $txtPredet = if ($esPredet -eq "TRUE") { "<-- PREDET." } else { "" }
 
                                     Write-Host ($formato -f $nombre, $txtRed, $estado, $txtPredet)
@@ -4152,7 +4203,8 @@ function psSubMenu25 {
                         if ($encontradas -eq 0) {
                             Write-Host "[-] No se detectaron impresoras o hubo un problema de conexión." -ForegroundColor Yellow
                             Write-Host "[!] Verifique que el firewall permita SMB (Puerto 445) y WMI en la PC remota." -ForegroundColor Gray
-                        } else {
+                        }
+                        else {
                             Write-Host "`n[*] Total de impresoras encontradas: $encontradas" -ForegroundColor Green
                         }
                     }
@@ -4199,7 +4251,8 @@ function psSubMenu25 {
                                 Start-Sleep -Seconds 2
                             }
                             Write-Host ' -> Servicio "Registro Remoto" ACTIVO y operando.' -ForegroundColor Green
-                        } catch {
+                        }
+                        catch {
                             Write-Host ' [!] ERROR CRÍTICO: No se pudo verificar o iniciar el servicio "RemoteRegistry".' -ForegroundColor Red
                             Write-Host '     Asegurese de estar ejecutando PowerShell como Administrador.' -ForegroundColor DarkYellow
                             Write-Host '========================================================================' -ForegroundColor Yellow
@@ -4222,7 +4275,8 @@ function psSubMenu25 {
                                             $userSID = $key
                                             break
                                         }
-                                    } catch { continue }
+                                    }
+                                    catch { continue }
                                 }
                             }
 
@@ -4288,10 +4342,12 @@ function psSubMenu25 {
                             $resultadoTabla | Format-Table -AutoSize
                             $reg.Close()
 
-                        } catch [UnauthorizedAccessException] {
+                        }
+                        catch [UnauthorizedAccessException] {
                             Write-Host ' [!] ERROR DE PRIVILEGIOS: Acceso denegado al registro remoto.' -ForegroundColor Red
                             Write-Host '     Asegurese de que su cuenta tenga permisos de administrador en la PC destino.' -ForegroundColor DarkYellow
-                        } catch {
+                        }
+                        catch {
                             Write-Host ' [!] ERROR INESPERADO al comunicarse con la base del registro de la PC remota.' -ForegroundColor Red
                         }
                         Write-Host '========================================================================' -ForegroundColor Yellow
@@ -4304,45 +4360,45 @@ function psSubMenu25 {
 
                     # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                     # 2. Captura del último OCTETO con validación simple
-                            $baseIP = "192.168.$octeto3."
-                            $hostID = $octeto4
+                    $baseIP = "192.168.$octeto3."
+                    $hostID = $octeto4
 
-                            if ($hostID -match '^\d{1,3}$') {
-                                $fullIP = $baseIP + $hostID
-                                Write-Host "`n--- Consultando Host: $fullIP ---" -ForegroundColor Cyan
+                    if ($hostID -match '^\d{1,3}$') {
+                        $fullIP = $baseIP + $hostID
+                        Write-Host "`n--- Consultando Host: $fullIP ---" -ForegroundColor Cyan
                                 
-                                try {
-                                    # 3. Ejecución optimizada de quser (query user)
-                                    # Redirigimos el error 2 al flujo de éxito para procesar el texto de "No hay usuarios"
-                                    $resultado = quser /server:$fullIP 2>&1
+                        try {
+                            # 3. Ejecución optimizada de quser (query user)
+                            # Redirigimos el error 2 al flujo de éxito para procesar el texto de "No hay usuarios"
+                            $resultado = quser /server:$fullIP 2>&1
 
-                                    # 4. Procesamiento de la respuesta
-                                    if ($resultado -like "*No hay ningún usuario*" -or $resultado -like "*No user exists*") {
-                                        Write-Host "Estado: Equipo encendido, pero sin sesiones activas." -ForegroundColor Cyan
-                                    }
-                                    elseif ($resultado -like "*Error*") {
-                                        Write-Host "Error: No se pudo establecer conexion RPC con $fullIP." -ForegroundColor Red
-                                        Write-Host "Verifique que el equipo esté en línea y el Firewall permita RPC." -ForegroundColor Gray
-                                    }
-                                    else {
-                                        # Limpiamos líneas vacías y mostramos la tabla de quser
-                                        $resultado | Where-Object { $_.Trim() -ne "" }
-                                    }
-                                }
-                                catch {
-                                    Write-Host "Error inesperado al ejecutar el comando." -ForegroundColor Red
-                                }
+                            # 4. Procesamiento de la respuesta
+                            if ($resultado -like "*No hay ningún usuario*" -or $resultado -like "*No user exists*") {
+                                Write-Host "Estado: Equipo encendido, pero sin sesiones activas." -ForegroundColor Cyan
+                            }
+                            elseif ($resultado -like "*Error*") {
+                                Write-Host "Error: No se pudo establecer conexion RPC con $fullIP." -ForegroundColor Red
+                                Write-Host "Verifique que el equipo esté en línea y el Firewall permita RPC." -ForegroundColor Gray
                             }
                             else {
-                                Write-Host "Entrada invalida. Debe ingresar solo numeros (0-255)." -ForegroundColor Red
+                                # Limpiamos líneas vacías y mostramos la tabla de quser
+                                $resultado | Where-Object { $_.Trim() -ne "" }
                             }
+                        }
+                        catch {
+                            Write-Host "Error inesperado al ejecutar el comando." -ForegroundColor Red
+                        }
+                    }
+                    else {
+                        Write-Host "Entrada invalida. Debe ingresar solo numeros (0-255)." -ForegroundColor Red
+                    }
 
-                            # Pausa para ver los resultados antes de cerrar la consola
-                            #Write-Host "`nPresione cualquier tecla para finalizar esta consulta..."
-                            # $null = [Console]::ReadKey()   # Esperar a presionar una tecla
-                            Write-Host ""
-                            Write-Host '========================================================================' -ForegroundColor Yellow
-                            # Read-Host "  P R E S I O N E   ||| E N T E R |||   P A R A   C O N T I N U A R ..."
+                    # Pausa para ver los resultados antes de cerrar la consola
+                    #Write-Host "`nPresione cualquier tecla para finalizar esta consulta..."
+                    # $null = [Console]::ReadKey()   # Esperar a presionar una tecla
+                    Write-Host ""
+                    Write-Host '========================================================================' -ForegroundColor Yellow
+                    # Read-Host "  P R E S I O N E   ||| E N T E R |||   P A R A   C O N T I N U A R ..."
                     # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                     $usuarioInput = Read-Host 'Ingrese el NOMBRE DE USUARIO de dominio'
                     $ipRemota = "192.168.$octeto3.$octeto4"
@@ -4364,7 +4420,8 @@ function psSubMenu25 {
 
                     if (Test-Connection -ComputerName $ipRemota -Count 1 -Quiet) {
                         Mostrar-ImpresorasUsuarioRemoto -ip $ipRemota -usuarioTarget $usuarioInput
-                    } else {
+                    }
+                    else {
                         Write-Host "ERROR: El equipo $ipRemota se encuentra fuera de linea (Offline)." -ForegroundColor Red
                     }
 
@@ -4403,7 +4460,7 @@ function psSubMenu25 {
 
                                         # Construcción del objeto de salida
                                         [PSCustomObject]@{
-                                            Fabricante     = if($_.DriverName -match ' '){$_.DriverName.Split(' ')[0]} else {$_.DriverName}
+                                            Fabricante     = if ($_.DriverName -match ' ') { $_.DriverName.Split(' ')[0] } else { $_.DriverName }
                                             Nombre         = $_.Name
                                             Estado         = $estado
                                             Predeterminada = if ($_.Default) { "  [ACTIVA]" } else { "" }
@@ -4415,7 +4472,8 @@ function psSubMenu25 {
                                 # 4. Mostrar resultados
                                 if ($reporte) {
                                     $reporte | Sort-Object Estado | Format-Table -AutoSize
-                                } else {
+                                }
+                                else {
                                     Write-Host "No se encontraron impresoras físicas (solo virtuales)." -ForegroundColor Cyan
                                 }
                             }
@@ -4448,7 +4506,8 @@ function psSubMenu25 {
                         Write-Host "Iniciando servicio WinRM (PSRemoting)..." -ForegroundColor Gray
                         Enable-PSRemoting -SkipNetworkProfileCheck -Force -ErrorAction Stop
                         Write-Host "[OK] PSRemoting habilitado localmente." -ForegroundColor Green
-                    } catch {
+                    }
+                    catch {
                         Write-Host "ADVERTENCIA: No se pudo habilitar PSRemoting localmente." -ForegroundColor Yellow
                         Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
                     }
@@ -4458,12 +4517,14 @@ function psSubMenu25 {
                         Write-Host "Estableciendo politica de ejecucion a RemoteSigned (LocalMachine)..." -ForegroundColor Gray
                         Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force -ErrorAction Stop
                         Write-Host "[OK] Politica establecida a RemoteSigned para LocalMachine." -ForegroundColor Green
-                    } catch {
+                    }
+                    catch {
                         Write-Host "Restriccion detectada para LocalMachine. Intentando para CurrentUser..." -ForegroundColor Yellow
                         try {
                             Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force -ErrorAction Stop
                             Write-Host "[OK] Politica establecida a RemoteSigned para CurrentUser." -ForegroundColor Green
-                        } catch {
+                        }
+                        catch {
                             Write-Host "GPO bloquea cambios de politica de ejecucion persistentes." -ForegroundColor Red
                             Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
                             Write-Host "Intentando habilitar temporalmente para este proceso..." -ForegroundColor Cyan
@@ -4483,7 +4544,8 @@ function psSubMenu25 {
                         Write-Host "Deteniendo y deshabilitando servicio WinRM..." -ForegroundColor Gray
                         Disable-PSRemoting -Force -ErrorAction Stop
                         Write-Host "[OK] PSRemoting deshabilitado localmente." -ForegroundColor Green
-                    } catch {
+                    }
+                    catch {
                         Write-Host "ADVERTENCIA: No se pudo deshabilitar PSRemoting localmente." -ForegroundColor Yellow
                         Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
                     }
@@ -4493,12 +4555,14 @@ function psSubMenu25 {
                         Write-Host "Estableciendo politica de ejecucion a Restricted (LocalMachine)..." -ForegroundColor Gray
                         Set-ExecutionPolicy -ExecutionPolicy Restricted -Scope LocalMachine -Force -ErrorAction Stop
                         Write-Host "[OK] Politica establecida a Restricted para LocalMachine." -ForegroundColor Green
-                    } catch {
+                    }
+                    catch {
                         Write-Host "Restriccion detectada para LocalMachine. Intentando para CurrentUser..." -ForegroundColor Yellow
                         try {
                             Set-ExecutionPolicy -ExecutionPolicy Restricted -Scope CurrentUser -Force -ErrorAction Stop
                             Write-Host "[OK] Politica establecida a Restricted para CurrentUser." -ForegroundColor Green
-                        } catch {
+                        }
+                        catch {
                             Write-Host "GPO bloquea cambios de politica de ejecucion." -ForegroundColor Red
                             Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
                         }
@@ -4513,7 +4577,8 @@ function psSubMenu25 {
                         $capabilities = Get-WindowsCapability -Online | Where-Object { $_.Name -like "Rsat.*" -and $_.State -eq "NotPresent" }
                         if ($capabilities.Count -eq 0) {
                             Write-Host "Todos los componentes de RSAT ya estan instalados." -ForegroundColor Green
-                        } else {
+                        }
+                        else {
                             Write-Host "Se encontraron $($capabilities.Count) componentes para instalar." -ForegroundColor Cyan
                             foreach ($cap in $capabilities) {
                                 Write-Host "Instalando $($cap.Name)..." -ForegroundColor Yellow
@@ -4522,7 +4587,8 @@ function psSubMenu25 {
                             }
                             Write-Host "Instalacion de RSAT completada." -ForegroundColor Green
                         }
-                    } catch {
+                    }
+                    catch {
                         Write-Host "Error al instalar RSAT localmente: $($_.Exception.Message)" -ForegroundColor Red
                     }
                 }
@@ -4540,7 +4606,8 @@ function psSubMenu25 {
                     $ultimoOcteto = Read-Host "Ingrese el ultimo octeto de la IP (192.168.176.XXX) o IP completa"
                     if ($ultimoOcteto -eq "") { 
                         Write-Host "Operacion cancelada." -ForegroundColor Red
-                    } else {
+                    }
+                    else {
                         $ipRemota = if ($ultimoOcteto -match "\.") { $ultimoOcteto } else { $baseIP + $ultimoOcteto }
                         
                         Write-Host "Habilitando ejecucion remota en $ipRemota..." -ForegroundColor Cyan
@@ -4551,17 +4618,20 @@ function psSubMenu25 {
                             if ($result.ReturnValue -eq 0) {
                                 Write-Host "Comando de habilitacion enviado correctamente via WMI. Esperando 5 segundos..." -ForegroundColor Green
                                 Start-Sleep -Seconds 5
-                            } else {
+                            }
+                            else {
                                 Write-Host "Error al crear proceso via WMI (Codigo: $($result.ReturnValue))." -ForegroundColor Red
                             }
-                        } else {
+                        }
+                        else {
                             Write-Host "WMI no responde. Intentando via PsExec si esta disponible..." -ForegroundColor Yellow
                             $psexecPath = "C:\PSTools\PsExec.exe"
                             if (Test-Path $psexecPath) {
                                 $arg = "\\$ipRemota -accepteula -s powershell.exe -NoProfile -Command `"try { Enable-PSRemoting -SkipNetworkProfileCheck -Force } catch {}; try { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force } catch { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force }`""
                                 Start-Process -FilePath $psexecPath -ArgumentList $arg -Wait -NoNewWindow
                                 Write-Host "Comando enviado via PsExec." -ForegroundColor Green
-                            } else {
+                            }
+                            else {
                                 Write-Host "ERROR: No se pudo conectar via WMI ni se encontro PsExec en C:\PSTools\PsExec.exe" -ForegroundColor Red
                             }
                         }
@@ -4575,7 +4645,8 @@ function psSubMenu25 {
                     $ultimoOcteto = Read-Host "Ingrese el ultimo octeto de la IP (192.168.176.XXX) o IP completa"
                     if ($ultimoOcteto -eq "") { 
                         Write-Host "Operacion cancelada." -ForegroundColor Red
-                    } else {
+                    }
+                    else {
                         $ipRemota = if ($ultimoOcteto -match "\.") { $ultimoOcteto } else { $baseIP + $ultimoOcteto }
                         
                         Write-Host "Deshabilitando ejecucion remota en $ipRemota..." -ForegroundColor Cyan
@@ -4586,17 +4657,20 @@ function psSubMenu25 {
                             if ($result.ReturnValue -eq 0) {
                                 Write-Host "Comando de deshabilitacion enviado correctamente via WMI. Esperando 5 segundos..." -ForegroundColor Green
                                 Start-Sleep -Seconds 5
-                            } else {
+                            }
+                            else {
                                 Write-Host "Error al crear proceso via WMI (Codigo: $($result.ReturnValue))." -ForegroundColor Red
                             }
-                        } else {
+                        }
+                        else {
                             Write-Host "WMI no responde. Intentando via PsExec si esta disponible..." -ForegroundColor Yellow
                             $psexecPath = "C:\PSTools\PsExec.exe"
                             if (Test-Path $psexecPath) {
                                 $arg = "\\$ipRemota -accepteula -s powershell.exe -NoProfile -Command `"try { Disable-PSRemoting -Force } catch {}; try { Set-ExecutionPolicy -ExecutionPolicy Restricted -Scope LocalMachine -Force } catch { Set-ExecutionPolicy -ExecutionPolicy Restricted -Scope CurrentUser -Force }`""
                                 Start-Process -FilePath $psexecPath -ArgumentList $arg -Wait -NoNewWindow
                                 Write-Host "Comando enviado via PsExec." -ForegroundColor Green
-                            } else {
+                            }
+                            else {
                                 Write-Host "ERROR: No se pudo conectar via WMI ni se encontro PsExec en C:\PSTools\PsExec.exe" -ForegroundColor Red
                             }
                         }
@@ -4610,7 +4684,8 @@ function psSubMenu25 {
                     $ultimoOcteto = Read-Host "Ingrese el ultimo octeto de la IP (192.168.176.XXX), IP completa o Nombre de Equipo"
                     if ($ultimoOcteto -eq "") { 
                         Write-Host "Operacion cancelada." -ForegroundColor Red
-                    } else {
+                    }
+                    else {
                         # Determinar si es IP o Hostname directamente
                         $targetMachine = ""
                         $ipRemota = ""
@@ -4619,7 +4694,8 @@ function psSubMenu25 {
                             # Es un hostname directo
                             $targetMachine = $ultimoOcteto
                             Write-Host "Usando Nombre de Equipo proporcionado: $targetMachine" -ForegroundColor Green
-                        } else {
+                        }
+                        else {
                             # Es un octeto o IP
                             $ipRemota = if ($ultimoOcteto -match "\.") { $ultimoOcteto } else { $baseIP + $ultimoOcteto }
                             Write-Host "Direccion IP de destino: $ipRemota" -ForegroundColor Cyan
@@ -4631,12 +4707,14 @@ function psSubMenu25 {
                                 $sys = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $ipRemota -ErrorAction Stop
                                 $targetMachine = $sys.CSName
                                 Write-Host "Nombre de equipo resuelto exitosamente via WMI: $targetMachine" -ForegroundColor Green
-                            } catch {
+                            }
+                            catch {
                                 try {
                                     # 2. Fallback a DNS reverso
                                     $targetMachine = [System.Net.Dns]::GetHostEntry($ipRemota).HostName
                                     Write-Host "Nombre de equipo resuelto via DNS: $targetMachine" -ForegroundColor Green
-                                } catch {
+                                }
+                                catch {
                                     # 3. Fallback manual si falla la resolucion automatica
                                     Write-Host "ADVERTENCIA: No se pudo resolver la IP a un Nombre de Equipo automaticamente." -ForegroundColor Yellow
                                     Write-Host "WinRM requiere el NOMBRE DE EQUIPO en un dominio AD para autenticar." -ForegroundColor Yellow
@@ -4650,7 +4728,8 @@ function psSubMenu25 {
                         
                         if ([string]::IsNullOrEmpty($targetMachine)) {
                             Write-Host "ERROR: Se requiere un nombre de equipo para continuar." -ForegroundColor Red
-                        } else {
+                        }
+                        else {
                             Write-Host "Iniciando instalacion de todos los componentes RSAT en $targetMachine..." -ForegroundColor Cyan
                             try {
                                 Invoke-Command -ComputerName $targetMachine -ScriptBlock {
@@ -4658,7 +4737,8 @@ function psSubMenu25 {
                                     $capabilities = Get-WindowsCapability -Online | Where-Object { $_.Name -like "Rsat.*" -and $_.State -eq "NotPresent" }
                                     if ($capabilities.Count -eq 0) {
                                         Write-Output "Todos los componentes de RSAT ya estan instalados."
-                                    } else {
+                                    }
+                                    else {
                                         Write-Output "Se encontraron $($capabilities.Count) componentes para instalar."
                                         foreach ($cap in $capabilities) {
                                             Write-Output "Instalando $($cap.Name)..."
@@ -4668,7 +4748,8 @@ function psSubMenu25 {
                                         Write-Output "Instalacion de RSAT completada."
                                     }
                                 } -ErrorAction Stop
-                            } catch {
+                            }
+                            catch {
                                 Write-Host "ERROR al ejecutar Invoke-Command en $targetMachine." -ForegroundColor Red
                                 Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
                                 Write-Host "Asegurese de que la ejecucion remota este habilitada y tenga permisos de administrador." -ForegroundColor Yellow
@@ -4708,7 +4789,8 @@ function psSubMenu25 {
                         # Lanzamos el proceso usando CMD para que interprete el .bat correctamente
                         Start-Process cmd.exe -ArgumentList "/c `"$ruta`""
                         exit
-                    } else {
+                    }
+                    else {
                         Write-Error "Error: No se pudo localizar la variable SCRIPT_PATH."
                         Pause
                     }
@@ -4719,7 +4801,7 @@ function psSubMenu25 {
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
                     Write-Host "`n[!] Descargando y reiniciando desde repositorio remoto..." -ForegroundColor Cyan
                     Start-Sleep -Seconds 2
-                    Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://raw.githubusercontent.com/spwil/shellWil/main/ShellSW.bat | iex"
+                    Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://raw.githubusercontent.com/spwil/shellSW/main/ShellSW.bat | iex"
                     exit
                 }
                 
@@ -4769,10 +4851,10 @@ function psSubMenu25 {
 function psSubMenu26 {
     $salirSub = $false
     do {
-        try{
+        try {
             #cabecera con informacion del autor
             cabecera
-            Write-Header " 26. =====)) COMANDOS AD ====="
+            Write-Header " 26. ===)) REMOTO: COMANDOS AD ====="
             Write-Host "  1. GESTION DE USUARIO DE DOMINIO | ACTIVE DIRECTORY |"
             Write-Host "    1.1 Mostrar Datos de Usuario de Dominio con C.I, Cargo, Lugar."
             Write-Host "    1.2 Mostrar ultima conexion de Usuario"
@@ -4788,7 +4870,7 @@ function psSubMenu26 {
             Write-Host "  3. GESTION DE USUARIO | USUARIO LOCAL |"
             Write-Host "    3.1 Cambiar contrasenia de USUARIO LOCAL en PC REMOTO" -ForegroundColor Cyan            
             Write-Host ""
-            Write-Host "  30. REFRESH (Modo LOCAL)." -ForegroundColor Red
+            Write-Host "  30. REFRESH." -ForegroundColor Red
             Write-Host "  31. REFRESH DESDE GITHUB (ONLINE)." -ForegroundColor Cyan
             Write-Host ""
             Write-Host "  0. V O L V E R   A L   M E N U    P R I N C I P A L"
@@ -4803,7 +4885,7 @@ function psSubMenu26 {
 
                     Write-Host "OfficePhone : Carnet de Identidad de persona" -ForegroundColor Cyan
                     Write-Host ""
-                # 1. Solicitar el nombre de usuario
+                    # 1. Solicitar el nombre de usuario
                     $dato = Read-Host "Introduzca el usuario de dominio"
 
                     # 2. Definir las propiedades extendidas que queremos extraer
@@ -4822,22 +4904,22 @@ function psSubMenu26 {
                         # Ejecutar la consulta y forzar el formato de lista detallada
                         Get-ADUser -Identity $dato -Properties $propiedades | Format-List `
                             DistinguishedName, 
-                            Enabled, 
-                            GivenName, 
-                            Name, 
-                            ObjectClass, 
-                            ObjectGUID, 
-                            @{Label="Cargo"; Expression={$_.Title}},
-                            @{Label="Descripcion"; Expression={$_.Description}},
-                            @{Label="Oficina"; Expression={$_.Office}},
-                            @{Label="Area"; Expression={$_.Department}},
-                            @{Label="Dependencia (Manager)"; Expression={$_.Manager}},
-                            OfficePhone, 
-                            PostalCode, 
-                            SamAccountName, 
-                            SID, 
-                            Surname, 
-                            UserPrincipalName
+                        Enabled, 
+                        GivenName, 
+                        Name, 
+                        ObjectClass, 
+                        ObjectGUID, 
+                        @{Label = "Cargo"; Expression = { $_.Title } },
+                        @{Label = "Descripcion"; Expression = { $_.Description } },
+                        @{Label = "Oficina"; Expression = { $_.Office } },
+                        @{Label = "Area"; Expression = { $_.Department } },
+                        @{Label = "Dependencia (Manager)"; Expression = { $_.Manager } },
+                        OfficePhone, 
+                        PostalCode, 
+                        SamAccountName, 
+                        SID, 
+                        Surname, 
+                        UserPrincipalName
                     }
                     catch {
                         Write-Host "Error: No se encontro al usuario '$dato' o no hay conexion con el AD." -ForegroundColor Red
@@ -4867,8 +4949,8 @@ function psSubMenu26 {
                             
                             $hoy = Get-Date
                             $eventos = Get-WinEvent -FilterHashtable @{
-                                LogName = 'Security'; 
-                                ID = 4624; 
+                                LogName   = 'Security'; 
+                                ID        = 4624; 
                                 StartTime = $hoy.AddDays(-7) # Últimos 7 días
                             } -ErrorAction SilentlyContinue | Where-Object {
                                 $_.Properties[5].Value -eq $usuario
@@ -4883,7 +4965,8 @@ function psSubMenu26 {
                                         Write-Host "- [$fecha] en el equipo: $computadora"
                                     }
                                 } | Select-Object -Unique
-                            } else {
+                            }
+                            else {
                                 Write-Host "No se encontraron registros recientes en los logs locales de este equipo." -ForegroundColor Gray
                             }
                         }
@@ -4914,20 +4997,20 @@ function psSubMenu26 {
 
                         # 3. Determinar lógica de expiración de cuenta
                         $estadoExp = if ($null -eq $user.AccountExpirationDate) { "Sin fecha de expiracion" } 
-                                    else { "Expira el: $($user.AccountExpirationDate)" }
+                        else { "Expira el: $($user.AccountExpirationDate)" }
 
                         # 4. Mostrar Resumen Corto pero Completo
                         Write-Host "--- RESUMEN DE USUARIO: $($user.DisplayName) ---" -ForegroundColor Cyan
                         
                         $user | Select-Object `
-                            @{Label="Nombre Completo"; Expression={$_.DisplayName}},
-                            @{Label="Estado Cuenta"; Expression={if($_.Enabled){"Activo"}else{"Deshabilitado"}}},
-                            @{Label="Oficina"; Expression={$_.Office}},
-                            @{Label="Descripcion"; Expression={$_.Description}},
-                            @{Label="Ultimo Cambio Pass"; Expression={$_.PasswordLastSet}},
-                            @{Label="Pass Expirada"; Expression={$_.PasswordExpired}},
-                            @{Label="Pass Nunca Expira"; Expression={$_.PasswordNeverExpires}},
-                            @{Label="Expiracion de Usuario"; Expression={$estadoExp}} | 
+                        @{Label = "Nombre Completo"; Expression = { $_.DisplayName } },
+                        @{Label = "Estado Cuenta"; Expression = { if ($_.Enabled) { "Activo" }else { "Deshabilitado" } } },
+                        @{Label = "Oficina"; Expression = { $_.Office } },
+                        @{Label = "Descripcion"; Expression = { $_.Description } },
+                        @{Label = "Ultimo Cambio Pass"; Expression = { $_.PasswordLastSet } },
+                        @{Label = "Pass Expirada"; Expression = { $_.PasswordExpired } },
+                        @{Label = "Pass Nunca Expira"; Expression = { $_.PasswordNeverExpires } },
+                        @{Label = "Expiracion de Usuario"; Expression = { $estadoExp } } | 
                         Format-List
 
                         # Apartado de Grupos (Resumen corto)
@@ -4993,7 +5076,7 @@ function psSubMenu26 {
 
                             # --- NUEVO APARTADO: DATOS DE FILIACIÓN ---
                             Write-Host "[*] DATOS GENERALES:" -ForegroundColor Yellow
-                            $estado = if($user.Enabled) { "ACTIVO" } else { "DESHABILITADO" }
+                            $estado = if ($user.Enabled) { "ACTIVO" } else { "DESHABILITADO" }
                             Write-Host "    Estado Usuario: $estado"
                             Write-Host "    Oficina:        $($user.Office)"
                             Write-Host "    Descripcion:    $($user.Description)"
@@ -5004,7 +5087,8 @@ function psSubMenu26 {
                             Write-Host "`n[*] FECHA ULTIMO CAMBIO DE CONTRASENIA:" -ForegroundColor Yellow
                             if ($user.PasswordLastSet) { 
                                 Write-Host "    $($user.PasswordLastSet)" 
-                            } else { 
+                            }
+                            else { 
                                 Write-Host "    El usuario nunca ha cambiado su contrasenia." 
                             }
                             
@@ -5012,7 +5096,8 @@ function psSubMenu26 {
                             Write-Host "`n[*] ULTIMA CONEXION ESTABLECIDA:" -ForegroundColor Yellow
                             if ($user.LastLogonDate) { 
                                 Write-Host "    $($user.LastLogonDate)" 
-                            } else { 
+                            }
+                            else { 
                                 Write-Host "    Nunca ha iniciado sesión o el dato no se ha replicado." 
                             }
 
@@ -5020,7 +5105,8 @@ function psSubMenu26 {
                             Write-Host "`n[*] ESTADO DE LA CUENTA Y EXPIRACION:" -ForegroundColor Yellow
                             if ($null -eq $user.AccountExpirationDate) {
                                 Write-Host "    La cuenta no tiene fecha de expiracion (Nunca expira)."
-                            } else {
+                            }
+                            else {
                                 $fechaExp = $user.AccountExpirationDate
                                 Write-Host "    FECHA DE EXPIRACION: $fechaExp"
                                 if ($fechaExp -lt (Get-Date)) {
@@ -5035,14 +5121,15 @@ function psSubMenu26 {
                                     $nombreGrupo = ($grupoDN -split ",")[0].Replace("CN=", "")
                                     Write-Host "    - $nombreGrupo"
                                 }
-                            } else {
+                            }
+                            else {
                                 Write-Host "    El usuario no pertenece a grupos adicionales."
                             }
 
                             # --- APARTADO: RASTREO DE EQUIPOS ---
                             Write-Host "`n[*] RASTREO DE EQUIPOS RECIENTES (LOGS LOCALES):" -ForegroundColor Yellow
-                            $eventos = Get-WinEvent -FilterHashtable @{LogName='Security';ID=4624} -MaxEvents 100 -ErrorAction SilentlyContinue | 
-                                    Where-Object {$_.Properties[5].Value -eq $dato}
+                            $eventos = Get-WinEvent -FilterHashtable @{LogName = 'Security'; ID = 4624 } -MaxEvents 100 -ErrorAction SilentlyContinue | 
+                            Where-Object { $_.Properties[5].Value -eq $dato }
                             
                             if ($eventos) {
                                 $eventos | ForEach-Object {
@@ -5051,7 +5138,8 @@ function psSubMenu26 {
                                         Write-Host "    - Detectado en: $pc ($($_.TimeCreated))" 
                                     }
                                 } | Select-Object -Unique
-                            } else {
+                            }
+                            else {
                                 Write-Host "    No se hallaron registros en este equipo."
                             }
                             Write-Host "====================================================" -ForegroundColor Cyan
@@ -5145,7 +5233,8 @@ function psSubMenu26 {
                         Write-Host "Usuario Activo Actualmente:" -ForegroundColor White
                         if ($null -eq $usuarioActual) {
                             Write-Host "  No hay ningun usuario con sesion iniciada." -ForegroundColor Gray
-                        } else {
+                        }
+                        else {
                             Write-Host "  $usuarioActual" -ForegroundColor Cyan
                         }
 
@@ -5161,11 +5250,13 @@ function psSubMenu26 {
 
                         if ($null -eq $listaUsuarios) {
                             Write-Host "  No se encontraron perfiles de usuario adicionales." -ForegroundColor Gray
-                        } else {
+                        }
+                        else {
                             $listaUsuarios | Sort-Object Usuario | Format-Table -AutoSize
                         }
 
-                    } catch {
+                    }
+                    catch {
                         Write-Host "`n[ERROR] No se pudo conectar al equipo $ip." -ForegroundColor Red
                         Write-Host "Razon: $_" -ForegroundColor Red
                         Write-Host "Asegurese de tener permisos de administrador en la maquina remota." -ForegroundColor Yellow
@@ -5193,14 +5284,14 @@ function psSubMenu26 {
                             # Filtramos Type=0 para mostrar solo carpetas compartidas por el usuario
                             # (Type 2147483648 son recursos administrativos ocultos)
                             $shares = Get-WmiObject -Class Win32_Share -ComputerName $targetIP -ErrorAction Stop | 
-                                    Where-Object { $_.Type -eq 0 }
+                            Where-Object { $_.Type -eq 0 }
 
                             if ($shares) {
                                 Write-Host "Recursos encontrados:" -ForegroundColor Green
-                                $shares | Select-Object @{Name="Carpeta"; Expression={$_.Name}}, 
-                                                        @{Name="Ruta Local"; Expression={$_.Path}}, 
-                                                        @{Name="Descripcion"; Expression={$_.Description}} | 
-                                        Format-Table -AutoSize
+                                $shares | Select-Object @{Name = "Carpeta"; Expression = { $_.Name } }, 
+                                @{Name = "Ruta Local"; Expression = { $_.Path } }, 
+                                @{Name = "Descripcion"; Expression = { $_.Description } } | 
+                                Format-Table -AutoSize
                             }
                             else {
                                 Write-Host "No se encontraron carpetas compartidas (públicas) en este equipo." -ForegroundColor Cyan
@@ -5268,7 +5359,8 @@ function psSubMenu26 {
                                 $username = $credenciales.UserName
                                 $password = $credenciales.GetNetworkCredential().Password
                                 $pcRemotaObj = New-Object System.DirectoryServices.DirectoryEntry("WinNT://$ipRemota,computer", $username, $password)
-                            } else {
+                            }
+                            else {
                                 $pcRemotaObj = [ADSI]"WinNT://$ipRemota,computer"
                             }
 
@@ -5297,7 +5389,8 @@ function psSubMenu26 {
                             
                             $listaVisual | Format-Table -AutoSize
                             
-                        } catch {
+                        }
+                        catch {
                             Write-Host "[ERROR CRITICO] No se pudo establecer la conexion remota via RPC/ADSI: $_" -ForegroundColor Red
                             break
                         }
@@ -5332,7 +5425,8 @@ function psSubMenu26 {
                                 $username = $credenciales.UserName
                                 $password = $credenciales.GetNetworkCredential().Password
                                 $usuarioObj = New-Object System.DirectoryServices.DirectoryEntry("WinNT://$ipRemota/$usuarioSeleccionado,user", $username, $password)
-                            } else {
+                            }
+                            else {
                                 $usuarioObj = [ADSI]"WinNT://$ipRemota/$usuarioSeleccionado,user"
                             }
 
@@ -5342,7 +5436,8 @@ function psSubMenu26 {
 
                             Write-Host "[EXITO] La contrasenia del usuario local '$usuarioSeleccionado' ha sido cambiada correctamente en $ipRemota." -ForegroundColor Green
 
-                        } catch {
+                        }
+                        catch {
                             Write-Host "[ERROR] Fallo al cambiar la contrasenia: $_" -ForegroundColor Red
                         }
 
@@ -5387,7 +5482,8 @@ function psSubMenu26 {
                         # Lanzamos el proceso usando CMD para que interprete el .bat correctamente
                         Start-Process cmd.exe -ArgumentList "/c `"$ruta`""
                         exit
-                    } else {
+                    }
+                    else {
                         Write-Error "Error: No se pudo localizar la variable SCRIPT_PATH."
                         Pause
                     }
@@ -5398,7 +5494,7 @@ function psSubMenu26 {
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op26"
                     Write-Host "`n[!] Descargando y reiniciando desde repositorio remoto..." -ForegroundColor Cyan
                     Start-Sleep -Seconds 2
-                    Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://raw.githubusercontent.com/spwil/shellWil/main/ShellSW.bat | iex"
+                    Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://raw.githubusercontent.com/spwil/shellSW/main/ShellSW.bat | iex"
                     exit
                 }
                 
@@ -5449,7 +5545,7 @@ function psSubMenu27 {
         try {
             #cabecera con informacion del autor
             cabecera
-            Write-Header " 27. #####)) Herramientas en INTERNET - ONLINE #####"
+            Write-Header " 27. ###)) ONLINE: Herramientas en INTERNET #####"
             Write-Host "  1. Revision TECLADO PC online - wikiversus.com"
             Write-Host "  2. Revision Teclado PC online - https://en.key-test.ru"
             Write-Host "  3. Revision Teclado PC online - https://www.onlinemictest.com/es/prueba-de-teclado"
@@ -5468,81 +5564,81 @@ function psSubMenu27 {
 
             switch ($op27) {
                 "1" { 
-                        cabecera
-                        menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
 
-                        # Abrir en Chrome (Modo Incógnito)
-                        Start-Process "chrome.exe" -ArgumentList "--incognito","https://www.wikiversus.com/gaming/teclados/test-key-rollover-y-anti-ghosting/"
+                    # Abrir en Chrome (Modo Incógnito)
+                    Start-Process "chrome.exe" -ArgumentList "--incognito", "https://www.wikiversus.com/gaming/teclados/test-key-rollover-y-anti-ghosting/"
 
-                        # Abrir en Brave (Modo Incógnito)
-                        Start-Process "msedge.exe" -ArgumentList "-inprivate","https://www.wikiversus.com/gaming/teclados/test-key-rollover-y-anti-ghosting/"
-                    }
+                    # Abrir en Brave (Modo Incógnito)
+                    Start-Process "msedge.exe" -ArgumentList "-inprivate", "https://www.wikiversus.com/gaming/teclados/test-key-rollover-y-anti-ghosting/"
+                }
                 "2" { 
-                        cabecera
-                        menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
 
-                        Start-Process "chrome.exe" -ArgumentList "--incognito", "https://en.key-test.ru/"
+                    Start-Process "chrome.exe" -ArgumentList "--incognito", "https://en.key-test.ru/"
 
-                    }
+                }
 
                 "3" { 
-                        cabecera
-                        menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
 
-                        Start-Process "chrome.exe" -ArgumentList "--incognito", "https://www.onlinemictest.com/es/prueba-de-teclado/"
+                    Start-Process "chrome.exe" -ArgumentList "--incognito", "https://www.onlinemictest.com/es/prueba-de-teclado/"
 
-                    }
+                }
 
                 "4" { 
-                        cabecera
-                        menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
 
-                        Start-Process "chrome.exe" -ArgumentList "https://keyboardtester.co/mouse-click-tester"
+                    Start-Process "chrome.exe" -ArgumentList "https://keyboardtester.co/mouse-click-tester"
 
-                    }            
+                }            
 
                 "5" { 
-                        cabecera
-                        menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
 
-                        Start-Process "chrome.exe" -ArgumentList "https://online-video-cutter.com/es/"
-                    }
+                    Start-Process "chrome.exe" -ArgumentList "https://online-video-cutter.com/es/"
+                }
 
                 "10" { 
-                        cabecera
-                        menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
 
-                        Start-Process "chrome.exe" -ArgumentList "https://www.eizo.be/monitor-test/"
+                    Start-Process "chrome.exe" -ArgumentList "https://www.eizo.be/monitor-test/"
 
-                    }
+                }
 
                 "20" { 
-                        cabecera
-                        menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
 
-                        Start-Process "chrome.exe" -ArgumentList "https://smartserials.com"
+                    Start-Process "chrome.exe" -ArgumentList "https://smartserials.com"
 
-                    }
+                }
 
                 "21" { 
-                        cabecera
-                        menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
 
-                        Start-Process "chrome.exe" -ArgumentList "https://keygenninja.com/"
+                    Start-Process "chrome.exe" -ArgumentList "https://keygenninja.com/"
 
-                    }
+                }
 
                 "0" { 
-                        #$salirSub = $true # Antigua sentencia para volver al MENU DE INICIO
-                        menuPrincipal
-                    }
+                    #$salirSub = $true # Antigua sentencia para volver al MENU DE INICIO
+                    menuPrincipal
+                }
                 Default { 
-                        Write-Host "Opcion invalida." -ForegroundColor Red 
-                    }
-                } # Cierra switch
-                if (-not $salirSub) { Read-Host "SUB_MENU 27: Presione ENTER para continuar..." }  # VERIFICAR SI CORRESPONDE AQUI
+                    Write-Host "Opcion invalida." -ForegroundColor Red 
+                }
+            } # Cierra switch
+            if (-not $salirSub) { Read-Host "SUB_MENU 27: Presione ENTER para continuar..." }  # VERIFICAR SI CORRESPONDE AQUI
 
-            } # Cierra try
+        } # Cierra try
 
         catch {
             Write-Host "`n[ERROR NO ESPERADO]: $($_.Exception.Message)" -ForegroundColor Red
@@ -5550,23 +5646,23 @@ function psSubMenu27 {
         }
     
         finally {
-                # *************************************************************************************
-                # BLOQUE DE LIMPIEZA Y REFRESCO (Se ejecuta después de cada opción)
-                # *************************************************************************************
+            # *************************************************************************************
+            # BLOQUE DE LIMPIEZA Y REFRESCO (Se ejecuta después de cada opción)
+            # *************************************************************************************
                 
-                # 1. Liberar memoria de objetos COM/WMI/CIM colgados
-                [System.GC]::Collect()
-                [System.GC]::WaitForPendingFinalizers()
+            # 1. Liberar memoria de objetos COM/WMI/CIM colgados
+            [System.GC]::Collect()
+            [System.GC]::WaitForPendingFinalizers()
 
-                # 2. Eliminar variables temporales de la sesión para evitar errores de "cadena de entrada"
-                # Mantenemos variables críticas del script
-                Get-Variable | Where-Object { 
-                    $_.Name -notmatch 'salirPrincipal|opcion|SCRIPT_PATH|PWD|PS|HOME|Error|PID' 
-                } | Remove-Variable -ErrorAction SilentlyContinue
+            # 2. Eliminar variables temporales de la sesión para evitar errores de "cadena de entrada"
+            # Mantenemos variables críticas del script
+            Get-Variable | Where-Object { 
+                $_.Name -notmatch 'salirPrincipal|opcion|SCRIPT_PATH|PWD|PS|HOME|Error|PID' 
+            } | Remove-Variable -ErrorAction SilentlyContinue
 
-                # 3. Pequeña pausa para estabilizar procesos de red si fuera necesario
-                Start-Sleep -Milliseconds 200
-            }
+            # 3. Pequeña pausa para estabilizar procesos de red si fuera necesario
+            Start-Sleep -Milliseconds 200
+        }
     } while (-not $salirSub)
 }
 
@@ -5580,7 +5676,7 @@ function psSubMenu28 {
     do {
         try {
             cabecera
-            Write-Header " 28. -----)) GESTION HELPDESK REMOTO -----"
+            Write-Header " 28. ---)) REMOTO: GESTION HELPDESK -----"
             Write-Host "  1. Habilitar ejecucion remota de scripts (en PC REMOTA)" -ForegroundColor Cyan
             Write-Host "  2. Ejecutar GPUPDATE /FORCE en PC REMOTA" -ForegroundColor Yellow
             Write-Host "  3. Mostrar Caracteristicas de PC Remoto (Info Hardware/OS/Red)" -ForegroundColor Green
@@ -5603,7 +5699,8 @@ function psSubMenu28 {
                 if ($ultimoOcteto -match "^[a-zA-Z]") {
                     # Es un hostname directo
                     $targetMachine = $ultimoOcteto
-                } else {
+                }
+                else {
                     # Es un octeto o IP
                     $ipRemota = if ($ultimoOcteto -match "\.") { $ultimoOcteto } else { $baseIP + $ultimoOcteto }
                     Write-Host "Resolviendo nombre de equipo (Hostname) necesario para WinRM..." -ForegroundColor Cyan
@@ -5611,16 +5708,19 @@ function psSubMenu28 {
                         $sys = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $ipRemota -ErrorAction Stop
                         $targetMachine = $sys.CSName
                         Write-Host "Nombre de equipo resuelto: $targetMachine" -ForegroundColor Green
-                    } catch {
+                    }
+                    catch {
                         try {
                             $targetMachine = [System.Net.Dns]::GetHostEntry($ipRemota).HostName
                             Write-Host "Nombre de equipo resuelto via DNS: $targetMachine" -ForegroundColor Green
-                        } catch {
+                        }
+                        catch {
                             Write-Host "ADVERTENCIA: No se pudo resolver la IP automaticamente." -ForegroundColor Yellow
                             $manualHost = Read-Host "Ingrese el NOMBRE DE EQUIPO (Hostname) del equipo remoto manualmente"
                             if ($manualHost -ne "") {
                                 $targetMachine = $manualHost
-                            } else {
+                            }
+                            else {
                                 $targetMachine = $ipRemota # fallback a la IP
                             }
                         }
@@ -5647,16 +5747,19 @@ function psSubMenu28 {
                             $result = $process.Create($cmd)
                             if ($result.ReturnValue -eq 0) {
                                 Write-Host "[OK] Comando de habilitacion enviado correctamente via WMI." -ForegroundColor Green
-                            } else {
+                            }
+                            else {
                                 Write-Host "Error al enviar comando via WMI (Codigo: $($result.ReturnValue))." -ForegroundColor Red
                             }
-                        } else {
+                        }
+                        else {
                             $psexecPath = "C:\PSTools\PsExec.exe"
                             if (Test-Path $psexecPath) {
                                 $arg = "\\$ip -accepteula -s powershell.exe -NoProfile -Command `"try { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force } catch {}; try { Enable-PSRemoting -SkipNetworkProfileCheck -Force } catch {}`""
                                 Start-Process -FilePath $psexecPath -ArgumentList $arg -Wait -NoNewWindow
                                 Write-Host "[OK] Comando enviado via PsExec." -ForegroundColor Green
-                            } else {
+                            }
+                            else {
                                 Write-Host "ERROR: No se pudo conectar via WMI ni se encontro PsExec en C:\PSTools\PsExec.exe" -ForegroundColor Red
                             }
                         }
@@ -5677,22 +5780,26 @@ function psSubMenu28 {
                             Invoke-Command -ComputerName $target -ScriptBlock {
                                 gpupdate /force
                             } -ErrorAction Stop
-                        } catch {
+                        }
+                        catch {
                             Write-Host "WinRM no disponible. Intentando ejecucion en segundo plano via WMI..." -ForegroundColor Yellow
                             $process = Get-WmiObject -List -ComputerName $ip -Class Win32_Process -ErrorAction SilentlyContinue
                             if ($process) {
                                 $result = $process.Create("cmd.exe /c gpupdate /force")
                                 if ($result.ReturnValue -eq 0) {
                                     Write-Host "[OK] Proceso gpupdate lanzado en segundo plano via WMI." -ForegroundColor Green
-                                } else {
+                                }
+                                else {
                                     Write-Host "Error al ejecutar gpupdate via WMI (Codigo: $($result.ReturnValue))." -ForegroundColor Red
                                 }
-                            } else {
+                            }
+                            else {
                                 $psexecPath = "C:\PSTools\PsExec.exe"
                                 if (Test-Path $psexecPath) {
                                     & $psexecPath \\$ip -accepteula -s cmd.exe /c "gpupdate /force"
                                     Write-Host "[OK] GPUPDATE ejecutado via PsExec." -ForegroundColor Green
-                                } else {
+                                }
+                                else {
                                     Write-Host "ERROR: No se pudo realizar la conexion." -ForegroundColor Red
                                 }
                             }
@@ -5724,7 +5831,8 @@ function psSubMenu28 {
                             if ($partitions) {
                                 if ($partitions | Where-Object { $_.Type -like "*GPT*" -or $_.Type -like "*EFI*" -or $_.Name -like "*EFI*" }) {
                                     $bootStyle = "UEFI"
-                                } else {
+                                }
+                                else {
                                     if (Test-Path "\\$ip\c$\Windows\Boot\EFI" -ErrorAction SilentlyContinue) {
                                         $bootStyle = "UEFI"
                                     }
@@ -5732,7 +5840,8 @@ function psSubMenu28 {
                                 if ($partitions | Where-Object { $_.Type -like "*GPT*" }) {
                                     $partitionStyle = "GPT"
                                 }
-                            } else {
+                            }
+                            else {
                                 if (Test-Path "\\$ip\c$\Windows\Boot\EFI" -ErrorAction SilentlyContinue) {
                                     $bootStyle = "UEFI"
                                     $partitionStyle = "GPT"
@@ -5745,7 +5854,8 @@ function psSubMenu28 {
                                 if ($bootDisk -and $bootDisk.GPTSignature -ne $null) {
                                     $partitionStyle = "GPT"
                                 }
-                            } catch {}
+                            }
+                            catch {}
 
                             # 3. Detectar Usuario Activo (Local o Dominio)
                             $activeUser = "Ninguno (Sin sesion activa)"
@@ -5762,10 +5872,12 @@ function psSubMenu28 {
                                     if ($users.Count -gt 0) {
                                         $activeUser = ($users | Select-Object -Unique) -join ", "
                                     }
-                                } else {
+                                }
+                                else {
                                     if ($cs.UserName) { $activeUser = $cs.UserName }
                                 }
-                            } catch {
+                            }
+                            catch {
                                 if ($cs.UserName) { $activeUser = $cs.UserName }
                             }
                             
@@ -5775,7 +5887,8 @@ function psSubMenu28 {
                                     $type = if ($_.MediaType -eq 3) { "HDD" } elseif ($_.MediaType -eq 4) { "SSD" } else { "Desconocido" }
                                     "   - Disco $($_.DeviceId): $($_.Model.Trim()) ($type)"
                                 }
-                            } catch {
+                            }
+                            catch {
                                 Get-WmiObject -Class Win32_DiskDrive -ComputerName $ip | ForEach-Object {
                                     "   - Disco $($_.Index): $($_.Model.Trim()) (Interfaz: $($_.InterfaceType))"
                                 }
@@ -5789,28 +5902,29 @@ function psSubMenu28 {
                                     $pctFree = if ($_.Size -gt 0) { [Math]::Round(($_.FreeSpace / $_.Size) * 100, 1) } else { 0 }
                                     "   - Unidad $($_.DeviceID) ($($_.VolumeName)) [$($_.FileSystem)] -> Total: $totalGB GB | Libre: $freeGB GB ($pctFree% libre)"
                                 }
-                            } catch {
+                            }
+                            catch {
                                 @("   - No se pudieron consultar las unidades logicas.")
                             }
                             
                             # 6. Adaptadores de Red activos (Detalle completo)
                             $adaptersInfo = Get-WmiObject -Class Win32_NetworkAdapter -ComputerName $ip | 
-                                Where-Object { $_.PhysicalAdapter -and $_.NetConnectionStatus -eq 2 } | 
-                                ForEach-Object {
-                                    $config = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -ComputerName $ip -Filter "Index=$($_.Index)" -ErrorAction SilentlyContinue
-                                    $ips = "N/A"
-                                    $masks = "N/A"
-                                    $gateways = "N/A"
-                                    $dns = "N/A"
-                                    if ($config) {
-                                        if ($config.IPAddress) { $ips = $config.IPAddress[0] }
-                                        if ($config.IPSubnet) { $masks = $config.IPSubnet[0] }
-                                        if ($config.DefaultIPGateway) { $gateways = $config.DefaultIPGateway -join ", " }
-                                        if ($config.DNSServerSearchOrder) { $dns = $config.DNSServerSearchOrder -join ", " }
-                                    }
-                                    $netType = if ($_.Name -match "Wireless|Wi-Fi|WiFi|802\.11") { "Wi-Fi" } else { "Ethernet" }
-                                    "   - $($_.Name) ($netType)`n     IP: $ips | Mascara: $masks`n     Gateway: $gateways`n     DNS: $dns`n     MAC: $($_.MACAddress)"
+                            Where-Object { $_.PhysicalAdapter -and $_.NetConnectionStatus -eq 2 } | 
+                            ForEach-Object {
+                                $config = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -ComputerName $ip -Filter "Index=$($_.Index)" -ErrorAction SilentlyContinue
+                                $ips = "N/A"
+                                $masks = "N/A"
+                                $gateways = "N/A"
+                                $dns = "N/A"
+                                if ($config) {
+                                    if ($config.IPAddress) { $ips = $config.IPAddress[0] }
+                                    if ($config.IPSubnet) { $masks = $config.IPSubnet[0] }
+                                    if ($config.DefaultIPGateway) { $gateways = $config.DefaultIPGateway -join ", " }
+                                    if ($config.DNSServerSearchOrder) { $dns = $config.DNSServerSearchOrder -join ", " }
                                 }
+                                $netType = if ($_.Name -match "Wireless|Wi-Fi|WiFi|802\.11") { "Wi-Fi" } else { "Ethernet" }
+                                "   - $($_.Name) ($netType)`n     IP: $ips | Mascara: $masks`n     Gateway: $gateways`n     DNS: $dns`n     MAC: $($_.MACAddress)"
+                            }
 
                             # 7. Gestión de Impresoras (Predeterminada vs Disponibles con Estado)
                             $defaultPrinterInfo = "Ninguna o sin informacion."
@@ -5823,12 +5937,14 @@ function psSubMenu28 {
                                         $desc = "$($p.Name) [Puerto: $($p.PortName)] (Estado: $estado)"
                                         if ($p.Default) {
                                             $defaultPrinterInfo = $desc
-                                        } else {
+                                        }
+                                        else {
                                             $availablePrinters += "   - $desc"
                                         }
                                     }
                                 }
-                            } catch {
+                            }
+                            catch {
                                 $defaultPrinterInfo = "Error al consultar impresoras."
                             }
 
@@ -5862,7 +5978,8 @@ function psSubMenu28 {
                             }
                             Write-Host "======================================================================`n" -ForegroundColor White
                             
-                        } catch {
+                        }
+                        catch {
                             Write-Host "ERROR: No se pudo conectar o extraer informacion del equipo $ip." -ForegroundColor Red
                             Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
                         }
@@ -5876,10 +5993,12 @@ function psSubMenu28 {
                 }
             }
             if (-not $salirSub) { Read-Host "SUB_MENU 28: Presione ENTER para continuar..." }
-        } catch {
+        }
+        catch {
             Write-Host "`n[ERROR NO ESPERADO]: $($_.Exception.Message)" -ForegroundColor Red
             Read-Host "Presione Enter para continuar..."
-        } finally {
+        }
+        finally {
             [System.GC]::Collect()
             [System.GC]::WaitForPendingFinalizers()
             Get-Variable | Where-Object { 
@@ -5920,7 +6039,6 @@ function menuPrincipal {
             Write-Host "    6.3 Liberar RAM." -ForegroundColor DarkCyan
             Write-Host "    6.4 Liberar Procesador." -ForegroundColor DarkCyan
             Write-Host "  7.  Resetear Internet Explorer"
-            Write-Host "  8.  Actualizacion y Diagnostico de Politicas (gpupdate)" -ForegroundColor DarkCyan
             Write-Host "  9.  Abrir Internet Explorer con Topacio"
             Write-Host "  10. Ping Infraestructura"
             Write-Host "  11. Revisar Unidades (CHKDSK) - Reparar, localizar y desmontar - chkdsk.exe /F /R /X." -ForegroundColor DarkCyan
@@ -5935,7 +6053,7 @@ function menuPrincipal {
             Write-Host "  20. ---)) LOCAL: INFORMACION SISTEMA CMD [RAM] [HDD] - DISM - RESETEAR RED."
             Write-Host "  21. ---)) LOCAL: VENTANAS ADMINISTRACION WINDOWS - ANTIVIRUS."
             Write-Host "  22. ---)) LOCAL: SERVICIOS WINDOWS - HERRAMIENTAS AVANZADOS."
-            Write-Host "  23. ---)) LOCAL: COMANDOS EN [[[POWERSHELL]]] - HERRAMIENTAS DE SISTEMA."
+            Write-Host "  23. ---)) LOCAL: HELPDESK LOCAL - HERRAMIENTAS DE SISTEMA." -ForegroundColor Green
             Write-Host "  24. ***)) LOCAL: COMANDOS WINDOWS 11 *****"
             Write-Host "  25. +++)) REMOTO: COMANDOS RED - ADMINISTRACION REMOTA +++++" -ForegroundColor Cyan
             Write-Host "  26. ===)) REMOTO: COMANDOS AD =====" -ForegroundColor Cyan
@@ -5945,7 +6063,7 @@ function menuPrincipal {
             Write-Host "    29.1 Apagar PC." -ForegroundColor Green
             Write-Host "    29.2 Reiniciar Sistema Operativo (shutdown)." -ForegroundColor Green
             Write-Host "  30. REFRESH (Modo LOCAL)."
-            Write-Host "  31. REFRESH desde GitHub (Online)" -ForegroundColor Cyan
+            Write-Host "  31. REFRESH desde GitHub (Online)." -ForegroundColor Cyan
             Write-Host "  0.  Salir"
             Write-Host "======================================================================" -ForegroundColor Yellow
             
@@ -6188,31 +6306,7 @@ function menuPrincipal {
                     Write-Host ""
 
                 }
-                "8" { 
-                    # clear-Host
-                    cabecera
-                    menuOpcion "Haz elegido la opcion: $opcion"
-                        
-                    Write-Host "ipconfig /flushdns: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
-                    ipconfig /flushdns
-                    ipconfig /registerdns
-                    ipconfig /displaydns
-                        
-                    Write-Host "netsh interface ip delete arpcache: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
-                    netsh interface ip delete arpcache
-                        
-                    Write-Host "netsh winsock reset catalog: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
-                    netsh winsock reset catalog
-                        
-                    Write-Host "wuauclt /detectnow: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
-                    wuauclt /detectnow
-                        
-                    Write-Host "GPUPDATE /FORCE: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
-                    GPUPDATE /FORCE
 
-                    Write-Host "Proceso realizado..." -ForegroundColor Green
-                    Write-Host ""
-                }
                 "9" { 
                     # clear-Host
                     cabecera
@@ -6489,7 +6583,7 @@ function menuPrincipal {
                     cabecera
                     Write-Host "`n[!] Descargando y reiniciando desde repositorio remoto..." -ForegroundColor Cyan
                     Start-Sleep -Seconds 2
-                    Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://raw.githubusercontent.com/spwil/shellSSmain/ShellSW.bat | iex"
+                    Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://raw.githubusercontent.com/spwil/shellSS/ShellSW.bat | iex"
                     exit
                 }
 

@@ -4,7 +4,7 @@
         try {
             #cabecera con informacion del autor
             cabecera
-            Write-Header " 22. -----)) SERVICIOS WINDOWS - HERRAMIENTAS AVANZADOS."
+            Write-Header " 22. ---)) LOCAL: SERVICIOS WINDOWS - HERRAMIENTAS AVANZADOS."
             Write-Host "  1. Ver estado Servicio Actualizacion Windows 7 en adelante."
             Write-Host "  2. Detener Servicio Actualizacion Windows 7 en adelante."
             Write-Host "  3. Iniciar Servicio Actualizacion Windows 10."
@@ -59,7 +59,8 @@
                             
                             Write-Host "Servicio: $($svc.DisplayName) ($nombreSvc)"
                             Write-Host "ESTADO: $estado" -ForegroundColor $color
-                        } else {
+                        }
+                        else {
                             # Si el servicio no existe (como UsoSvc en Win 7)
                             Write-Host "Servicio: $nombreSvc - [NO INSTALADO EN ESTE SISTEMA]" -ForegroundColor Gray
                         }
@@ -117,7 +118,8 @@
                                 Set-ItemProperty -Path $fullPath -Name "ObjectName" -Value "Guest" -Force
                                 Write-Host "CRITICO: Credenciales de $svcName cambiadas a 'Guest'." -ForegroundColor Cyan
                             }
-                        } else {
+                        }
+                        else {
                             Write-Host "SKIP: $svcName no existe en este sistema (Normal en Windows 7)." -ForegroundColor Gray
                         }
                     }
@@ -132,7 +134,8 @@
                                 Write-Host "Deteniendo $svcName..." -NoNewline
                                 Stop-Service -Name $svcName -Force -ErrorAction SilentlyContinue
                                 Write-Host " [HECHO]" -ForegroundColor Green
-                            } else {
+                            }
+                            else {
                                 Write-Host "$svcName ya se encuentra detenido." -ForegroundColor Gray
                             }
                         }
@@ -193,7 +196,8 @@
                             
                             Write-Host "OK: $svcName restaurado a LocalSystem y modo Manual." -ForegroundColor Green
                             Start-Sleep -Seconds 2
-                        } else {
+                        }
+                        else {
                             Write-Host "SKIP: $svcName no existe en este sistema (ignorado)." -ForegroundColor Gray
                         }
                     }
@@ -256,7 +260,8 @@
                         Write-Host "Configurando $key... " -NoNewline
                         if (Set-WindowsUpdatePolicy -Name $key -Value $val) {
                             Write-Host 'OK' -ForegroundColor Green
-                        } else {
+                        }
+                        else {
                             Write-Host 'FALLO' -ForegroundColor Red
                         }
                     }
@@ -362,17 +367,17 @@
                         $ramMB = [Math]::Round($p.WorkingSet64 / 1MB, 2)
                         
                         New-Object PSObject -Property @{
-                            ID          = $p.Id
-                            Aplicacion  = $p.ProcessName
-                            Ventana     = if ($p.MainWindowTitle.Length -gt 45) { $p.MainWindowTitle.Substring(0, 42) + "..." } else { $p.MainWindowTitle }
-                            RAM_MB      = $ramMB
+                            ID         = $p.Id
+                            Aplicacion = $p.ProcessName
+                            Ventana    = if ($p.MainWindowTitle.Length -gt 45) { $p.MainWindowTitle.Substring(0, 42) + "..." } else { $p.MainWindowTitle }
+                            RAM_MB     = $ramMB
                         }
                     }
 
                     # 2. Mostrar tabla de aplicaciones
                     $reporteApps | Select-Object ID, Aplicacion, RAM_MB, Ventana | 
-                                Sort-Object RAM_MB -Descending | 
-                                Format-Table -AutoSize
+                    Sort-Object RAM_MB -Descending | 
+                    Format-Table -AutoSize
 
                     Write-Host ""
                     Write-Host "--- GESTION DE PROCESOS ---" -ForegroundColor Cyan
@@ -411,14 +416,14 @@
                 "0" { 
                     #$salirSub = $true 
                     menuPrincipal
-                    }
+                }
                 Default { 
                     Write-Host "Opcion invalida." -ForegroundColor Red 
-                    }
+                }
             } # Cierra switch
             if (-not $salirSub) { 
                 Read-Host "SUB_MENU 22: Presione ENTER para continuar..." 
-                }
+            }
         } # Cierra try
 
         catch {

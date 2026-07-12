@@ -4,7 +4,7 @@
         try {
             #cabecera con informacion del autor
             cabecera
-            Write-Header " 24. *****)) COMANDOS WINDOWS 11 *****"
+            Write-Header " 24. ***)) LOCAL: COMANDOS WINDOWS 11 *****"
             Write-Host "  1. Abrir Dispositivos e Impresoras."
             Write-Host "  2. Configuracion de Dispositivos General."
             Write-Host "  3. Accesibilidad - Filtros de Color."
@@ -45,7 +45,8 @@
                     if ($osVersion -ge 10) {
                         Write-Host "Detectado Windows 10/11. Abriendo Configuracion Moderna..." -ForegroundColor Cyan
                         Start-Process "ms-settings:printers"
-                    } else {
+                    }
+                    else {
                         Write-Host "Detectado Windows antiguo. Abriendo Panel de Control clasico..." -ForegroundColor Yellow
                         Start-Process "control" -ArgumentList "printers"
                     }

@@ -4,7 +4,7 @@
         try {
             #cabecera con informacion del autor
             cabecera
-            Write-Header " 27. #####)) Herramientas en INTERNET - ONLINE #####"
+            Write-Header " 27. ###)) ONLINE: Herramientas en INTERNET #####"
             Write-Host "  1. Revision TECLADO PC online - wikiversus.com"
             Write-Host "  2. Revision Teclado PC online - https://en.key-test.ru"
             Write-Host "  3. Revision Teclado PC online - https://www.onlinemictest.com/es/prueba-de-teclado"
@@ -23,81 +23,81 @@
 
             switch ($op27) {
                 "1" { 
-                        cabecera
-                        menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
 
-                        # Abrir en Chrome (Modo Incógnito)
-                        Start-Process "chrome.exe" -ArgumentList "--incognito","https://www.wikiversus.com/gaming/teclados/test-key-rollover-y-anti-ghosting/"
+                    # Abrir en Chrome (Modo Incógnito)
+                    Start-Process "chrome.exe" -ArgumentList "--incognito", "https://www.wikiversus.com/gaming/teclados/test-key-rollover-y-anti-ghosting/"
 
-                        # Abrir en Brave (Modo Incógnito)
-                        Start-Process "msedge.exe" -ArgumentList "-inprivate","https://www.wikiversus.com/gaming/teclados/test-key-rollover-y-anti-ghosting/"
-                    }
+                    # Abrir en Brave (Modo Incógnito)
+                    Start-Process "msedge.exe" -ArgumentList "-inprivate", "https://www.wikiversus.com/gaming/teclados/test-key-rollover-y-anti-ghosting/"
+                }
                 "2" { 
-                        cabecera
-                        menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
 
-                        Start-Process "chrome.exe" -ArgumentList "--incognito", "https://en.key-test.ru/"
+                    Start-Process "chrome.exe" -ArgumentList "--incognito", "https://en.key-test.ru/"
 
-                    }
+                }
 
                 "3" { 
-                        cabecera
-                        menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
 
-                        Start-Process "chrome.exe" -ArgumentList "--incognito", "https://www.onlinemictest.com/es/prueba-de-teclado/"
+                    Start-Process "chrome.exe" -ArgumentList "--incognito", "https://www.onlinemictest.com/es/prueba-de-teclado/"
 
-                    }
+                }
 
                 "4" { 
-                        cabecera
-                        menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
 
-                        Start-Process "chrome.exe" -ArgumentList "https://keyboardtester.co/mouse-click-tester"
+                    Start-Process "chrome.exe" -ArgumentList "https://keyboardtester.co/mouse-click-tester"
 
-                    }            
+                }            
 
                 "5" { 
-                        cabecera
-                        menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
 
-                        Start-Process "chrome.exe" -ArgumentList "https://online-video-cutter.com/es/"
-                    }
+                    Start-Process "chrome.exe" -ArgumentList "https://online-video-cutter.com/es/"
+                }
 
                 "10" { 
-                        cabecera
-                        menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
 
-                        Start-Process "chrome.exe" -ArgumentList "https://www.eizo.be/monitor-test/"
+                    Start-Process "chrome.exe" -ArgumentList "https://www.eizo.be/monitor-test/"
 
-                    }
+                }
 
                 "20" { 
-                        cabecera
-                        menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
 
-                        Start-Process "chrome.exe" -ArgumentList "https://smartserials.com"
+                    Start-Process "chrome.exe" -ArgumentList "https://smartserials.com"
 
-                    }
+                }
 
                 "21" { 
-                        cabecera
-                        menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op27"
 
-                        Start-Process "chrome.exe" -ArgumentList "https://keygenninja.com/"
+                    Start-Process "chrome.exe" -ArgumentList "https://keygenninja.com/"
 
-                    }
+                }
 
                 "0" { 
-                        #$salirSub = $true # Antigua sentencia para volver al MENU DE INICIO
-                        menuPrincipal
-                    }
+                    #$salirSub = $true # Antigua sentencia para volver al MENU DE INICIO
+                    menuPrincipal
+                }
                 Default { 
-                        Write-Host "Opcion invalida." -ForegroundColor Red 
-                    }
-                } # Cierra switch
-                if (-not $salirSub) { Read-Host "SUB_MENU 27: Presione ENTER para continuar..." }  # VERIFICAR SI CORRESPONDE AQUI
+                    Write-Host "Opcion invalida." -ForegroundColor Red 
+                }
+            } # Cierra switch
+            if (-not $salirSub) { Read-Host "SUB_MENU 27: Presione ENTER para continuar..." }  # VERIFICAR SI CORRESPONDE AQUI
 
-            } # Cierra try
+        } # Cierra try
 
         catch {
             Write-Host "`n[ERROR NO ESPERADO]: $($_.Exception.Message)" -ForegroundColor Red
@@ -105,23 +105,23 @@
         }
     
         finally {
-                # *************************************************************************************
-                # BLOQUE DE LIMPIEZA Y REFRESCO (Se ejecuta después de cada opción)
-                # *************************************************************************************
+            # *************************************************************************************
+            # BLOQUE DE LIMPIEZA Y REFRESCO (Se ejecuta después de cada opción)
+            # *************************************************************************************
                 
-                # 1. Liberar memoria de objetos COM/WMI/CIM colgados
-                [System.GC]::Collect()
-                [System.GC]::WaitForPendingFinalizers()
+            # 1. Liberar memoria de objetos COM/WMI/CIM colgados
+            [System.GC]::Collect()
+            [System.GC]::WaitForPendingFinalizers()
 
-                # 2. Eliminar variables temporales de la sesión para evitar errores de "cadena de entrada"
-                # Mantenemos variables críticas del script
-                Get-Variable | Where-Object { 
-                    $_.Name -notmatch 'salirPrincipal|opcion|SCRIPT_PATH|PWD|PS|HOME|Error|PID' 
-                } | Remove-Variable -ErrorAction SilentlyContinue
+            # 2. Eliminar variables temporales de la sesión para evitar errores de "cadena de entrada"
+            # Mantenemos variables críticas del script
+            Get-Variable | Where-Object { 
+                $_.Name -notmatch 'salirPrincipal|opcion|SCRIPT_PATH|PWD|PS|HOME|Error|PID' 
+            } | Remove-Variable -ErrorAction SilentlyContinue
 
-                # 3. Pequeña pausa para estabilizar procesos de red si fuera necesario
-                Start-Sleep -Milliseconds 200
-            }
+            # 3. Pequeña pausa para estabilizar procesos de red si fuera necesario
+            Start-Sleep -Milliseconds 200
+        }
     } while (-not $salirSub)
 }
 

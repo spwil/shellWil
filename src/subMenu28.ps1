@@ -3,7 +3,7 @@ function psSubMenu28 {
     do {
         try {
             cabecera
-            Write-Header " 28. -----)) GESTION HELPDESK REMOTO -----"
+            Write-Header " 28. ---)) REMOTO: GESTION HELPDESK -----"
             Write-Host "  1. Habilitar ejecucion remota de scripts (en PC REMOTA)" -ForegroundColor Cyan
             Write-Host "  2. Ejecutar GPUPDATE /FORCE en PC REMOTA" -ForegroundColor Yellow
             Write-Host "  3. Mostrar Caracteristicas de PC Remoto (Info Hardware/OS/Red)" -ForegroundColor Green
@@ -26,7 +26,8 @@ function psSubMenu28 {
                 if ($ultimoOcteto -match "^[a-zA-Z]") {
                     # Es un hostname directo
                     $targetMachine = $ultimoOcteto
-                } else {
+                }
+                else {
                     # Es un octeto o IP
                     $ipRemota = if ($ultimoOcteto -match "\.") { $ultimoOcteto } else { $baseIP + $ultimoOcteto }
                     Write-Host "Resolviendo nombre de equipo (Hostname) necesario para WinRM..." -ForegroundColor Cyan
@@ -34,16 +35,19 @@ function psSubMenu28 {
                         $sys = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $ipRemota -ErrorAction Stop
                         $targetMachine = $sys.CSName
                         Write-Host "Nombre de equipo resuelto: $targetMachine" -ForegroundColor Green
-                    } catch {
+                    }
+                    catch {
                         try {
                             $targetMachine = [System.Net.Dns]::GetHostEntry($ipRemota).HostName
                             Write-Host "Nombre de equipo resuelto via DNS: $targetMachine" -ForegroundColor Green
-                        } catch {
+                        }
+                        catch {
                             Write-Host "ADVERTENCIA: No se pudo resolver la IP automaticamente." -ForegroundColor Yellow
                             $manualHost = Read-Host "Ingrese el NOMBRE DE EQUIPO (Hostname) del equipo remoto manualmente"
                             if ($manualHost -ne "") {
                                 $targetMachine = $manualHost
-                            } else {
+                            }
+                            else {
                                 $targetMachine = $ipRemota # fallback a la IP
                             }
                         }
@@ -70,16 +74,19 @@ function psSubMenu28 {
                             $result = $process.Create($cmd)
                             if ($result.ReturnValue -eq 0) {
                                 Write-Host "[OK] Comando de habilitacion enviado correctamente via WMI." -ForegroundColor Green
-                            } else {
+                            }
+                            else {
                                 Write-Host "Error al enviar comando via WMI (Codigo: $($result.ReturnValue))." -ForegroundColor Red
                             }
-                        } else {
+                        }
+                        else {
                             $psexecPath = "C:\PSTools\PsExec.exe"
                             if (Test-Path $psexecPath) {
                                 $arg = "\\$ip -accepteula -s powershell.exe -NoProfile -Command `"try { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force } catch {}; try { Enable-PSRemoting -SkipNetworkProfileCheck -Force } catch {}`""
                                 Start-Process -FilePath $psexecPath -ArgumentList $arg -Wait -NoNewWindow
                                 Write-Host "[OK] Comando enviado via PsExec." -ForegroundColor Green
-                            } else {
+                            }
+                            else {
                                 Write-Host "ERROR: No se pudo conectar via WMI ni se encontro PsExec en C:\PSTools\PsExec.exe" -ForegroundColor Red
                             }
                         }
@@ -100,22 +107,26 @@ function psSubMenu28 {
                             Invoke-Command -ComputerName $target -ScriptBlock {
                                 gpupdate /force
                             } -ErrorAction Stop
-                        } catch {
+                        }
+                        catch {
                             Write-Host "WinRM no disponible. Intentando ejecucion en segundo plano via WMI..." -ForegroundColor Yellow
                             $process = Get-WmiObject -List -ComputerName $ip -Class Win32_Process -ErrorAction SilentlyContinue
                             if ($process) {
                                 $result = $process.Create("cmd.exe /c gpupdate /force")
                                 if ($result.ReturnValue -eq 0) {
                                     Write-Host "[OK] Proceso gpupdate lanzado en segundo plano via WMI." -ForegroundColor Green
-                                } else {
+                                }
+                                else {
                                     Write-Host "Error al ejecutar gpupdate via WMI (Codigo: $($result.ReturnValue))." -ForegroundColor Red
                                 }
-                            } else {
+                            }
+                            else {
                                 $psexecPath = "C:\PSTools\PsExec.exe"
                                 if (Test-Path $psexecPath) {
                                     & $psexecPath \\$ip -accepteula -s cmd.exe /c "gpupdate /force"
                                     Write-Host "[OK] GPUPDATE ejecutado via PsExec." -ForegroundColor Green
-                                } else {
+                                }
+                                else {
                                     Write-Host "ERROR: No se pudo realizar la conexion." -ForegroundColor Red
                                 }
                             }
@@ -147,7 +158,8 @@ function psSubMenu28 {
                             if ($partitions) {
                                 if ($partitions | Where-Object { $_.Type -like "*GPT*" -or $_.Type -like "*EFI*" -or $_.Name -like "*EFI*" }) {
                                     $bootStyle = "UEFI"
-                                } else {
+                                }
+                                else {
                                     if (Test-Path "\\$ip\c$\Windows\Boot\EFI" -ErrorAction SilentlyContinue) {
                                         $bootStyle = "UEFI"
                                     }
@@ -155,7 +167,8 @@ function psSubMenu28 {
                                 if ($partitions | Where-Object { $_.Type -like "*GPT*" }) {
                                     $partitionStyle = "GPT"
                                 }
-                            } else {
+                            }
+                            else {
                                 if (Test-Path "\\$ip\c$\Windows\Boot\EFI" -ErrorAction SilentlyContinue) {
                                     $bootStyle = "UEFI"
                                     $partitionStyle = "GPT"
@@ -168,7 +181,8 @@ function psSubMenu28 {
                                 if ($bootDisk -and $bootDisk.GPTSignature -ne $null) {
                                     $partitionStyle = "GPT"
                                 }
-                            } catch {}
+                            }
+                            catch {}
 
                             # 3. Detectar Usuario Activo (Local o Dominio)
                             $activeUser = "Ninguno (Sin sesion activa)"
@@ -185,10 +199,12 @@ function psSubMenu28 {
                                     if ($users.Count -gt 0) {
                                         $activeUser = ($users | Select-Object -Unique) -join ", "
                                     }
-                                } else {
+                                }
+                                else {
                                     if ($cs.UserName) { $activeUser = $cs.UserName }
                                 }
-                            } catch {
+                            }
+                            catch {
                                 if ($cs.UserName) { $activeUser = $cs.UserName }
                             }
                             
@@ -198,7 +214,8 @@ function psSubMenu28 {
                                     $type = if ($_.MediaType -eq 3) { "HDD" } elseif ($_.MediaType -eq 4) { "SSD" } else { "Desconocido" }
                                     "   - Disco $($_.DeviceId): $($_.Model.Trim()) ($type)"
                                 }
-                            } catch {
+                            }
+                            catch {
                                 Get-WmiObject -Class Win32_DiskDrive -ComputerName $ip | ForEach-Object {
                                     "   - Disco $($_.Index): $($_.Model.Trim()) (Interfaz: $($_.InterfaceType))"
                                 }
@@ -212,28 +229,29 @@ function psSubMenu28 {
                                     $pctFree = if ($_.Size -gt 0) { [Math]::Round(($_.FreeSpace / $_.Size) * 100, 1) } else { 0 }
                                     "   - Unidad $($_.DeviceID) ($($_.VolumeName)) [$($_.FileSystem)] -> Total: $totalGB GB | Libre: $freeGB GB ($pctFree% libre)"
                                 }
-                            } catch {
+                            }
+                            catch {
                                 @("   - No se pudieron consultar las unidades logicas.")
                             }
                             
                             # 6. Adaptadores de Red activos (Detalle completo)
                             $adaptersInfo = Get-WmiObject -Class Win32_NetworkAdapter -ComputerName $ip | 
-                                Where-Object { $_.PhysicalAdapter -and $_.NetConnectionStatus -eq 2 } | 
-                                ForEach-Object {
-                                    $config = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -ComputerName $ip -Filter "Index=$($_.Index)" -ErrorAction SilentlyContinue
-                                    $ips = "N/A"
-                                    $masks = "N/A"
-                                    $gateways = "N/A"
-                                    $dns = "N/A"
-                                    if ($config) {
-                                        if ($config.IPAddress) { $ips = $config.IPAddress[0] }
-                                        if ($config.IPSubnet) { $masks = $config.IPSubnet[0] }
-                                        if ($config.DefaultIPGateway) { $gateways = $config.DefaultIPGateway -join ", " }
-                                        if ($config.DNSServerSearchOrder) { $dns = $config.DNSServerSearchOrder -join ", " }
-                                    }
-                                    $netType = if ($_.Name -match "Wireless|Wi-Fi|WiFi|802\.11") { "Wi-Fi" } else { "Ethernet" }
-                                    "   - $($_.Name) ($netType)`n     IP: $ips | Mascara: $masks`n     Gateway: $gateways`n     DNS: $dns`n     MAC: $($_.MACAddress)"
+                            Where-Object { $_.PhysicalAdapter -and $_.NetConnectionStatus -eq 2 } | 
+                            ForEach-Object {
+                                $config = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -ComputerName $ip -Filter "Index=$($_.Index)" -ErrorAction SilentlyContinue
+                                $ips = "N/A"
+                                $masks = "N/A"
+                                $gateways = "N/A"
+                                $dns = "N/A"
+                                if ($config) {
+                                    if ($config.IPAddress) { $ips = $config.IPAddress[0] }
+                                    if ($config.IPSubnet) { $masks = $config.IPSubnet[0] }
+                                    if ($config.DefaultIPGateway) { $gateways = $config.DefaultIPGateway -join ", " }
+                                    if ($config.DNSServerSearchOrder) { $dns = $config.DNSServerSearchOrder -join ", " }
                                 }
+                                $netType = if ($_.Name -match "Wireless|Wi-Fi|WiFi|802\.11") { "Wi-Fi" } else { "Ethernet" }
+                                "   - $($_.Name) ($netType)`n     IP: $ips | Mascara: $masks`n     Gateway: $gateways`n     DNS: $dns`n     MAC: $($_.MACAddress)"
+                            }
 
                             # 7. Gestión de Impresoras (Predeterminada vs Disponibles con Estado)
                             $defaultPrinterInfo = "Ninguna o sin informacion."
@@ -246,12 +264,14 @@ function psSubMenu28 {
                                         $desc = "$($p.Name) [Puerto: $($p.PortName)] (Estado: $estado)"
                                         if ($p.Default) {
                                             $defaultPrinterInfo = $desc
-                                        } else {
+                                        }
+                                        else {
                                             $availablePrinters += "   - $desc"
                                         }
                                     }
                                 }
-                            } catch {
+                            }
+                            catch {
                                 $defaultPrinterInfo = "Error al consultar impresoras."
                             }
 
@@ -285,7 +305,8 @@ function psSubMenu28 {
                             }
                             Write-Host "======================================================================`n" -ForegroundColor White
                             
-                        } catch {
+                        }
+                        catch {
                             Write-Host "ERROR: No se pudo conectar o extraer informacion del equipo $ip." -ForegroundColor Red
                             Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
                         }
@@ -299,10 +320,12 @@ function psSubMenu28 {
                 }
             }
             if (-not $salirSub) { Read-Host "SUB_MENU 28: Presione ENTER para continuar..." }
-        } catch {
+        }
+        catch {
             Write-Host "`n[ERROR NO ESPERADO]: $($_.Exception.Message)" -ForegroundColor Red
             Read-Host "Presione Enter para continuar..."
-        } finally {
+        }
+        finally {
             [System.GC]::Collect()
             [System.GC]::WaitForPendingFinalizers()
             Get-Variable | Where-Object { 

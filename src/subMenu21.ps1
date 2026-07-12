@@ -6,7 +6,7 @@
         try {
             #cabecera con informacion del autor
             cabecera
-            Write-Header "21. -----)) VENTANAS ADMINISTRACION WINDOWS - ANTIVIRUS."
+            Write-Header "21. ---)) LOCAL: VENTANAS ADMINISTRACION WINDOWS - ANTIVIRUS."
             Write-Host "1. Reestablecer la tienda de Windows."
             Write-Host "2. Clave de Sistema Operativo Windows."
             Write-Host "3. Eliminar "Desktop.ini" (Aviso que se ejecuta automaticamente)."
@@ -44,7 +44,8 @@
 
                     if ([string]::IsNullOrWhiteSpace($licencia)) {
                         Write-Warning "No se encontró una clave OA3.0 en el firmware de este equipo."
-                    } else {
+                    }
+                    else {
                         Write-Host "La clave detectada es: $licencia" -ForegroundColor Green
                     }
 

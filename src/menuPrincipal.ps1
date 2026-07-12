@@ -29,7 +29,6 @@ function menuPrincipal {
             Write-Host "    6.3 Liberar RAM." -ForegroundColor DarkCyan
             Write-Host "    6.4 Liberar Procesador." -ForegroundColor DarkCyan
             Write-Host "  7.  Resetear Internet Explorer"
-            Write-Host "  8.  Actualizacion y Diagnostico de Politicas (gpupdate)" -ForegroundColor DarkCyan
             Write-Host "  9.  Abrir Internet Explorer con Topacio"
             Write-Host "  10. Ping Infraestructura"
             Write-Host "  11. Revisar Unidades (CHKDSK) - Reparar, localizar y desmontar - chkdsk.exe /F /R /X." -ForegroundColor DarkCyan
@@ -44,7 +43,7 @@ function menuPrincipal {
             Write-Host "  20. ---)) LOCAL: INFORMACION SISTEMA CMD [RAM] [HDD] - DISM - RESETEAR RED."
             Write-Host "  21. ---)) LOCAL: VENTANAS ADMINISTRACION WINDOWS - ANTIVIRUS."
             Write-Host "  22. ---)) LOCAL: SERVICIOS WINDOWS - HERRAMIENTAS AVANZADOS."
-            Write-Host "  23. ---)) LOCAL: COMANDOS EN [[[POWERSHELL]]] - HERRAMIENTAS DE SISTEMA."
+            Write-Host "  23. ---)) LOCAL: HELPDESK LOCAL - HERRAMIENTAS DE SISTEMA." -ForegroundColor Green
             Write-Host "  24. ***)) LOCAL: COMANDOS WINDOWS 11 *****"
             Write-Host "  25. +++)) REMOTO: COMANDOS RED - ADMINISTRACION REMOTA +++++" -ForegroundColor Cyan
             Write-Host "  26. ===)) REMOTO: COMANDOS AD =====" -ForegroundColor Cyan
@@ -54,7 +53,7 @@ function menuPrincipal {
             Write-Host "    29.1 Apagar PC." -ForegroundColor Green
             Write-Host "    29.2 Reiniciar Sistema Operativo (shutdown)." -ForegroundColor Green
             Write-Host "  30. REFRESH (Modo LOCAL)."
-            Write-Host "  31. REFRESH desde GitHub (Online)" -ForegroundColor Cyan
+            Write-Host "  31. REFRESH desde GitHub (Online)." -ForegroundColor Cyan
             Write-Host "  0.  Salir"
             Write-Host "======================================================================" -ForegroundColor Yellow
             
@@ -297,31 +296,7 @@ function menuPrincipal {
                     Write-Host ""
 
                 }
-                "8" { 
-                    # clear-Host
-                    cabecera
-                    menuOpcion "Haz elegido la opcion: $opcion"
-                        
-                    Write-Host "ipconfig /flushdns: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
-                    ipconfig /flushdns
-                    ipconfig /registerdns
-                    ipconfig /displaydns
-                        
-                    Write-Host "netsh interface ip delete arpcache: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
-                    netsh interface ip delete arpcache
-                        
-                    Write-Host "netsh winsock reset catalog: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
-                    netsh winsock reset catalog
-                        
-                    Write-Host "wuauclt /detectnow: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
-                    wuauclt /detectnow
-                        
-                    Write-Host "GPUPDATE /FORCE: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
-                    GPUPDATE /FORCE
 
-                    Write-Host "Proceso realizado..." -ForegroundColor Green
-                    Write-Host ""
-                }
                 "9" { 
                     # clear-Host
                     cabecera
@@ -598,7 +573,7 @@ function menuPrincipal {
                     cabecera
                     Write-Host "`n[!] Descargando y reiniciando desde repositorio remoto..." -ForegroundColor Cyan
                     Start-Sleep -Seconds 2
-                    Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://raw.githubusercontent.com/spwil/shellSSmain/ShellSW.bat | iex"
+                    Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://raw.githubusercontent.com/spwil/shellSS/ShellSW.bat | iex"
                     exit
                 }
 

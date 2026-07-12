@@ -1,10 +1,10 @@
-﻿function psSubMenu23 {
+function psSubMenu23 {
     $salirSub = $false
     do {
         try {
             #cabecera con informacion del autor
             cabecera
-            Write-Header " 23. -----)) COMANDOS EN [[[POWERSHELL]]] - HERRAMIENTAS DE SISTEMA."
+            Write-Header " 23. ---)) LOCAL: HELPDESK LOCAL - HERRAMIENTAS DE SISTEMA."
             Write-Host "  1. Abrir PowerShell Administrador."
             Write-Host "  2. Mostrar Unidades Logicas de Almacenamiento."
             Write-Host "     2.1. Mostrar Unidadles logicas - DETALLE."
@@ -13,8 +13,9 @@
             Write-Host "  4. Mostrar Direccion IP Ethernet Asignada."
             Write-Host "     4.1. Mostrar Interfaces con Direcciones IP Ethernet."
             Write-Host "     4.2. Mostrar Direccion IP PUBLICA"
-            Write-Host "  5. Vaciar Papelera de Reciclaje"
-            Write-Host "  6. Revisiones Instaladas de Windows."
+            Write-Host "  5. Gestion de Red Local." -ForegroundColor Green
+            Write-Host "  11. Vaciar Papelera de Reciclaje"
+            Write-Host "  12. Revisiones Instaladas de Windows."
             Write-Host "  ------------------------------------"
             Write-Host "  20. Estado de bateria Laptop."
             Write-Host ""
@@ -40,18 +41,18 @@
                     # 1. Obtener Unidades Lógicas (Equivalente a Get-PSDrive)
                     Write-Host "--- UNIDADES LOGICAS DEL SISTEMA ---" -ForegroundColor Green
                     Get-PSDrive -PSProvider FileSystem | Select-Object Name, 
-                        @{Name="Used(GB)";Expression={"{0:N2}" -f ($_.Used / 1GB)}}, 
-                        @{Name="Free(GB)";Expression={"{0:N2}" -f ($_.Free / 1GB)}}, 
-                        @{Name="Total(GB)";Expression={"{0:N2}" -f (($_.Used + $_.Free) / 1GB)}} | Format-Table -AutoSize
+                    @{Name = "Used(GB)"; Expression = { "{0:N2}" -f ($_.Used / 1GB) } }, 
+                    @{Name = "Free(GB)"; Expression = { "{0:N2}" -f ($_.Free / 1GB) } }, 
+                    @{Name = "Total(GB)"; Expression = { "{0:N2}" -f (($_.Used + $_.Free) / 1GB) } } | Format-Table -AutoSize
 
                     Write-Host "`n--- DISCOS FISICOS DETECTADOS ---" -ForegroundColor Green
 
                     # 2. Obtener Discos Físicos (Compatible con Windows 7, 8, 10 y 11)
                     # Usamos Win32_DiskDrive porque Get-PhysicalDisk falla en Windows 7
                     Get-WmiObject -Class Win32_DiskDrive | Select-Object Model, 
-                        @{Name="Interface";Expression={$_.InterfaceType}}, 
-                        @{Name="Size(GB)";Expression={"{0:N2}" -f ($_.Size / 1GB)}}, 
-                        Status | Format-Table -AutoSize
+                    @{Name = "Interface"; Expression = { $_.InterfaceType } }, 
+                    @{Name = "Size(GB)"; Expression = { "{0:N2}" -f ($_.Size / 1GB) } }, 
+                    Status | Format-Table -AutoSize
 
                     Write-Host "`nPresione una tecla para salir..."
                     # $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
@@ -84,20 +85,21 @@
                             if ($totalGB -gt 0) {
                                 $percentFree = [Math]::Round(($freeGB / $totalGB) * 100, 1)
                             }
-                        } else {
+                        }
+                        else {
                             $status = "No disponible / Sin medio"
                         }
 
                         # Creamos un objeto personalizado para un formato limpio
                         New-Object PSObject -Property @{
-                            'Letra'       = $d.Name
-                            'Etiqueta'    = if ($d.IsReady) { $d.VolumeLabel } else { "---" }
-                            'Formato'     = if ($d.IsReady) { $d.DriveFormat } else { "---" }
-                            'Tipo'        = $d.DriveType
-                            'Total(GB)'   = $totalGB
-                            'Libre(GB)'   = $freeGB
-                            'Libre(%)'    = $percentFree
-                            'Estado'      = $status
+                            'Letra'     = $d.Name
+                            'Etiqueta'  = if ($d.IsReady) { $d.VolumeLabel } else { "---" }
+                            'Formato'   = if ($d.IsReady) { $d.DriveFormat } else { "---" }
+                            'Tipo'      = $d.DriveType
+                            'Total(GB)' = $totalGB
+                            'Libre(GB)' = $freeGB
+                            'Libre(%)'  = $percentFree
+                            'Estado'    = $status
                         }
                     }
 
@@ -170,21 +172,22 @@
                     # 2. Creamos un objeto con las propiedades más relevantes, limpiando datos técnicos innecesarios
                     $reporte = $cpuInfo | Select-Object `
                         Name, 
-                        Manufacturer, 
-                        @{Name="Nucleos_Fisicos"; Expression={$_.NumberOfCores}},
-                        @{Name="Hilos_Logicos"; Expression={$_.NumberOfLogicalProcessors}},
-                        @{Name="Velocidad_Max(MHz)"; Expression={$_.MaxClockSpeed}},
-                        @{Name="Arquitectura"; Expression={
-                            switch($_.Architecture) {
+                    Manufacturer, 
+                    @{Name = "Nucleos_Fisicos"; Expression = { $_.NumberOfCores } },
+                    @{Name = "Hilos_Logicos"; Expression = { $_.NumberOfLogicalProcessors } },
+                    @{Name = "Velocidad_Max(MHz)"; Expression = { $_.MaxClockSpeed } },
+                    @{Name = "Arquitectura"; Expression = {
+                            switch ($_.Architecture) {
                                 0 { "x86 (32-bit)" }
                                 6 { "Itanium" }
                                 9 { "x64 (64-bit)" }
                                 default { "Desconocida" }
                             }
-                        }},
-                        SocketDesignation,
-                        L2CacheSize,
-                        L3CacheSize
+                        }
+                    },
+                    SocketDesignation,
+                    L2CacheSize,
+                    L3CacheSize
 
                     # 3. Mostrar resultados en formato de lista para mejor lectura
                     $reporte | Format-List
@@ -212,7 +215,7 @@
                         # Extraemos solo la primera direccion IPv4 (usualmente la principal)
                         # y eliminamos las llaves si existen
                         $ipPrincipal = $config.IPAddress[0]
-                        $macAddress  = $config.MACAddress
+                        $macAddress = $config.MACAddress
                         $descripcion = $config.Description
 
                         New-Object PSObject -Property @{
@@ -268,7 +271,7 @@
                         elseif ($hw.Name -match "Virtual|VMware|VirtualBox|Hyper-V|TAP|VPN|Pseudo") { $tipo = "Virtual" }
 
                         # Estado de conexión
-                        $estado = switch($hw.NetConnectionStatus) {
+                        $estado = switch ($hw.NetConnectionStatus) {
                             2 { "Conectado" }
                             7 { "Deshabilitado" }
                             default { "Desconectado/Inactivo" }
@@ -277,11 +280,11 @@
                         # Solo incluimos interfaces con MAC o que sean relevantes para el usuario
                         if ($hw.MACAddress -and $hw.NetConnectionID) {
                             New-Object PSObject -Property @{
-                                'Interface' = $hw.NetConnectionID
-                                'Tecnologia'= $tipo
-                                'Estado'    = $estado
+                                'Interface'    = $hw.NetConnectionID
+                                'Tecnologia'   = $tipo
+                                'Estado'       = $estado
                                 'Direccion_IP' = $ipv4
-                                'Mascara'   = $mask
+                                'Mascara'      = $mask
                             }
                         }
                     }
@@ -340,7 +343,113 @@
                     Write-Host " "                
 
                 }
-                "5" { 
+                "5" {
+                    $salirSubRed = $false
+                    do {
+                        try {
+                            cabecera
+                            Write-Header "23.5. ---)) GESTION DE RED LOCAL."
+                            Write-Host "  1. Resetear IP Red LAN." -ForegroundColor Cyan
+                            Write-Host "  2. Resetear IP Red y Asignar DHCP." -ForegroundColor Cyan
+                            Write-Host "  3. Mostrar Claves MAC Address." -ForegroundColor Cyan
+                            Write-Host "  4. Actualizacion y Diagnostico de Politicas (gpupdate)." -ForegroundColor Cyan
+                            Write-Host ""
+                            Write-Host "  0. VOLVER AL SUBMENU ANTERIOR"
+                            Write-Header "===================================================================="
+
+                            $op23_5 = Read-Host "Seleccione la tarea de red"
+                            switch ($op23_5) {
+                                "1" {
+                                    cabecera
+                                    menuOpcion "Se encuentra en: Gestion de Red Local -> Resetear IP Red LAN"
+
+                                    Write-Host "`n******* RESTABLECIMIENTO DE PROTOCOLO IP (TCP/IP) *******" -ForegroundColor Cyan
+                                    Write-Host "------------------------------------------------------------------" -ForegroundColor Gray
+
+                                    $logPath = "C:\temp"
+                                    $logFile = "$logPath\resetLan.txt"
+
+                                    if (-not (Test-Path $logPath)) {
+                                        New-Item -Path $logPath -ItemType Directory -Force | Out-Null
+                                    }
+
+                                    Write-Host "Iniciando reset de interfaz IP..." -ForegroundColor Yellow
+
+                                    & netsh int ip reset $logFile
+
+                                    if ($LASTEXITCODE -eq 0) {
+                                        Write-Host "El protocolo IP se restablecio correctamente." -ForegroundColor Green
+                                        Write-Host "Log generado en: $logFile" -ForegroundColor Gray
+                                        Write-Host "NOTA: ES NECESARIO REINICIAR EL EQUIPO PARA APLICAR CAMBIOS." -ForegroundColor Red -BackgroundColor White
+                                    }
+                                    else {
+                                        Write-Host "Ocurrio un error al intentar restablecer el protocolo (Codigo: $LASTEXITCODE)." -ForegroundColor Red
+                                    }
+
+                                    Write-Host "------------------------------------------------------------------" -ForegroundColor Green
+                                }
+                                "2" {
+                                    cabecera
+                                    menuOpcion "Se encuentra en: Gestion de Red Local -> Resetear IP y Asignar DHCP"
+
+                                    Write-Host "Resetear IP Red y Asignar DHCP"
+                                    netsh winsock reset
+                                    netsh int ip reset c:\resetLan.txt
+                                    ipconfig /release
+                                    ipconfig /renew
+                                    ipconfig /flushdns
+
+                                    Write-Host "Presione Enter para volver..." -ForegroundColor Green
+                                    Read-Host
+                                }
+                                "3" {
+                                    cabecera
+                                    menuOpcion "Se encuentra en: Gestion de Red Local -> Mostrar Claves MAC Address"
+
+                                    getmac /v /fo list
+                                }
+                                "4" {
+                                    cabecera
+                                    menuOpcion "Se encuentra en: Gestion de Red Local -> Actualizacion y Diagnostico de Politicas"
+
+                                    Write-Host "ipconfig /flushdns: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
+                                    ipconfig /flushdns
+                                    ipconfig /registerdns
+                                    ipconfig /displaydns
+                                        
+                                    Write-Host "netsh interface ip delete arpcache: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
+                                    netsh interface ip delete arpcache
+                                        
+                                    Write-Host "netsh winsock reset catalog: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
+                                    netsh winsock reset catalog
+                                        
+                                    Write-Host "wuauclt /detectnow: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
+                                    wuauclt /detectnow
+                                        
+                                    Write-Host "GPUPDATE /FORCE: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
+                                    GPUPDATE /FORCE
+
+                                    Write-Host "Proceso realizado..." -ForegroundColor Green
+                                    Write-Host ""
+                                }
+                                "0" {
+                                    $salirSubRed = $true
+                                }
+                                Default {
+                                    Write-Host "OPCION INVALIDA." -ForegroundColor Red
+                                    Start-Sleep -Seconds 1
+                                }
+                            }
+                            if (-not $salirSubRed -and $op23_5 -ne "0") { Read-Host "Presione ENTER para continuar..." }
+                        }
+                        catch {
+                            Write-Host "`n[ERROR NO ESPERADO]: $($_.Exception.Message)" -ForegroundColor Red
+                            Read-Host "Presione Enter para continuar..."
+                        }
+                    } while (-not $salirSubRed)
+                }
+                "11" { 
+
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op23"
 
@@ -371,7 +480,7 @@
                     Write-Host " "
 
                 }
-                "6" { 
+                "12" { 
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op23"
 
@@ -385,10 +494,10 @@
                     # 2. Formatear y mostrar la información relevante
                     $reporte = foreach ($update in $updates) {
                         New-Object PSObject -Property @{
-                            'ID_Parche'   = $update.HotFixID
-                            'Descripcion' = $update.Description
+                            'ID_Parche'     = $update.HotFixID
+                            'Descripcion'   = $update.Description
                             'Instalado_Por' = $update.InstalledBy
-                            'Fecha'       = $update.InstalledOn
+                            'Fecha'         = $update.InstalledOn
                         }
                     }
 
@@ -432,7 +541,8 @@
                     if ($capActual -and $capDiseno) {
                         $porcentajeVida = [Math]::Round(($capActual / $capDiseno) * 100, 1)
                         $porcentajeDesgaste = [Math]::Round(100 - $porcentajeVida, 1)
-                    } else {
+                    }
+                    else {
                         $porcentajeVida = "No disponible"
                         $porcentajeDesgaste = "No disponible"
                     }
@@ -464,10 +574,12 @@
                                 Write-Host "Abriendo el reporte en el navegador..." -ForegroundColor Gray
                                 Start-Process $rutaHTML
                             }
-                        } catch {
+                        }
+                        catch {
                             Write-Host "Error al generar el HTML. Asegurese de ejecutar como Administrador." -ForegroundColor Red
                         }
-                    } else {
+                    }
+                    else {
                         Write-Host "`nNota: El comando /batteryreport no existe en Windows 7." -ForegroundColor Yellow
                         Write-Host "Se ha mostrado el resumen basado en datos de hardware WMI." -ForegroundColor Gray
                     }
@@ -480,12 +592,12 @@
                 }
                 
                 "0" { 
-                        #$salirSub = $true 
-                        menuPrincipal
-                    }
+                    #$salirSub = $true 
+                    menuPrincipal
+                }
                 Default { 
-                        Write-Host "Opcion invalida." -ForegroundColor Red 
-                    }
+                    Write-Host "Opcion invalida." -ForegroundColor Red 
+                }
             } # Cierra switch            
             if (-not $salirSub) { Read-Host "SUB_MENU 23: Presione ENTER para continuar..." }
 
