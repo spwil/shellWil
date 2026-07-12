@@ -7,7 +7,7 @@
             Write-Header "Opcion  20. -----)) INFORMACION SISTEMA CMD [RAM] [HDD] - DISM - RESETEAR RED."
             Write-Host "1. Informacion de la MEMORIA RAM."
             Write-Host "2. Informacion del DISCO DURO."
-            Write-Host "2.1. Capacidad y tipo de DISCO DURO."
+            Write-Host "  2.1. Capacidad y tipo de DISCO DURO."
             Write-Host "3. Mostrar Unidades Logicas del DISCO DURO."
             Write-Host "4. Aplicaciones que se INICIAN con el SISTEMA OPERATIVO."
             Write-Host "5. Mostrar Errores con aplicaciones en el SISTEMA OPERATIVO."
@@ -73,7 +73,8 @@
                             24 { return "DDR3" }
                             26 { return "DDR4" }
                             34 { return "DDR5" }
-                            0  { # Si es 0, intentamos adivinar por la velocidad (MHz)
+                            0 {
+                                # Si es 0, intentamos adivinar por la velocidad (MHz)
                                 if ($speed -ge 4800) { return "DDR5 (Estimado)" }
                                 if ($speed -ge 2133) { return "DDR4 (Estimado)" }
                                 if ($speed -ge 1333) { return "DDR3 (Estimado)" }
@@ -95,11 +96,11 @@
                     # 4. Detalle de los Módulos (Físico)
                     $detalleModulos = $physicalMem | Select-Object `
                         DeviceLocator, 
-                        Manufacturer, 
-                        @{Name="Capacidad"; Expression={[Math]::Round($_.Capacity / 1GB, 0), "GB" -join " "}},
-                        @{Name="Tipo"; Expression={Get-MemoryType $_.SMBIOSMemoryType $_.Speed}},
-                        @{Name="Velocidad"; Expression={$_.Speed, "MHz" -join " "}},
-                        PartNumber
+                    Manufacturer, 
+                    @{Name = "Capacidad"; Expression = { [Math]::Round($_.Capacity / 1GB, 0), "GB" -join " " } },
+                    @{Name = "Tipo"; Expression = { Get-MemoryType $_.SMBIOSMemoryType $_.Speed } },
+                    @{Name = "Velocidad"; Expression = { $_.Speed, "MHz" -join " " } },
+                    PartNumber
 
                     Write-Host "Detalle por Ranura:" -ForegroundColor Cyan
                     $detalleModulos | Format-Table -AutoSize
@@ -115,22 +116,22 @@
 
                     Get-WmiObject Win32_DiskDrive | Select-Object `
                         Caption, 
-                        InterfaceType, 
-                        DeviceID, 
-                        SerialNumber, 
-                        @{Name="Tamaño(GB)"; Expression={[Math]::Round($_.Size / 1GB, 2)}}, 
-                        Status | 
-                        Format-Table -AutoSize
+                    InterfaceType, 
+                    DeviceID, 
+                    SerialNumber, 
+                    @{Name = "Tamaño(GB)"; Expression = { [Math]::Round($_.Size / 1GB, 2) } }, 
+                    Status | 
+                    Format-Table -AutoSize
 
-                        #otra alternativa
-                        #Get-PhysicalDisk | Select-Object `
-                        #FriendlyName, 
-                        #SerialNumber, 
-                        #MediaType, 
-                        #@{Name="Tamaño(GB)"; Expression={[Math]::Round($_.Size / 1GB, 2)}}, 
-                        #OperationalStatus, 
-                        #HealthStatus | 
-                        #Format-Table -AutoSize
+                    #otra alternativa
+                    #Get-PhysicalDisk | Select-Object `
+                    #FriendlyName, 
+                    #SerialNumber, 
+                    #MediaType, 
+                    #@{Name="Tamaño(GB)"; Expression={[Math]::Round($_.Size / 1GB, 2)}}, 
+                    #OperationalStatus, 
+                    #HealthStatus | 
+                    #Format-Table -AutoSize
 
                 }
                 "2.1" { 
@@ -146,7 +147,8 @@
 
                     if ($null -eq $ssds) {
                         Write-Host "No se detectaron unidades SSD en este equipo." -ForegroundColor Yellow
-                    } else {
+                    }
+                    else {
                         foreach ($disk in $ssds) {
                             # Obtenemos detalles adicionales de almacenamiento
                             $storageDetails = $disk | Get-StorageReliabilityCounter
@@ -160,8 +162,8 @@
                                 "Protocolo"   = $disk.BusType  # NVMe, SATA, USB
                                 "Capacidad"   = "$([Math]::Round($disk.Size / 1GB, 2)) GB"
                                 "EstadoSalud" = $disk.HealthStatus
-                                "Uso_Vida"    = if($storageDetails.Wear -ne $null){ "$($storageDetails.Wear)%" } else { "N/A" }
-                                "Temp"        = if($storageDetails.Temperature -ne $null){ "$($storageDetails.Temperature)°C" } else { "N/A" }
+                                "Uso_Vida"    = if ($storageDetails.Wear -ne $null) { "$($storageDetails.Wear)%" } else { "N/A" }
+                                "Temp"        = if ($storageDetails.Temperature -ne $null) { "$($storageDetails.Temperature)°C" } else { "N/A" }
                                 "N_Serie"     = $disk.SerialNumber.Trim()
                             } | Format-List
                             
@@ -194,7 +196,8 @@
                         # Cálculo de porcentaje de uso
                         if ($totalGB -gt 0) {
                             $porcentajeUsado = [Math]::Round(($usadoGB / $totalGB) * 100, 1)
-                        } else {
+                        }
+                        else {
                             $porcentajeUsado = 0
                         }
 
@@ -224,13 +227,13 @@
                         $percentUsed = 100 - $percentFree
                         # Crear un objeto con la información detallada
                         [PSCustomObject]@{
-                            "Unidad"       = $_.DeviceID
-                            "Nombre"       = $_.VolumeName
-                            "Formato"      = $_.FileSystem
-                            "Tamaño Total" = "$sizeGB GB"
-                            "Espacio Libre"= "$freeGB GB ($percentFree%)"
-                            "Espacio Usado"= "$usedGB GB ($percentUsed%)"
-                            "Estado"       = $_.Status
+                            "Unidad"        = $_.DeviceID
+                            "Nombre"        = $_.VolumeName
+                            "Formato"       = $_.FileSystem
+                            "Tamaño Total"  = "$sizeGB GB"
+                            "Espacio Libre" = "$freeGB GB ($percentFree%)"
+                            "Espacio Usado" = "$usedGB GB ($percentUsed%)"
+                            "Estado"        = $_.Status
                         }
                     } | Format-Table -AutoSize
                     Write-Host "Nota: Si el espacio libre es menor al 10%, se recomienda limpieza." -ForegroundColor Yellow
@@ -256,7 +259,7 @@
                         # LIMPIEZA DEL COMANDO: 
                         # Extraemos el nombre limpio del ejecutable ignorando comillas, rutas y parámetros (.exe)
                         # Ejemplo: "C:\Archivos de programa\App.exe" --silent  =>  App
-                        $rawCommand = $item.Command.Split('"').Where({$_ -ne ""})[0]
+                        $rawCommand = $item.Command.Split('"').Where({ $_ -ne "" })[0]
                         $nombreLimpio = [System.IO.Path]::GetFileNameWithoutExtension($rawCommand)
 
                         # 3. Buscar coincidencia en procesos activos
@@ -336,7 +339,8 @@
 
                         # Mostramos la información
                         $infoBIOS | Format-List
-                    } else {
+                    }
+                    else {
                         Write-Host "No se pudo obtener información de la BIOS." -ForegroundColor Red
                     }
 
@@ -354,10 +358,12 @@
                         # Si la variable está vacía, consultamos la carpeta de Windows
                         if (Test-Path "$env:windir\Panther\setupact.log") {
                             # (Usa el código del log anterior como respaldo)
-                        } else {
+                        }
+                        else {
                             Write-Host "Modo de arranque: Legacy / BIOS (Detectado por exclusión)" -ForegroundColor Yellow
                         }
-                    } else {
+                    }
+                    else {
                         Write-Host "Modo de arranque: $firmware" -ForegroundColor Yellow
                     }
                 }
@@ -394,7 +400,8 @@
 
                         # Mostramos el resultado
                         $infoCPU | Format-List
-                    } else {
+                    }
+                    else {
                         Write-Host "No se pudo obtener información del procesador." -ForegroundColor Red
                     }
 
@@ -418,10 +425,10 @@
 
                     # 2. Preparación de variables de tiempo y memoria
                     $totalRAM = [Math]::Round([double]$cs.TotalPhysicalMemory / 1GB, 2)
-                    $freeRAM  = [Math]::Round([double]$os.FreePhysicalMemory / 1MB, 2)
+                    $freeRAM = [Math]::Round([double]$os.FreePhysicalMemory / 1MB, 2)
                     $lastBoot = $os.ConvertToDateTime($os.LastBootUpTime)
                     $installDate = $os.ConvertToDateTime($os.InstallDate)
-                    $arch = if($os.OSArchitecture) { $os.OSArchitecture } else { "No detectada" }
+                    $arch = if ($os.OSArchitecture) { $os.OSArchitecture } else { "No detectada" }
 
                     # --- SECCION 1: IDENTIFICACIÓN DEL EQUIPO ---
                     Write-Host "[ IDENTIFICACION DEL HARDWARE ]" -ForegroundColor Yellow
@@ -519,7 +526,7 @@
 
                     # Obtener la versión de Windows a través de WMI (Compatible con Win 7)
                     $os = Get-WmiObject Win32_OperatingSystem
-                    $version = [double]$os.Version.Substring(0,3) # Ej: 6.1 (Win7), 6.3 (Win8.1), 10.0 (Win10/11)
+                    $version = [double]$os.Version.Substring(0, 3) # Ej: 6.1 (Win7), 6.3 (Win8.1), 10.0 (Win10/11)
 
                     Write-Host "Sistema detectado: $($os.Caption)" -ForegroundColor Gray
 
@@ -534,7 +541,8 @@
                         # Comprobación de éxito ($LASTEXITCODE es el equivalente a %errorlevel%)
                         if ($LASTEXITCODE -eq 0) {
                             Write-Host "La operacion se completo con exito.  ::: OK" -ForegroundColor Green
-                        } else {
+                        }
+                        else {
                             Write-Host "Ocurrió un error durante la operación (COdigo: $LASTEXITCODE)." -ForegroundColor Red
                         }
                     }
@@ -563,7 +571,7 @@
 
                     # Obtener la versión del SO mediante WMI
                     $os = Get-WmiObject Win32_OperatingSystem
-                    $version = [double]$os.Version.Substring(0,3)
+                    $version = [double]$os.Version.Substring(0, 3)
 
                     Write-Host "Sistema detectado: $($os.Caption)" -ForegroundColor Gray
 
@@ -577,7 +585,8 @@
                         # $LASTEXITCODE es el equivalente nativo a %errorlevel%
                         if ($LASTEXITCODE -eq 0) {
                             Write-Host "La operacion se completo con exito. ::: OK" -ForegroundColor Green
-                        } else {
+                        }
+                        else {
                             Write-Host "Ocurrio un error durante la operacion (Codigo: $LASTEXITCODE)." -ForegroundColor Red
                         }
                     } 
@@ -590,7 +599,8 @@
 
                         if ($LASTEXITCODE -eq 0) {
                             Write-Host "La verificacion se completo. Revise los resultados arriba." -ForegroundColor Green
-                        } else {
+                        }
+                        else {
                             Write-Host "SFC detecto problemas o no pudo ejecutarse." -ForegroundColor Red
                         }
                     }
@@ -611,7 +621,7 @@
 
                     # Obtener versión del sistema operativo
                     $os = Get-WmiObject Win32_OperatingSystem
-                    $version = [double]$os.Version.Substring(0,3)
+                    $version = [double]$os.Version.Substring(0, 3)
 
                     Write-Host "Sistema detectado: $($os.Caption)" -ForegroundColor Gray
 
@@ -626,7 +636,8 @@
                         # Verificamos el código de salida
                         if ($LASTEXITCODE -eq 0) {
                             Write-Host "La imagen se reparo correctamente.   :::  OK" -ForegroundColor Green
-                        } else {
+                        }
+                        else {
                             Write-Host "Ocurrio un error ($LASTEXITCODE). Verifique su conexion a Internet." -ForegroundColor Red
                         }
                     } 
@@ -639,7 +650,8 @@
 
                         if ($LASTEXITCODE -eq 0) {
                             Write-Host "SFC finalizo con exito." -ForegroundColor Green
-                        } else {
+                        }
+                        else {
                             Write-Host "SFC encontro errores o no pudo completarse." -ForegroundColor Red
                         }
                     }
@@ -660,7 +672,7 @@
 
                     # Obtener versión del sistema operativo
                     $os = Get-WmiObject Win32_OperatingSystem
-                    $version = [double]$os.Version.Substring(0,3)
+                    $version = [double]$os.Version.Substring(0, 3)
 
                     Write-Host "Sistema detectado: $($os.Caption)" -ForegroundColor Gray
 
@@ -674,7 +686,8 @@
 
                         if ($LASTEXITCODE -eq 0) {
                             Write-Host "Limpieza de componentes completada con exito.   :::  OK" -ForegroundColor Green
-                        } else {
+                        }
+                        else {
                             Write-Host "Ocurrio un error ($LASTEXITCODE) durante la limpieza." -ForegroundColor Red
                         }
                     } 
@@ -749,7 +762,8 @@
                         Write-Host "El protocolo IP se restablecio correctamente." -ForegroundColor Green
                         Write-Host "Log generado en: $logFile" -ForegroundColor Gray
                         Write-Host "NOTA: ES NECESARIO REINICIAR EL EQUIPO PARA APLICAR CAMBIOS." -ForegroundColor Red -BackgroundColor White
-                    } else {
+                    }
+                    else {
                         Write-Host "Ocurrio un error al intentar restablecer el protocolo (Codigo: $LASTEXITCODE)." -ForegroundColor Red
                     }
 
@@ -838,9 +852,11 @@
                         # Limpiar la entrada por si el usuario introduce "X:" o solo "X"
                         if ($unidadElegida -match "^[A-Z]:$") {
                             $letraLimpia = $unidadElegida
-                        } elseif ($unidadElegida -match "^[A-Z]$") {
+                        }
+                        elseif ($unidadElegida -match "^[A-Z]$") {
                             $letraLimpia = "$unidadElegida" + ":"
-                        } else {
+                        }
+                        else {
                             Write-Host "[ERROR] Formato de letra de unidad no valido." -ForegroundColor Red
                             break # Sale de la opcion de formateo sin cerrar la consola
                         }
@@ -942,9 +958,11 @@
                         # Limpiar la entrada por si el usuario introduce "X:" o solo "X"
                         if ($unidadElegida -match "^[A-Z]:$") {
                             $letraLimpia = $unidadElegida
-                        } elseif ($unidadElegida -match "^[A-Z]$") {
+                        }
+                        elseif ($unidadElegida -match "^[A-Z]$") {
                             $letraLimpia = "$unidadElegida" + ":"
-                        } else {
+                        }
+                        else {
                             Write-Host "[ERROR] Formato de letra de unidad no valido." -ForegroundColor Red
                             break # Sale de la opcion de formateo sin cerrar la consola
                         }
@@ -1045,9 +1063,11 @@
                         # Limpiar la entrada por si el usuario introduce "X:" o solo "X"
                         if ($unidadElegida -match "^[A-Z]:$") {
                             $letraLimpia = $unidadElegida
-                        } elseif ($unidadElegida -match "^[A-Z]$") {
+                        }
+                        elseif ($unidadElegida -match "^[A-Z]$") {
                             $letraLimpia = "$unidadElegida" + ":"
-                        } else {
+                        }
+                        else {
                             Write-Host "[ERROR] Formato de letra de unidad no valido." -ForegroundColor Red
                             break # Sale de la opcion de formateo sin cerrar la consola
                         }
@@ -1149,9 +1169,11 @@
                         # Limpiar la entrada por si el usuario introduce "X:" o solo "X"
                         if ($unidadElegida -match "^[A-Z]:$") {
                             $letraLimpia = $unidadElegida
-                        } elseif ($unidadElegida -match "^[A-Z]$") {
+                        }
+                        elseif ($unidadElegida -match "^[A-Z]$") {
                             $letraLimpia = "$unidadElegida" + ":"
-                        } else {
+                        }
+                        else {
                             Write-Host "[ERROR] Formato de letra de unidad no valido." -ForegroundColor Red
                             break # Sale de la opcion de formateo sin cerrar la consola
                         }
@@ -1264,13 +1286,16 @@
                             if ($LASTEXITCODE -eq 0) {
                                 Write-Host "[EXITO] La unidad ha sido formateada y marcada como Activa." -ForegroundColor Green
                                 Write-Host "Para finalizar, ejecuta: bootsect /nt60 X: (donde X es la letra asignada)" -ForegroundColor Cyan
-                            } else {
+                            }
+                            else {
                                 Write-Host "[ERROR] Diskpart finalizo con codigo de error: $LASTEXITCODE" -ForegroundColor Red
                             }
                             
-                        } catch {
+                        }
+                        catch {
                             Write-Host "[ERROR CRITICO] Ocurrio un fallo durante la operacion: $_" -ForegroundColor Red
-                        } finally {
+                        }
+                        finally {
                             Write-Host "`nProceso finalizado." -ForegroundColor Cyan
                         }
                     }
