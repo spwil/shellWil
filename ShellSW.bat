@@ -2086,7 +2086,11 @@ function psSubMenu23 {
             Write-Host "  4. Mostrar Direccion IP Ethernet Asignada."
             Write-Host "     4.1. Mostrar Interfaces con Direcciones IP Ethernet."
             Write-Host "     4.2. Mostrar Direccion IP PUBLICA"
-            Write-Host "  5. Gestion de Red Local." -ForegroundColor Green
+            Write-Host "  5. Gestion de Red Local:" -ForegroundColor Green
+            Write-Host "    5.1. Resetear IP Red LAN." -ForegroundColor Cyan
+            Write-Host "    5.2. Resetear IP Red y Asignar DHCP." -ForegroundColor Cyan
+            Write-Host "    5.3. Mostrar Claves MAC Address." -ForegroundColor Cyan
+            Write-Host "    5.4. Actualizacion y Diagnostico de Politicas (gpupdate)." -ForegroundColor Cyan
             Write-Host "  11. Vaciar Papelera de Reciclaje"
             Write-Host "  12. Revisiones Instaladas de Windows."
             Write-Host "  ------------------------------------"
@@ -2416,110 +2420,75 @@ function psSubMenu23 {
                     Write-Host " "                
 
                 }
-                "5" {
-                    $salirSubRed = $false
-                    do {
-                        try {
-                            cabecera
-                            Write-Header "23.5. ---)) GESTION DE RED LOCAL."
-                            Write-Host "  1. Resetear IP Red LAN." -ForegroundColor Cyan
-                            Write-Host "  2. Resetear IP Red y Asignar DHCP." -ForegroundColor Cyan
-                            Write-Host "  3. Mostrar Claves MAC Address." -ForegroundColor Cyan
-                            Write-Host "  4. Actualizacion y Diagnostico de Politicas (gpupdate)." -ForegroundColor Cyan
-                            Write-Host ""
-                            Write-Host "  0. VOLVER AL SUBMENU ANTERIOR"
-                            Write-Header "===================================================================="
+                "5.1" {
+                    cabecera
+                    menuOpcion "Se encuentra en: Gestion de Red Local -> Resetear IP Red LAN"
 
-                            $op23_5 = Read-Host "Seleccione la tarea de red"
-                            switch ($op23_5) {
-                                "1" {
-                                    cabecera
-                                    menuOpcion "Se encuentra en: Gestion de Red Local -> Resetear IP Red LAN"
+                    Write-Host "`n******* RESTABLECIMIENTO DE PROTOCOLO IP (TCP/IP) *******" -ForegroundColor Cyan
+                    Write-Host "------------------------------------------------------------------" -ForegroundColor Gray
 
-                                    Write-Host "`n******* RESTABLECIMIENTO DE PROTOCOLO IP (TCP/IP) *******" -ForegroundColor Cyan
-                                    Write-Host "------------------------------------------------------------------" -ForegroundColor Gray
+                    $logPath = "C:\temp"
+                    $logFile = "$logPath\resetLan.txt"
 
-                                    $logPath = "C:\temp"
-                                    $logFile = "$logPath\resetLan.txt"
+                    if (-not (Test-Path $logPath)) {
+                        New-Item -Path $logPath -ItemType Directory -Force | Out-Null
+                    }
 
-                                    if (-not (Test-Path $logPath)) {
-                                        New-Item -Path $logPath -ItemType Directory -Force | Out-Null
-                                    }
+                    Write-Host "Iniciando reset de interfaz IP..." -ForegroundColor Yellow
 
-                                    Write-Host "Iniciando reset de interfaz IP..." -ForegroundColor Yellow
+                    & netsh int ip reset $logFile
 
-                                    & netsh int ip reset $logFile
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Host "El protocolo IP se restablecio correctamente." -ForegroundColor Green
+                        Write-Host "Log generado en: $logFile" -ForegroundColor Gray
+                        Write-Host "NOTA: ES NECESARIO REINICIAR EL EQUIPO PARA APLICAR CAMBIOS." -ForegroundColor Red -BackgroundColor White
+                    }
+                    else {
+                        Write-Host "Ocurrio un error al intentar restablecer el protocolo (Codigo: $LASTEXITCODE)." -ForegroundColor Red
+                    }
 
-                                    if ($LASTEXITCODE -eq 0) {
-                                        Write-Host "El protocolo IP se restablecio correctamente." -ForegroundColor Green
-                                        Write-Host "Log generado en: $logFile" -ForegroundColor Gray
-                                        Write-Host "NOTA: ES NECESARIO REINICIAR EL EQUIPO PARA APLICAR CAMBIOS." -ForegroundColor Red -BackgroundColor White
-                                    }
-                                    else {
-                                        Write-Host "Ocurrio un error al intentar restablecer el protocolo (Codigo: $LASTEXITCODE)." -ForegroundColor Red
-                                    }
+                    Write-Host "------------------------------------------------------------------" -ForegroundColor Green
+                }
+                "5.2" {
+                    cabecera
+                    menuOpcion "Se encuentra en: Gestion de Red Local -> Resetear IP y Asignar DHCP"
 
-                                    Write-Host "------------------------------------------------------------------" -ForegroundColor Green
-                                }
-                                "2" {
-                                    cabecera
-                                    menuOpcion "Se encuentra en: Gestion de Red Local -> Resetear IP y Asignar DHCP"
+                    Write-Host "Resetear IP Red y Asignar DHCP"
+                    netsh winsock reset
+                    netsh int ip reset c:\resetLan.txt
+                    ipconfig /release
+                    ipconfig /renew
+                    ipconfig /flushdns
+                }
+                "5.3" {
+                    cabecera
+                    menuOpcion "Se encuentra en: Gestion de Red Local -> Mostrar Claves MAC Address"
 
-                                    Write-Host "Resetear IP Red y Asignar DHCP"
-                                    netsh winsock reset
-                                    netsh int ip reset c:\resetLan.txt
-                                    ipconfig /release
-                                    ipconfig /renew
-                                    ipconfig /flushdns
+                    getmac /v /fo list
+                }
+                "5.4" {
+                    cabecera
+                    menuOpcion "Se encuentra en: Gestion de Red Local -> Actualizacion y Diagnostico de Politicas"
 
-                                    Write-Host "Presione Enter para volver..." -ForegroundColor Green
-                                    Read-Host
-                                }
-                                "3" {
-                                    cabecera
-                                    menuOpcion "Se encuentra en: Gestion de Red Local -> Mostrar Claves MAC Address"
+                    Write-Host "ipconfig /flushdns: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
+                    ipconfig /flushdns
+                    ipconfig /registerdns
+                    ipconfig /displaydns
+                        
+                    Write-Host "netsh interface ip delete arpcache: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
+                    netsh interface ip delete arpcache
+                        
+                    Write-Host "netsh winsock reset catalog: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
+                    netsh winsock reset catalog
+                        
+                    Write-Host "wuauclt /detectnow: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
+                    wuauclt /detectnow
+                        
+                    Write-Host "GPUPDATE /FORCE: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
+                    GPUPDATE /FORCE
 
-                                    getmac /v /fo list
-                                }
-                                "4" {
-                                    cabecera
-                                    menuOpcion "Se encuentra en: Gestion de Red Local -> Actualizacion y Diagnostico de Politicas"
-
-                                    Write-Host "ipconfig /flushdns: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
-                                    ipconfig /flushdns
-                                    ipconfig /registerdns
-                                    ipconfig /displaydns
-                                        
-                                    Write-Host "netsh interface ip delete arpcache: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
-                                    netsh interface ip delete arpcache
-                                        
-                                    Write-Host "netsh winsock reset catalog: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
-                                    netsh winsock reset catalog
-                                        
-                                    Write-Host "wuauclt /detectnow: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
-                                    wuauclt /detectnow
-                                        
-                                    Write-Host "GPUPDATE /FORCE: ---------> E J E C U T A N D O <---------" -ForegroundColor Yellow
-                                    GPUPDATE /FORCE
-
-                                    Write-Host "Proceso realizado..." -ForegroundColor Green
-                                    Write-Host ""
-                                }
-                                "0" {
-                                    $salirSubRed = $true
-                                }
-                                Default {
-                                    Write-Host "OPCION INVALIDA." -ForegroundColor Red
-                                    Start-Sleep -Seconds 1
-                                }
-                            }
-                            if (-not $salirSubRed -and $op23_5 -ne "0") { Read-Host "Presione ENTER para continuar..." }
-                        }
-                        catch {
-                            Write-Host "`n[ERROR NO ESPERADO]: $($_.Exception.Message)" -ForegroundColor Red
-                            Read-Host "Presione Enter para continuar..."
-                        }
-                    } while (-not $salirSubRed)
+                    Write-Host "Proceso realizado..." -ForegroundColor Green
+                    Write-Host ""
                 }
                 "11" { 
 
