@@ -4694,7 +4694,7 @@ function psSubMenu25 {
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
                     Write-Host "`n[!] Descargando y reiniciando desde repositorio remoto..." -ForegroundColor Cyan
                     Start-Sleep -Seconds 2
-                    Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://raw.githubusercontent.com/spwil/shellSW/main/ShellSW.bat | iex"
+                    Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://raw.githubusercontent.com/spwil/shellWil/main/ShellSW.bat | iex"
                     exit
                 }
                 
@@ -5373,7 +5373,7 @@ function psSubMenu26 {
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op26"
                     Write-Host "`n[!] Descargando y reiniciando desde repositorio remoto..." -ForegroundColor Cyan
                     Start-Sleep -Seconds 2
-                    Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://raw.githubusercontent.com/spwil/shellSW/main/ShellSW.bat | iex"
+                    Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://raw.githubusercontent.com/spwil/shellWil/main/ShellSW.bat | iex"
                     exit
                 }
                 
@@ -6464,7 +6464,7 @@ function menuPrincipal {
                     cabecera
                     Write-Host "`n[!] Descargando y reiniciando desde repositorio remoto..." -ForegroundColor Cyan
                     Start-Sleep -Seconds 2
-                    Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://raw.githubusercontent.com/spwil/shellSW/main/ShellSW.bat | iex"
+                    Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://raw.githubusercontent.com/spwil/shellWil/main/ShellSW.bat | iex"
                     exit
                 }
 
