@@ -2077,10 +2077,8 @@ function psSubMenu25 {
                             Write-Host "ERROR: Se requiere un nombre de equipo para continuar." -ForegroundColor Red
                         }
                         else {
-                            # 3. Definir el ScriptBlock a ejecutar
+                            # 3. Definir el ScriptBlock a ejecutar (Sin declaración param() para evitar error de sintaxis)
                             $scriptString = {
-                                param($offlineSource)
-
                                 Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
                                 Import-Module -Name Dism -ErrorAction SilentlyContinue
 
@@ -2127,30 +2125,26 @@ function psSubMenu25 {
                                     else {
                                         Write-Output "Se encontraron $($capabilities.Count) componentes para instalar."
                                         
-                                        # Bypass de WSUS (solo necesario si se descarga de Internet)
+                                        # Inicializar variables de bypass de WSUS
                                         $regPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
                                         $wsusBypassed = $false
                                         $originalUseWUServer = $null
+                                        $WSUSActivo = $false
                                         
-                                        if ([string]::IsNullOrEmpty($offlineSource) -and (Test-Path $regPath)) {
-                                            try {
-                                                $val = Get-ItemProperty -Path $regPath -Name "UseWUServer" -ErrorAction Stop
-                                                if ($val -and $val.UseWUServer -eq 1) {
-                                                    Write-Output "Detectado WSUS activo. Desactivando temporalmente..."
-                                                    $originalUseWUServer = 1
-                                                    Set-ItemProperty -Path $regPath -Name "UseWUServer" -Value 0 -Force -ErrorAction Stop
-                                                    Restart-Service -Name "wuauserv" -Force -ErrorAction Stop
-                                                    $wsusBypassed = $true
-                                                }
-                                            }
-                                            catch {
-                                                Write-Output "ADVERTENCIA: No se pudo configurar WSUS o reiniciar wuauserv: $($_.Exception.Message)"
+                                        if (Test-Path $regPath) {
+                                            $val = Get-ItemProperty -Path $regPath -Name "UseWUServer" -ErrorAction SilentlyContinue
+                                            if ($val -and $val.UseWUServer -eq 1) {
+                                                $WSUSActivo = $true
+                                                $originalUseWUServer = 1
                                             }
                                         }
                                         
                                         try {
                                             foreach ($cap in $capabilities) {
                                                 Write-Output "Instalando $($cap.Name)..."
+                                                $success = $false
+                                                $err = ""
+                                                
                                                 try {
                                                     if (-not [string]::IsNullOrEmpty($offlineSource)) {
                                                         Write-Output "Usando ruta de origen offline: $offlineSource"
@@ -2160,16 +2154,44 @@ function psSubMenu25 {
                                                         Add-WindowsCapability -Online -Name $cap.Name -ErrorAction Stop | Out-Null
                                                     }
                                                     Write-Output "Instalado: $($cap.Name)"
+                                                    $success = $true
                                                 }
                                                 catch {
-                                                    Write-Output "ERROR al instalar $($cap.Name): $($_.Exception.Message)"
-                                                    if ($_.Exception.Message -match "0x8024401c" -or $_.Exception.Message -match "0x80072ee2") {
+                                                    $err = $_.Exception.Message
+                                                    # Si falló por WSUS (0x800f0954) y no se especificó un origen offline
+                                                    if ([string]::IsNullOrEmpty($offlineSource) -and ($err -match "0x800f0954") -and $WSUSActivo -and (-not $wsusBypassed)) {
+                                                        Write-Output "Instalacion bloqueada por WSUS (Error 0x800f0954). Intentando bypass de WSUS y reintento..."
+                                                        try {
+                                                            Set-ItemProperty -Path $regPath -Name "UseWUServer" -Value 0 -Force -ErrorAction Stop
+                                                            Restart-Service -Name "wuauserv" -Force -ErrorAction Stop
+                                                            $wsusBypassed = $true
+                                                            
+                                                            # Reintentar instalación tras bypass
+                                                            if (-not [string]::IsNullOrEmpty($offlineSource)) {
+                                                                Add-WindowsCapability -Online -Name $cap.Name -Source $offlineSource -LimitAccess -ErrorAction Stop | Out-Null
+                                                            }
+                                                            else {
+                                                                Add-WindowsCapability -Online -Name $cap.Name -ErrorAction Stop | Out-Null
+                                                            }
+                                                            Write-Output "Instalado (tras bypass de WSUS): $($cap.Name)"
+                                                            $success = $true
+                                                        }
+                                                        catch {
+                                                            $err = $_.Exception.Message
+                                                        }
+                                                    }
+                                                }
+                                                
+                                                if (-not $success) {
+                                                    Write-Output "ERROR al instalar $($cap.Name): $err"
+                                                    if ($err -match "0x8024401c" -or $err -match "0x80072ee2") {
                                                         Write-Output "-> Nota de Red: Se agoto el tiempo de espera. El equipo no tiene acceso directo a Internet o bloquea las descargas de Microsoft."
                                                     }
                                                 }
                                             }
                                         }
                                         finally {
+                                            # Restaurar configuración de WSUS
                                             if ($wsusBypassed -and $originalUseWUServer -ne $null) {
                                                 Write-Output "Restaurando configuracion original de WSUS..."
                                                 Set-ItemProperty -Path $regPath -Name "UseWUServer" -Value $originalUseWUServer -Force -ErrorAction SilentlyContinue
@@ -2202,8 +2224,7 @@ function psSubMenu25 {
                             if ((Test-Path $psexecPath) -and ($usu -ne "")) {
                                 Write-Host "Iniciando instalacion remota via PsExec (Contexto SYSTEM) para evitar restricciones de WinRM..." -ForegroundColor Green
                                 
-                                # Para pasar parámetros al scriptblock ejecutado vía PsExec con Base64,
-                                # inyectamos el parámetro al inicio del texto del script.
+                                # Inyectar el parámetro al inicio del texto del script
                                 $paramPrefix = "`$offlineSource = `"$sourcePath`"`n"
                                 $fullScriptText = $paramPrefix + $scriptString.ToString()
 
@@ -2216,18 +2237,20 @@ function psSubMenu25 {
                                 Start-Process -FilePath $psexecPath -ArgumentList $argumentos -Wait
                             }
                             else {
-                                # Fallback a Invoke-Command si no hay PsExec o no se proporcionaron credenciales
+                                # Fallback a Invoke-Command
                                 Write-Host "Iniciando instalacion via Invoke-Command (WinRM)..." -ForegroundColor Yellow
                                 if ($usu -ne "") {
                                     Write-Host "Nota: Si experimenta 'Acceso denegado', intente instalar PsExec en C:\PSTools\PsExec.exe para ejecución en contexto SYSTEM." -ForegroundColor Cyan
                                 }
                                 try {
-                                    $sb = [ScriptBlock]::Create($scriptString.ToString())
+                                    $paramPrefix = "`$offlineSource = `"$sourcePath`"`n"
+                                    $fullScriptText = $paramPrefix + $scriptString.ToString()
+                                    $sb = [ScriptBlock]::Create($fullScriptText)
                                     if ($cred -ne $null) {
-                                        Invoke-Command -ComputerName $targetMachine -Credential $cred -ScriptBlock $sb -ArgumentList $sourcePath -ErrorAction Stop
+                                        Invoke-Command -ComputerName $targetMachine -Credential $cred -ScriptBlock $sb -ErrorAction Stop
                                     }
                                     else {
-                                        Invoke-Command -ComputerName $targetMachine -ScriptBlock $sb -ArgumentList $sourcePath -ArgumentList $sourcePath -ErrorAction Stop
+                                        Invoke-Command -ComputerName $targetMachine -ScriptBlock $sb -ErrorAction Stop
                                     }
                                 }
                                 catch {
