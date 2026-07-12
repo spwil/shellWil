@@ -86,6 +86,10 @@ function psSubMenu25 {
 
                     Write-Host "`n--- Consultando informacion de red... ---" -ForegroundColor Yellow
 
+                    if (-not (Test-Connection -ComputerName $ipRemota -Count 1 -Quiet)) {
+                        Write-Warning "El equipo $ipRemota no responde a ping. Es posible que este apagado o tenga el firewall activo."
+                    }
+
                     try {
                         # 2. Consultas WMI Optimizadas
                         # Obtenemos el nombre del equipo
@@ -138,6 +142,10 @@ function psSubMenu25 {
                     $ipRemota = $baseIP + $ultimoOctetoActual
 
                     Write-Host "`n--- Conectando a: $ipRemota ---" -ForegroundColor Yellow
+
+                    if (-not (Test-Connection -ComputerName $ipRemota -Count 1 -Quiet)) {
+                        Write-Warning "El equipo $ipRemota no responde a ping. Es posible que este apagado o tenga el firewall activo."
+                    }
 
                     try {
                         # 1. CAPTURA DE DATOS INICIALES (EL "ANTES")
@@ -232,6 +240,10 @@ function psSubMenu25 {
                     $ipRemota = $baseIP + $ultimoOctetoActual
 
                     Write-Host "`n--- Conectando a: $ipRemota ---" -ForegroundColor Yellow
+
+                    if (-not (Test-Connection -ComputerName $ipRemota -Count 1 -Quiet)) {
+                        Write-Warning "El equipo $ipRemota no responde a ping. Es posible que este apagado o tenga el firewall activo."
+                    }
 
                     try {
                         # 1. CAPTURA DE DATOS INICIALES (EL "ANTES")
@@ -339,6 +351,10 @@ function psSubMenu25 {
 
                     Write-Host "`nConectando a $ipRemota...`n" -ForegroundColor Cyan
 
+                    if (-not (Test-Connection -ComputerName $ipRemota -Count 1 -Quiet)) {
+                        Write-Warning "El equipo $ipRemota no responde a ping. Es posible que este apagado o bloquee el trafico."
+                    }
+
                     try {
                         # 2. Listar interfaces fisicas (PhysicalAdapter = True)
                         $interfaces = Get-WmiObject -Class Win32_NetworkAdapter -ComputerName $ipRemota -Filter "PhysicalAdapter = True" -ErrorAction Stop
@@ -346,11 +362,12 @@ function psSubMenu25 {
                         # Mostrar tabla numerada para seleccion
                         $lista = @()
                         for ($i = 0; $i -lt $interfaces.Count; $i++) {
-                            $lista += [PSCustomObject]@{
+                            $obj = New-Object PSObject -Property @{
                                 Indice = $i
                                 Nombre = $interfaces[$i].Name
                                 Estado = $interfaces[$i].NetConnectionStatus
                             }
+                            $lista += $obj | Select-Object Indice, Nombre, Estado
                         }
                         $lista | Format-Table -AutoSize
 
@@ -740,13 +757,13 @@ function psSubMenu25 {
                                     # Determinamos el estado visualmente
                                     $estadoIP = if ($nic.DHCPEnabled) { "DHCP" } else { "ESTATICO" }
                                     
-                                    $obj = [PSCustomObject]@{
+                                    $obj = New-Object PSObject -Property @{
                                         IP         = $ipActual
                                         HostName   = $sys.CSName
                                         Estado     = $estadoIP
                                         MACAddress = $nic.MACAddress
                                     }
-                                    $resultados += $obj
+                                    $resultados += $obj | Select-Object IP, HostName, Estado, MACAddress
                                     
                                     # Feedback en consola durante el escaneo
                                     $color = if ($estadoIP -eq "DHCP") { "Cyan" } else { "Yellow" }
@@ -1386,13 +1403,13 @@ function psSubMenu25 {
                                 }
 
                                 # AJUSTE: Mapeo ordenado incluyendo el Nombre/Modelo de la impresora
-                                [PSCustomObject]@{
+                                New-Object PSObject -Property @{
                                     'Nombre / Modelo' = $impresora.Name
                                     'Fabricante'      = $fabricante
                                     'Predeterminado'  = $esPredeterminada
                                     'Puerto'          = $impresora.PortName
                                     'Estado'          = $estadoActivo
-                                }
+                                } | Select-Object 'Nombre / Modelo', Fabricante, Predeterminado, Puerto, Estado
                             }
 
                             # Mostrar tabla organizada de forma limpia y ajustada automáticamente al ancho
@@ -1516,13 +1533,13 @@ function psSubMenu25 {
                                         }
 
                                         # Construcción del objeto de salida
-                                        [PSCustomObject]@{
-                                            Fabricante     = if ($_.DriverName -match ' ') { $_.DriverName.Split(' ')[0] } else { $_.DriverName }
+                                        New-Object PSObject -Property @{
+                                            Fabricante     = (if ($_.DriverName -match ' ') { $_.DriverName.Split(' ')[0] } else { $_.DriverName })
                                             Nombre         = $_.Name
                                             Estado         = $estado
-                                            Predeterminada = if ($_.Default) { "  [ACTIVA]" } else { "" }
+                                            Predeterminada = (if ($_.Default) { "  [ACTIVA]" } else { "" })
                                             Puerto         = $_.PortName
-                                        }
+                                        } | Select-Object Fabricante, Nombre, Estado, Predeterminada, Puerto
                                     }
                                 }
 

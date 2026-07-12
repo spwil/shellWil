@@ -1,4 +1,4 @@
-﻿function psSubMenu21 {
+function psSubMenu21 {
     
 
     $salirSub = $false
@@ -40,7 +40,7 @@
                     cabecera
                     menuOpcion "Haz elegido el SUB_MENU: $opcion ;;; Opcion: $op21"
 
-                    $licencia = (Get-CimInstance SoftwareLicensingService).OA3xOriginalProductKey
+                    $licencia = (Get-WmiObject SoftwareLicensingService).OA3xOriginalProductKey
 
                     if ([string]::IsNullOrWhiteSpace($licencia)) {
                         Write-Warning "No se encontró una clave OA3.0 en el firmware de este equipo."

@@ -26,7 +26,6 @@ function psSubMenu20 {
             Write-Host "12. Si es posible realiza operacion de reparacion automatica "DISM 3" - DISM /Online /Cleanup-Image /RestoreHealth"
             Write-Host "13. Limpia los componentes reemplazados "DISM 4" - Dism.exe /Online /Cleanup-Image /StartComponentCleanup"
             Write-Host "14. Revision Exhaustivo "ANALISIS PROFUNDO" (dism) - Escaneo, reparacion, limpieza y verificacion"
-            Write-Host "***********************************************************"
             Write-Host "******************************************************************************************"
             Write-Host "17. Listar Usuarios Windows"
             Write-Host "18. Recursos Compartidos de Windows"
@@ -139,30 +138,55 @@ function psSubMenu20 {
                     Write-Host "`n******* ANALISIS DETALLADO DE UNIDADES SSD *******" -ForegroundColor Cyan
                     Write-Host "------------------------------------------------------------------" -ForegroundColor Gray
 
-                    # Obtenemos los discos filtrando por SSD
-                    $ssds = Get-PhysicalDisk | Where-Object { $_.MediaType -eq 'SSD' }
+                    # Verificar si existe Get-PhysicalDisk (Windows 8+)
+                    if (Get-Command Get-PhysicalDisk -ErrorAction SilentlyContinue) {
+                        # Obtenemos los discos filtrando por SSD
+                        $ssds = Get-PhysicalDisk | Where-Object { $_.MediaType -eq 'SSD' }
 
-                    if ($null -eq $ssds) {
-                        Write-Host "No se detectaron unidades SSD en este equipo." -ForegroundColor Yellow
+                        if ($null -eq $ssds) {
+                            Write-Host "No se detectaron unidades SSD en este equipo." -ForegroundColor Yellow
+                        }
+                        else {
+                            foreach ($disk in $ssds) {
+                                # Obtenemos detalles adicionales de almacenamiento
+                                $storageDetails = $disk | Get-StorageReliabilityCounter
+
+                                Write-Host "[ Unidad: $($disk.FriendlyName) ]" -ForegroundColor White -BackgroundColor DarkBlue
+                                
+                                # Tabla de información técnica compatible
+                                New-Object PSObject -Property @{
+                                    "Numero"      = $disk.DeviceID
+                                    "Modelo"      = $disk.FriendlyName
+                                    "Protocolo"   = $disk.BusType  # NVMe, SATA, USB
+                                    "Capacidad"   = "$([Math]::Round($disk.Size / 1GB, 2)) GB"
+                                    "EstadoSalud" = $disk.HealthStatus
+                                    "Uso_Vida"    = (if ($storageDetails.Wear -ne $null) { "$($storageDetails.Wear)%" } else { "N/A" })
+                                    "Temp"        = (if ($storageDetails.Temperature -ne $null) { "$($storageDetails.Temperature)°C" } else { "N/A" })
+                                    "N_Serie"     = (if ($disk.SerialNumber) { $disk.SerialNumber.Trim() } else { "Desconocido" })
+                                } | Select-Object Numero, Modelo, Protocolo, Capacidad, EstadoSalud, Uso_Vida, Temp, N_Serie | Format-List
+                                
+                                Write-Host "------------------------------------------------------------------" -ForegroundColor Gray
+                            }
+                        }
                     }
                     else {
-                        foreach ($disk in $ssds) {
-                            # Obtenemos detalles adicionales de almacenamiento
-                            $storageDetails = $disk | Get-StorageReliabilityCounter
-
-                            Write-Host "[ Unidad: $($disk.FriendlyName) ]" -ForegroundColor White -BackgroundColor DarkBlue
-                            
-                            # Tabla de información técnica
-                            [PSCustomObject]@{
-                                "Numero"      = $disk.DeviceID
-                                "Modelo"      = $disk.FriendlyName
-                                "Protocolo"   = $disk.BusType  # NVMe, SATA, USB
-                                "Capacidad"   = "$([Math]::Round($disk.Size / 1GB, 2)) GB"
-                                "EstadoSalud" = $disk.HealthStatus
-                                "Uso_Vida"    = if ($storageDetails.Wear -ne $null) { "$($storageDetails.Wear)%" } else { "N/A" }
-                                "Temp"        = if ($storageDetails.Temperature -ne $null) { "$($storageDetails.Temperature)°C" } else { "N/A" }
-                                "N_Serie"     = $disk.SerialNumber.Trim()
-                            } | Format-List
+                        Write-Host "Nota: Get-PhysicalDisk no esta disponible en este sistema operativo (compatible en Windows 8+)." -ForegroundColor Yellow
+                        Write-Host "Obteniendo informacion basica de unidades fisicas a traves de WMI..." -ForegroundColor Yellow
+                        Write-Host "------------------------------------------------------------------" -ForegroundColor Gray
+                        
+                        $discosWmi = Get-WmiObject Win32_DiskDrive
+                        foreach ($d in $discosWmi) {
+                            Write-Host "[ Unidad: $($d.Model) ]" -ForegroundColor White -BackgroundColor DarkBlue
+                            New-Object PSObject -Property @{
+                                 "Numero"      = $d.Index
+                                 "Modelo"      = $d.Model
+                                 "Protocolo"   = $d.InterfaceType
+                                 "Capacidad"   = "$([Math]::Round([double]$d.Size / 1GB, 2)) GB"
+                                 "EstadoSalud" = $d.Status
+                                 "Uso_Vida"    = "N/A (Requiere Windows 8+)"
+                                 "Temp"        = "N/A (Requiere Windows 8+)"
+                                 "N_Serie"     = (if ($d.SerialNumber) { $d.SerialNumber.Trim() } else { "Desconocido" })
+                             } | Select-Object Numero, Modelo, Protocolo, Capacidad, EstadoSalud, Uso_Vida, Temp, N_Serie | Format-List
                             
                             Write-Host "------------------------------------------------------------------" -ForegroundColor Gray
                         }
@@ -214,16 +238,16 @@ function psSubMenu20 {
                     # ****
                     Write-Host "`n******* ANALISIS DE ALMACENAMIENTO (DISCOS LOCALES) *******" -ForegroundColor Cyan
                     Write-Host "------------------------------------------------------------------" -ForegroundColor Gray
-                    # Obtenemos los discos lógicos tipo 3 (Discos Locales)
-                    Get-CimInstance  Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
-                        # Cálculos matemáticos
+                    # Obtenemos los discos logicos tipo 3 (Discos Locales)
+                    Get-WmiObject Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
+                        # Calculos matematicos
                         $sizeGB = [Math]::Round($_.Size / 1GB, 2)
                         $freeGB = [Math]::Round($_.FreeSpace / 1GB, 2)
                         $usedGB = [Math]::Round($sizeGB - $freeGB, 2)
                         $percentFree = [Math]::Round(($freeGB / $sizeGB) * 100, 1)
                         $percentUsed = 100 - $percentFree
-                        # Crear un objeto con la información detallada
-                        [PSCustomObject]@{
+                        # Crear un objeto con la informacion detallada compatible
+                        New-Object PSObject -Property @{
                             "Unidad"        = $_.DeviceID
                             "Nombre"        = $_.VolumeName
                             "Formato"       = $_.FileSystem
@@ -231,7 +255,7 @@ function psSubMenu20 {
                             "Espacio Libre" = "$freeGB GB ($percentFree%)"
                             "Espacio Usado" = "$usedGB GB ($percentUsed%)"
                             "Estado"        = $_.Status
-                        }
+                        } | Select-Object Unidad, Nombre, Formato, "Tamaño Total", "Espacio Libre", "Espacio Usado", Estado
                     } | Format-Table -AutoSize
                     Write-Host "Nota: Si el espacio libre es menor al 10%, se recomienda limpieza." -ForegroundColor Yellow
                     # ****
@@ -300,12 +324,12 @@ function psSubMenu20 {
                         Write-Host "[ $($item.Caption.ToUpper()) ]" -ForegroundColor White -BackgroundColor DarkBlue
                         
                         # Creamos un objeto personalizado para mostrar los datos ordenados
-                        [PSCustomObject]@{
+                        New-Object PSObject -Property @{
                             "Comando/Ruta" = $item.Command
                             "Usuario"      = $item.User
                             "Ubicación"    = $item.Location
                             "Descripción"  = $item.Description
-                        } | Format-List
+                        } | Select-Object "Comando/Ruta", Usuario, "Ubicación", "Descripción" | Format-List
                         
                         Write-Host "------------------------------------------------------------------" -ForegroundColor Gray
                     }

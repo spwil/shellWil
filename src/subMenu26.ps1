@@ -1,4 +1,130 @@
 function psSubMenu26 {
+    # Detección y fallback de Active Directory usando ADSI (LDAP nativo sin RSAT)
+    if (-not (Get-Command Get-ADUser -ErrorAction SilentlyContinue)) {
+        Write-Host "[INFO] Modulo ActiveDirectory (RSAT) no detectado. Cargando emulacion LDAP nativa..." -ForegroundColor Yellow
+        Start-Sleep -Milliseconds 500
+
+        # Declarar funciones de compatibilidad
+        function Get-ADUser {
+            param(
+                [Parameter(Position=0, Mandatory=$true)]
+                [string]$Identity,
+                [Parameter(Position=1)]
+                [string[]]$Properties
+            )
+            
+            $searcher = [adsisearcher]"(samAccountName=$Identity)"
+            $result = $searcher.FindOne()
+            if ($result) {
+                $entry = $result.GetDirectoryEntry()
+                
+                # Función para traducir fechas de LargeInteger
+                filter Get-ADDate {
+                    if ($null -eq $_ -or $_.Value -eq 0 -or $_.Value -eq 9223372036854775807) { return $null }
+                    try {
+                        if ($_ -is [System.Int64] -or $_ -is [System.Int32]) {
+                            return [DateTime]::FromFileTime($_)
+                        }
+                        # Intento de invocacion de LargeInteger compatible con PowerShell 2.0 (sin -shl)
+                        $high = $_.GetType().InvokeMember("HighPart", [System.Reflection.BindingFlags]::GetProperty, $null, $_, $null)
+                        $low = $_.GetType().InvokeMember("LowPart", [System.Reflection.BindingFlags]::GetProperty, $null, $_, $null)
+                        $intVal = ([int64]$high * 4294967296) + [uint32]$low
+                        return [DateTime]::FromFileTime($intVal)
+                    } catch {}
+                    return $null
+                }
+
+                $prop = @{}
+                $prop["Name"] = [string]$entry.Properties["name"].Value
+                $prop["DisplayName"] = [string]$entry.Properties["displayName"].Value
+                $prop["SamAccountName"] = [string]$entry.Properties["samAccountName"].Value
+                $prop["Title"] = [string]$entry.Properties["title"].Value
+                $prop["Office"] = [string]$entry.Properties["physicalDeliveryOfficeName"].Value
+                $prop["Department"] = [string]$entry.Properties["department"].Value
+                $prop["Description"] = [string]$entry.Properties["description"].Value
+                $prop["OfficePhone"] = [string]$entry.Properties["telephoneNumber"].Value
+                $prop["PostalCode"] = [string]$entry.Properties["postalCode"].Value
+                $prop["GivenName"] = [string]$entry.Properties["givenName"].Value
+                $prop["Surname"] = [string]$entry.Properties["sn"].Value
+                $prop["UserPrincipalName"] = [string]$entry.Properties["userPrincipalName"].Value
+                $prop["ObjectClass"] = [string]$entry.SchemaClassName
+                $prop["ObjectGUID"] = (if ($entry.Guid) { [Guid]$entry.Guid } else { $null })
+                $prop["SID"] = (if ($entry.Properties["objectSid"].Value) { 
+                    (New-Object System.Security.Principal.SecurityIdentifier($entry.Properties["objectSid"].Value, 0)).Value 
+                } else { $null })
+
+                $uac = $entry.Properties["userAccountControl"].Value
+                $prop["Enabled"] = (if ($uac) { -not ($uac -band 2) } else { $true })
+                $prop["PasswordExpired"] = (if ($uac) { [bool]($uac -band 0x800000) } else { $false })
+                $prop["PasswordNeverExpires"] = (if ($uac) { [bool]($uac -band 0x10000) } else { $false })
+
+                $prop["PasswordLastSet"] = $entry.Properties["pwdLastSet"].Value | Get-ADDate
+                $prop["AccountExpirationDate"] = $entry.Properties["accountExpires"].Value | Get-ADDate
+                
+                $lastLogonVal = $entry.Properties["lastLogonTimestamp"].Value
+                if ($null -eq $lastLogonVal) { $lastLogonVal = $entry.Properties["lastLogon"].Value }
+                $prop["LastLogonDate"] = $lastLogonVal | Get-ADDate
+
+                $managerDN = $entry.Properties["manager"].Value
+                $prop["Manager"] = (if ($managerDN) { ($managerDN -split ',')[0].Replace('CN=','') } else { $null })
+
+                $groups = @()
+                foreach ($g in $entry.Properties["memberOf"]) {
+                    $groups += $g
+                }
+                $prop["MemberOf"] = $groups
+
+                return New-Object PSObject -Property $prop
+            }
+            return $null
+        }
+
+        function Set-ADAccountPassword {
+            param(
+                [Parameter(Mandatory=$true)]
+                [string]$Identity,
+                [Parameter(Mandatory=$true)]
+                [System.Security.SecureString]$NewPassword,
+                [switch]$Reset
+            )
+            
+            $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($NewPassword)
+            $PlainPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
+            
+            $searcher = [adsisearcher]"(samAccountName=$Identity)"
+            $result = $searcher.FindOne()
+            if ($result) {
+                $entry = $result.GetDirectoryEntry()
+                $entry.Invoke("SetPassword", $PlainPassword)
+                $entry.CommitChanges()
+            } else {
+                throw "No se pudo encontrar al usuario '$Identity' en el dominio."
+            }
+        }
+
+        function Set-ADUser {
+            param(
+                [Parameter(Mandatory=$true)]
+                [string]$Identity,
+                [bool]$ChangePasswordAtLogon
+            )
+            
+            $searcher = [adsisearcher]"(samAccountName=$Identity)"
+            $result = $searcher.FindOne()
+            if ($result) {
+                $entry = $result.GetDirectoryEntry()
+                if ($ChangePasswordAtLogon) {
+                    $entry.Properties["pwdLastSet"].Value = 0
+                } else {
+                    $entry.Properties["pwdLastSet"].Value = -1
+                }
+                $entry.CommitChanges()
+            } else {
+                throw "No se pudo encontrar al usuario '$Identity' en el dominio."
+            }
+        }
+    }
+
     $salirSub = $false
     do {
         try {
@@ -393,9 +519,9 @@ function psSubMenu26 {
                         $listaUsuarios = foreach ($perfil in $perfiles) {
                             $nombreUsuario = $perfil.LocalPath.Split('\')[-1]
                             
-                            [PSCustomObject]@{
+                            New-Object PSObject -Property @{
                                 Usuario = $nombreUsuario
-                            }
+                            } | Select-Object Usuario
                         }
 
                         if ($null -eq $listaUsuarios) {
@@ -530,11 +656,12 @@ function psSubMenu26 {
                                 $disabled = $u.Properties.UserFlags.Value -band 2 # 2 = ADS_UF_ACCOUNTDISABLE
                                 $estado = if ($disabled) { "Deshabilitado" } else { "Activo" }
                                 
-                                $listaVisual += [PSCustomObject]@{
+                                $obj = New-Object PSObject -Property @{
                                     "Nombre de Usuario" = $u.Name
                                     "Estado"            = $estado
                                     "Descripcion"       = $u.Description
                                 }
+                                $listaVisual += $obj | Select-Object "Nombre de Usuario", Estado, Descripcion
                             }
                             
                             $listaVisual | Format-Table -AutoSize

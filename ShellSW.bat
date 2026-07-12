@@ -137,7 +137,6 @@ function psSubMenu20 {
             Write-Host "12. Si es posible realiza operacion de reparacion automatica "DISM 3" - DISM /Online /Cleanup-Image /RestoreHealth"
             Write-Host "13. Limpia los componentes reemplazados "DISM 4" - Dism.exe /Online /Cleanup-Image /StartComponentCleanup"
             Write-Host "14. Revision Exhaustivo "ANALISIS PROFUNDO" (dism) - Escaneo, reparacion, limpieza y verificacion"
-            Write-Host "***********************************************************"
             Write-Host "******************************************************************************************"
             Write-Host "17. Listar Usuarios Windows"
             Write-Host "18. Recursos Compartidos de Windows"
@@ -250,30 +249,55 @@ function psSubMenu20 {
                     Write-Host "`n******* ANALISIS DETALLADO DE UNIDADES SSD *******" -ForegroundColor Cyan
                     Write-Host "------------------------------------------------------------------" -ForegroundColor Gray
 
-                    # Obtenemos los discos filtrando por SSD
-                    $ssds = Get-PhysicalDisk | Where-Object { $_.MediaType -eq 'SSD' }
+                    # Verificar si existe Get-PhysicalDisk (Windows 8+)
+                    if (Get-Command Get-PhysicalDisk -ErrorAction SilentlyContinue) {
+                        # Obtenemos los discos filtrando por SSD
+                        $ssds = Get-PhysicalDisk | Where-Object { $_.MediaType -eq 'SSD' }
 
-                    if ($null -eq $ssds) {
-                        Write-Host "No se detectaron unidades SSD en este equipo." -ForegroundColor Yellow
+                        if ($null -eq $ssds) {
+                            Write-Host "No se detectaron unidades SSD en este equipo." -ForegroundColor Yellow
+                        }
+                        else {
+                            foreach ($disk in $ssds) {
+                                # Obtenemos detalles adicionales de almacenamiento
+                                $storageDetails = $disk | Get-StorageReliabilityCounter
+
+                                Write-Host "[ Unidad: $($disk.FriendlyName) ]" -ForegroundColor White -BackgroundColor DarkBlue
+                                
+                                # Tabla de información técnica compatible
+                                New-Object PSObject -Property @{
+                                    "Numero"      = $disk.DeviceID
+                                    "Modelo"      = $disk.FriendlyName
+                                    "Protocolo"   = $disk.BusType  # NVMe, SATA, USB
+                                    "Capacidad"   = "$([Math]::Round($disk.Size / 1GB, 2)) GB"
+                                    "EstadoSalud" = $disk.HealthStatus
+                                    "Uso_Vida"    = (if ($storageDetails.Wear -ne $null) { "$($storageDetails.Wear)%" } else { "N/A" })
+                                    "Temp"        = (if ($storageDetails.Temperature -ne $null) { "$($storageDetails.Temperature)°C" } else { "N/A" })
+                                    "N_Serie"     = (if ($disk.SerialNumber) { $disk.SerialNumber.Trim() } else { "Desconocido" })
+                                } | Select-Object Numero, Modelo, Protocolo, Capacidad, EstadoSalud, Uso_Vida, Temp, N_Serie | Format-List
+                                
+                                Write-Host "------------------------------------------------------------------" -ForegroundColor Gray
+                            }
+                        }
                     }
                     else {
-                        foreach ($disk in $ssds) {
-                            # Obtenemos detalles adicionales de almacenamiento
-                            $storageDetails = $disk | Get-StorageReliabilityCounter
-
-                            Write-Host "[ Unidad: $($disk.FriendlyName) ]" -ForegroundColor White -BackgroundColor DarkBlue
-                            
-                            # Tabla de información técnica
-                            [PSCustomObject]@{
-                                "Numero"      = $disk.DeviceID
-                                "Modelo"      = $disk.FriendlyName
-                                "Protocolo"   = $disk.BusType  # NVMe, SATA, USB
-                                "Capacidad"   = "$([Math]::Round($disk.Size / 1GB, 2)) GB"
-                                "EstadoSalud" = $disk.HealthStatus
-                                "Uso_Vida"    = if ($storageDetails.Wear -ne $null) { "$($storageDetails.Wear)%" } else { "N/A" }
-                                "Temp"        = if ($storageDetails.Temperature -ne $null) { "$($storageDetails.Temperature)°C" } else { "N/A" }
-                                "N_Serie"     = $disk.SerialNumber.Trim()
-                            } | Format-List
+                        Write-Host "Nota: Get-PhysicalDisk no esta disponible en este sistema operativo (compatible en Windows 8+)." -ForegroundColor Yellow
+                        Write-Host "Obteniendo informacion basica de unidades fisicas a traves de WMI..." -ForegroundColor Yellow
+                        Write-Host "------------------------------------------------------------------" -ForegroundColor Gray
+                        
+                        $discosWmi = Get-WmiObject Win32_DiskDrive
+                        foreach ($d in $discosWmi) {
+                            Write-Host "[ Unidad: $($d.Model) ]" -ForegroundColor White -BackgroundColor DarkBlue
+                            New-Object PSObject -Property @{
+                                 "Numero"      = $d.Index
+                                 "Modelo"      = $d.Model
+                                 "Protocolo"   = $d.InterfaceType
+                                 "Capacidad"   = "$([Math]::Round([double]$d.Size / 1GB, 2)) GB"
+                                 "EstadoSalud" = $d.Status
+                                 "Uso_Vida"    = "N/A (Requiere Windows 8+)"
+                                 "Temp"        = "N/A (Requiere Windows 8+)"
+                                 "N_Serie"     = (if ($d.SerialNumber) { $d.SerialNumber.Trim() } else { "Desconocido" })
+                             } | Select-Object Numero, Modelo, Protocolo, Capacidad, EstadoSalud, Uso_Vida, Temp, N_Serie | Format-List
                             
                             Write-Host "------------------------------------------------------------------" -ForegroundColor Gray
                         }
@@ -325,16 +349,16 @@ function psSubMenu20 {
                     # ****
                     Write-Host "`n******* ANALISIS DE ALMACENAMIENTO (DISCOS LOCALES) *******" -ForegroundColor Cyan
                     Write-Host "------------------------------------------------------------------" -ForegroundColor Gray
-                    # Obtenemos los discos lógicos tipo 3 (Discos Locales)
-                    Get-CimInstance  Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
-                        # Cálculos matemáticos
+                    # Obtenemos los discos logicos tipo 3 (Discos Locales)
+                    Get-WmiObject Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
+                        # Calculos matematicos
                         $sizeGB = [Math]::Round($_.Size / 1GB, 2)
                         $freeGB = [Math]::Round($_.FreeSpace / 1GB, 2)
                         $usedGB = [Math]::Round($sizeGB - $freeGB, 2)
                         $percentFree = [Math]::Round(($freeGB / $sizeGB) * 100, 1)
                         $percentUsed = 100 - $percentFree
-                        # Crear un objeto con la información detallada
-                        [PSCustomObject]@{
+                        # Crear un objeto con la informacion detallada compatible
+                        New-Object PSObject -Property @{
                             "Unidad"        = $_.DeviceID
                             "Nombre"        = $_.VolumeName
                             "Formato"       = $_.FileSystem
@@ -342,7 +366,7 @@ function psSubMenu20 {
                             "Espacio Libre" = "$freeGB GB ($percentFree%)"
                             "Espacio Usado" = "$usedGB GB ($percentUsed%)"
                             "Estado"        = $_.Status
-                        }
+                        } | Select-Object Unidad, Nombre, Formato, "Tamaño Total", "Espacio Libre", "Espacio Usado", Estado
                     } | Format-Table -AutoSize
                     Write-Host "Nota: Si el espacio libre es menor al 10%, se recomienda limpieza." -ForegroundColor Yellow
                     # ****
@@ -411,12 +435,12 @@ function psSubMenu20 {
                         Write-Host "[ $($item.Caption.ToUpper()) ]" -ForegroundColor White -BackgroundColor DarkBlue
                         
                         # Creamos un objeto personalizado para mostrar los datos ordenados
-                        [PSCustomObject]@{
+                        New-Object PSObject -Property @{
                             "Comando/Ruta" = $item.Command
                             "Usuario"      = $item.User
                             "Ubicación"    = $item.Location
                             "Descripción"  = $item.Description
-                        } | Format-List
+                        } | Select-Object "Comando/Ruta", Usuario, "Ubicación", "Descripción" | Format-List
                         
                         Write-Host "------------------------------------------------------------------" -ForegroundColor Gray
                     }
@@ -1458,7 +1482,7 @@ function psSubMenu21 {
                     cabecera
                     menuOpcion "Haz elegido el SUB_MENU: $opcion ;;; Opcion: $op21"
 
-                    $licencia = (Get-CimInstance SoftwareLicensingService).OA3xOriginalProductKey
+                    $licencia = (Get-WmiObject SoftwareLicensingService).OA3xOriginalProductKey
 
                     if ([string]::IsNullOrWhiteSpace($licencia)) {
                         Write-Warning "No se encontró una clave OA3.0 en el firmware de este equipo."
@@ -2998,6 +3022,10 @@ function psSubMenu25 {
 
                     Write-Host "`n--- Consultando informacion de red... ---" -ForegroundColor Yellow
 
+                    if (-not (Test-Connection -ComputerName $ipRemota -Count 1 -Quiet)) {
+                        Write-Warning "El equipo $ipRemota no responde a ping. Es posible que este apagado o tenga el firewall activo."
+                    }
+
                     try {
                         # 2. Consultas WMI Optimizadas
                         # Obtenemos el nombre del equipo
@@ -3050,6 +3078,10 @@ function psSubMenu25 {
                     $ipRemota = $baseIP + $ultimoOctetoActual
 
                     Write-Host "`n--- Conectando a: $ipRemota ---" -ForegroundColor Yellow
+
+                    if (-not (Test-Connection -ComputerName $ipRemota -Count 1 -Quiet)) {
+                        Write-Warning "El equipo $ipRemota no responde a ping. Es posible que este apagado o tenga el firewall activo."
+                    }
 
                     try {
                         # 1. CAPTURA DE DATOS INICIALES (EL "ANTES")
@@ -3144,6 +3176,10 @@ function psSubMenu25 {
                     $ipRemota = $baseIP + $ultimoOctetoActual
 
                     Write-Host "`n--- Conectando a: $ipRemota ---" -ForegroundColor Yellow
+
+                    if (-not (Test-Connection -ComputerName $ipRemota -Count 1 -Quiet)) {
+                        Write-Warning "El equipo $ipRemota no responde a ping. Es posible que este apagado o tenga el firewall activo."
+                    }
 
                     try {
                         # 1. CAPTURA DE DATOS INICIALES (EL "ANTES")
@@ -3251,6 +3287,10 @@ function psSubMenu25 {
 
                     Write-Host "`nConectando a $ipRemota...`n" -ForegroundColor Cyan
 
+                    if (-not (Test-Connection -ComputerName $ipRemota -Count 1 -Quiet)) {
+                        Write-Warning "El equipo $ipRemota no responde a ping. Es posible que este apagado o bloquee el trafico."
+                    }
+
                     try {
                         # 2. Listar interfaces fisicas (PhysicalAdapter = True)
                         $interfaces = Get-WmiObject -Class Win32_NetworkAdapter -ComputerName $ipRemota -Filter "PhysicalAdapter = True" -ErrorAction Stop
@@ -3258,11 +3298,12 @@ function psSubMenu25 {
                         # Mostrar tabla numerada para seleccion
                         $lista = @()
                         for ($i = 0; $i -lt $interfaces.Count; $i++) {
-                            $lista += [PSCustomObject]@{
+                            $obj = New-Object PSObject -Property @{
                                 Indice = $i
                                 Nombre = $interfaces[$i].Name
                                 Estado = $interfaces[$i].NetConnectionStatus
                             }
+                            $lista += $obj | Select-Object Indice, Nombre, Estado
                         }
                         $lista | Format-Table -AutoSize
 
@@ -3652,13 +3693,13 @@ function psSubMenu25 {
                                     # Determinamos el estado visualmente
                                     $estadoIP = if ($nic.DHCPEnabled) { "DHCP" } else { "ESTATICO" }
                                     
-                                    $obj = [PSCustomObject]@{
+                                    $obj = New-Object PSObject -Property @{
                                         IP         = $ipActual
                                         HostName   = $sys.CSName
                                         Estado     = $estadoIP
                                         MACAddress = $nic.MACAddress
                                     }
-                                    $resultados += $obj
+                                    $resultados += $obj | Select-Object IP, HostName, Estado, MACAddress
                                     
                                     # Feedback en consola durante el escaneo
                                     $color = if ($estadoIP -eq "DHCP") { "Cyan" } else { "Yellow" }
@@ -4298,13 +4339,13 @@ function psSubMenu25 {
                                 }
 
                                 # AJUSTE: Mapeo ordenado incluyendo el Nombre/Modelo de la impresora
-                                [PSCustomObject]@{
+                                New-Object PSObject -Property @{
                                     'Nombre / Modelo' = $impresora.Name
                                     'Fabricante'      = $fabricante
                                     'Predeterminado'  = $esPredeterminada
                                     'Puerto'          = $impresora.PortName
                                     'Estado'          = $estadoActivo
-                                }
+                                } | Select-Object 'Nombre / Modelo', Fabricante, Predeterminado, Puerto, Estado
                             }
 
                             # Mostrar tabla organizada de forma limpia y ajustada automáticamente al ancho
@@ -4428,13 +4469,13 @@ function psSubMenu25 {
                                         }
 
                                         # Construcción del objeto de salida
-                                        [PSCustomObject]@{
-                                            Fabricante     = if ($_.DriverName -match ' ') { $_.DriverName.Split(' ')[0] } else { $_.DriverName }
+                                        New-Object PSObject -Property @{
+                                            Fabricante     = (if ($_.DriverName -match ' ') { $_.DriverName.Split(' ')[0] } else { $_.DriverName })
                                             Nombre         = $_.Name
                                             Estado         = $estado
-                                            Predeterminada = if ($_.Default) { "  [ACTIVA]" } else { "" }
+                                            Predeterminada = (if ($_.Default) { "  [ACTIVA]" } else { "" })
                                             Puerto         = $_.PortName
-                                        }
+                                        } | Select-Object Fabricante, Nombre, Estado, Predeterminada, Puerto
                                     }
                                 }
 
@@ -4818,6 +4859,132 @@ function psSubMenu25 {
 #******************************************************** INICIO SUB MENU.26 ******************************************************
 #**********************************************************************************************************************************
 function psSubMenu26 {
+    # Detección y fallback de Active Directory usando ADSI (LDAP nativo sin RSAT)
+    if (-not (Get-Command Get-ADUser -ErrorAction SilentlyContinue)) {
+        Write-Host "[INFO] Modulo ActiveDirectory (RSAT) no detectado. Cargando emulacion LDAP nativa..." -ForegroundColor Yellow
+        Start-Sleep -Milliseconds 500
+
+        # Declarar funciones de compatibilidad
+        function Get-ADUser {
+            param(
+                [Parameter(Position=0, Mandatory=$true)]
+                [string]$Identity,
+                [Parameter(Position=1)]
+                [string[]]$Properties
+            )
+            
+            $searcher = [adsisearcher]"(samAccountName=$Identity)"
+            $result = $searcher.FindOne()
+            if ($result) {
+                $entry = $result.GetDirectoryEntry()
+                
+                # Función para traducir fechas de LargeInteger
+                filter Get-ADDate {
+                    if ($null -eq $_ -or $_.Value -eq 0 -or $_.Value -eq 9223372036854775807) { return $null }
+                    try {
+                        if ($_ -is [System.Int64] -or $_ -is [System.Int32]) {
+                            return [DateTime]::FromFileTime($_)
+                        }
+                        # Intento de invocacion de LargeInteger compatible con PowerShell 2.0 (sin -shl)
+                        $high = $_.GetType().InvokeMember("HighPart", [System.Reflection.BindingFlags]::GetProperty, $null, $_, $null)
+                        $low = $_.GetType().InvokeMember("LowPart", [System.Reflection.BindingFlags]::GetProperty, $null, $_, $null)
+                        $intVal = ([int64]$high * 4294967296) + [uint32]$low
+                        return [DateTime]::FromFileTime($intVal)
+                    } catch {}
+                    return $null
+                }
+
+                $prop = @{}
+                $prop["Name"] = [string]$entry.Properties["name"].Value
+                $prop["DisplayName"] = [string]$entry.Properties["displayName"].Value
+                $prop["SamAccountName"] = [string]$entry.Properties["samAccountName"].Value
+                $prop["Title"] = [string]$entry.Properties["title"].Value
+                $prop["Office"] = [string]$entry.Properties["physicalDeliveryOfficeName"].Value
+                $prop["Department"] = [string]$entry.Properties["department"].Value
+                $prop["Description"] = [string]$entry.Properties["description"].Value
+                $prop["OfficePhone"] = [string]$entry.Properties["telephoneNumber"].Value
+                $prop["PostalCode"] = [string]$entry.Properties["postalCode"].Value
+                $prop["GivenName"] = [string]$entry.Properties["givenName"].Value
+                $prop["Surname"] = [string]$entry.Properties["sn"].Value
+                $prop["UserPrincipalName"] = [string]$entry.Properties["userPrincipalName"].Value
+                $prop["ObjectClass"] = [string]$entry.SchemaClassName
+                $prop["ObjectGUID"] = (if ($entry.Guid) { [Guid]$entry.Guid } else { $null })
+                $prop["SID"] = (if ($entry.Properties["objectSid"].Value) { 
+                    (New-Object System.Security.Principal.SecurityIdentifier($entry.Properties["objectSid"].Value, 0)).Value 
+                } else { $null })
+
+                $uac = $entry.Properties["userAccountControl"].Value
+                $prop["Enabled"] = (if ($uac) { -not ($uac -band 2) } else { $true })
+                $prop["PasswordExpired"] = (if ($uac) { [bool]($uac -band 0x800000) } else { $false })
+                $prop["PasswordNeverExpires"] = (if ($uac) { [bool]($uac -band 0x10000) } else { $false })
+
+                $prop["PasswordLastSet"] = $entry.Properties["pwdLastSet"].Value | Get-ADDate
+                $prop["AccountExpirationDate"] = $entry.Properties["accountExpires"].Value | Get-ADDate
+                
+                $lastLogonVal = $entry.Properties["lastLogonTimestamp"].Value
+                if ($null -eq $lastLogonVal) { $lastLogonVal = $entry.Properties["lastLogon"].Value }
+                $prop["LastLogonDate"] = $lastLogonVal | Get-ADDate
+
+                $managerDN = $entry.Properties["manager"].Value
+                $prop["Manager"] = (if ($managerDN) { ($managerDN -split ',')[0].Replace('CN=','') } else { $null })
+
+                $groups = @()
+                foreach ($g in $entry.Properties["memberOf"]) {
+                    $groups += $g
+                }
+                $prop["MemberOf"] = $groups
+
+                return New-Object PSObject -Property $prop
+            }
+            return $null
+        }
+
+        function Set-ADAccountPassword {
+            param(
+                [Parameter(Mandatory=$true)]
+                [string]$Identity,
+                [Parameter(Mandatory=$true)]
+                [System.Security.SecureString]$NewPassword,
+                [switch]$Reset
+            )
+            
+            $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($NewPassword)
+            $PlainPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
+            
+            $searcher = [adsisearcher]"(samAccountName=$Identity)"
+            $result = $searcher.FindOne()
+            if ($result) {
+                $entry = $result.GetDirectoryEntry()
+                $entry.Invoke("SetPassword", $PlainPassword)
+                $entry.CommitChanges()
+            } else {
+                throw "No se pudo encontrar al usuario '$Identity' en el dominio."
+            }
+        }
+
+        function Set-ADUser {
+            param(
+                [Parameter(Mandatory=$true)]
+                [string]$Identity,
+                [bool]$ChangePasswordAtLogon
+            )
+            
+            $searcher = [adsisearcher]"(samAccountName=$Identity)"
+            $result = $searcher.FindOne()
+            if ($result) {
+                $entry = $result.GetDirectoryEntry()
+                if ($ChangePasswordAtLogon) {
+                    $entry.Properties["pwdLastSet"].Value = 0
+                } else {
+                    $entry.Properties["pwdLastSet"].Value = -1
+                }
+                $entry.CommitChanges()
+            } else {
+                throw "No se pudo encontrar al usuario '$Identity' en el dominio."
+            }
+        }
+    }
+
     $salirSub = $false
     do {
         try {
@@ -5212,9 +5379,9 @@ function psSubMenu26 {
                         $listaUsuarios = foreach ($perfil in $perfiles) {
                             $nombreUsuario = $perfil.LocalPath.Split('\')[-1]
                             
-                            [PSCustomObject]@{
+                            New-Object PSObject -Property @{
                                 Usuario = $nombreUsuario
-                            }
+                            } | Select-Object Usuario
                         }
 
                         if ($null -eq $listaUsuarios) {
@@ -5349,11 +5516,12 @@ function psSubMenu26 {
                                 $disabled = $u.Properties.UserFlags.Value -band 2 # 2 = ADS_UF_ACCOUNTDISABLE
                                 $estado = if ($disabled) { "Deshabilitado" } else { "Activo" }
                                 
-                                $listaVisual += [PSCustomObject]@{
+                                $obj = New-Object PSObject -Property @{
                                     "Nombre de Usuario" = $u.Name
                                     "Estado"            = $estado
                                     "Descripcion"       = $u.Description
                                 }
+                                $listaVisual += $obj | Select-Object "Nombre de Usuario", Estado, Descripcion
                             }
                             
                             $listaVisual | Format-Table -AutoSize
