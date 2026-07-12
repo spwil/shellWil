@@ -20,7 +20,7 @@ function psSubMenu26 {
             Write-Host "  3. GESTION DE USUARIO | USUARIO LOCAL |"
             Write-Host "    3.1 Cambiar contrasenia de USUARIO LOCAL en PC REMOTO" -ForegroundColor Cyan            
             Write-Host ""
-            Write-Host "  30. REFRESH." -ForegroundColor Red
+            Write-Host "  30. REFRESH (Modo LOCAL)." -ForegroundColor Red
             Write-Host "  31. REFRESH DESDE GITHUB (ONLINE)." -ForegroundColor Cyan
             Write-Host ""
             Write-Host "  0. V O L V E R   A L   M E N U    P R I N C I P A L"

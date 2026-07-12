@@ -53,7 +53,7 @@ function menuPrincipal {
             Write-Host "  29. *****)) APAGADO Y REINICIADO DE PC *****"
             Write-Host "    29.1 Apagar PC." -ForegroundColor Green
             Write-Host "    29.2 Reiniciar Sistema Operativo (shutdown)." -ForegroundColor Green
-            Write-Host "  30 Refresh"
+            Write-Host "  30 Refresh (Modo LOCAL)"
             Write-Host "  31 Refresh desde GitHub (Online)" -ForegroundColor Cyan
             Write-Host "  0.  Salir"
             Write-Host "======================================================================" -ForegroundColor Yellow

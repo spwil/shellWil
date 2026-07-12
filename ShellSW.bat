@@ -2924,7 +2924,7 @@ function psSubMenu25 {
             Write-Host "    12.2 Denegar/Deshabilitar ejecucion de scripts (Remoto)" -ForegroundColor Yellow
             Write-Host "    12.3 Instalar todos los componentes de RSAT (Remoto)" -ForegroundColor Green
             Write-Host "  ----------------------------------------"
-            Write-Host "  30. REFRESH." -ForegroundColor Red
+            Write-Host "  30. REFRESH (Modo LOCAL)." -ForegroundColor Red
             Write-Host "  31. REFRESH DESDE GITHUB (ONLINE)." -ForegroundColor Cyan
             Write-Host ""
             Write-Host "  0. V O L V E R   A L   M E N U    P R I N C I P A L"
@@ -4788,7 +4788,7 @@ function psSubMenu26 {
             Write-Host "  3. GESTION DE USUARIO | USUARIO LOCAL |"
             Write-Host "    3.1 Cambiar contrasenia de USUARIO LOCAL en PC REMOTO" -ForegroundColor Cyan            
             Write-Host ""
-            Write-Host "  30. REFRESH." -ForegroundColor Red
+            Write-Host "  30. REFRESH (Modo LOCAL)." -ForegroundColor Red
             Write-Host "  31. REFRESH DESDE GITHUB (ONLINE)." -ForegroundColor Cyan
             Write-Host ""
             Write-Host "  0. V O L V E R   A L   M E N U    P R I N C I P A L"
@@ -5944,7 +5944,7 @@ function menuPrincipal {
             Write-Host "  29. *****)) APAGADO Y REINICIADO DE PC *****"
             Write-Host "    29.1 Apagar PC." -ForegroundColor Green
             Write-Host "    29.2 Reiniciar Sistema Operativo (shutdown)." -ForegroundColor Green
-            Write-Host "  30 Refresh"
+            Write-Host "  30 Refresh (Modo LOCAL)"
             Write-Host "  31 Refresh desde GitHub (Online)" -ForegroundColor Cyan
             Write-Host "  0.  Salir"
             Write-Host "======================================================================" -ForegroundColor Yellow
