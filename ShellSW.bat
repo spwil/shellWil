@@ -5019,41 +5019,49 @@ function psSubMenu25 {
                         Write-Host "Operacion cancelada." -ForegroundColor Red
                     }
                     else {
+                        # 1. Solicitar opcionalmente credenciales administrativas (locales o de dominio)
+                        $cred = $null
+                        $usu = ""
+                        $claTexto = ""
+                        $usarCred = Read-Host "¿Desea especificar credenciales de administrador (local o de dominio) para la conexion? (S/N) [N]"
+                        if ($usarCred -eq "S" -or $usarCred -eq "s") {
+                            $usu = Read-Host "Introduzca usuario (ej: gmsantacruz\usuario o .\administrador)"
+                            if ($usu -ne "") {
+                                $cla = Read-Host "Introduzca clave de usuario" -AsSecureString
+                                $cred = New-Object System.Management.Automation.PSCredential ($usu, $cla)
+                                # Convertir la contraseña a texto plano para PsExec
+                                $claTexto = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($cla))
+                            }
+                        }
+
                         # Determinar si es IP o Hostname directamente
                         $targetMachine = ""
                         $ipRemota = ""
                         
                         if ($ultimoOcteto -match "^[a-zA-Z]") {
-                            # Es un hostname directo
                             $targetMachine = $ultimoOcteto
                             Write-Host "Usando Nombre de Equipo proporcionado: $targetMachine" -ForegroundColor Green
                         }
                         else {
-                            # Es un octeto o IP
                             $ipRemota = $ultimoOcteto
                             if ($ultimoOcteto -notmatch "\.") {
                                 $ipRemota = $baseIP + $ultimoOcteto
                             }
                             Write-Host "Direccion IP de destino: $ipRemota" -ForegroundColor Cyan
                             
-                            # Intentar resolver a Hostname para Kerberos / WinRM
-                            Write-Host "Resolviendo nombre de equipo (Hostname) necesario para WinRM..." -ForegroundColor Cyan
+                            Write-Host "Resolviendo nombre de equipo (Hostname) necesario para la conexion..." -ForegroundColor Cyan
                             try {
-                                # 1. Intento por WMI (RPC/DCOM)
                                 $sys = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $ipRemota -ErrorAction Stop
                                 $targetMachine = $sys.CSName
                                 Write-Host "Nombre de equipo resuelto exitosamente via WMI: $targetMachine" -ForegroundColor Green
                             }
                             catch {
                                 try {
-                                    # 2. Fallback a DNS reverso
                                     $targetMachine = [System.Net.Dns]::GetHostEntry($ipRemota).HostName
                                     Write-Host "Nombre de equipo resuelto via DNS: $targetMachine" -ForegroundColor Green
                                 }
                                 catch {
-                                    # 3. Fallback manual si falla la resolucion automatica
                                     Write-Host "ADVERTENCIA: No se pudo resolver la IP a un Nombre de Equipo automaticamente." -ForegroundColor Yellow
-                                    Write-Host "WinRM requiere el NOMBRE DE EQUIPO en un dominio AD para autenticar." -ForegroundColor Yellow
                                     $manualHost = Read-Host "Ingrese el NOMBRE DE EQUIPO (Hostname) del equipo remoto manualmente"
                                     if ($manualHost -ne "") {
                                         $targetMachine = $manualHost
@@ -5066,19 +5074,30 @@ function psSubMenu25 {
                             Write-Host "ERROR: Se requiere un nombre de equipo para continuar." -ForegroundColor Red
                         }
                         else {
-                            Write-Host "Iniciando instalacion de todos los componentes RSAT en $targetMachine..." -ForegroundColor Cyan
-                            try {
-                                Invoke-Command -ComputerName $targetMachine -ScriptBlock {
-                                    # Asegurar directivas de ejecución para cargar el módulo
-                                    Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
+                            # 2. Definir el ScriptBlock a ejecutar
+                            $scriptString = {
+                                Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
+                                Import-Module -Name Dism -ErrorAction SilentlyContinue
 
-                                    # Importar explícitamente el módulo DISM
-                                    Import-Module -Name Dism -ErrorAction SilentlyContinue
+                                if (-not (Get-Command -Name Get-WindowsCapability -ErrorAction SilentlyContinue)) {
+                                    throw "El cmdlet 'Get-WindowsCapability' no está disponible en este equipo."
+                                }
 
-                                    if (-not (Get-Command -Name Get-WindowsCapability -ErrorAction SilentlyContinue)) {
-                                        throw "El cmdlet 'Get-WindowsCapability' no está disponible en este equipo. Verifique si es una versión de Windows antigua (Windows 7/8.1/Server 2012) o si tiene problemas con el módulo DISM."
+                                # Gestion del servicio wuauserv
+                                $originalStartType = $null
+                                $wuauservHabilitado = $false
+                                $serviceWMI = Get-WmiObject -Class Win32_Service -Filter "Name='wuauserv'"
+                                if ($serviceWMI) {
+                                    $originalStartType = $serviceWMI.StartMode
+                                    if ($originalStartType -eq "Disabled") {
+                                        Write-Output "Detectado que el servicio Windows Update (wuauserv) esta DESHABILITADO."
+                                        Write-Output "Habilitandolo temporalmente en modo Manual para la instalacion..."
+                                        $serviceWMI.ChangeStartMode("Manual") | Out-Null
+                                        $wuauservHabilitado = $true
                                     }
+                                }
 
+                                try {
                                     Write-Output "Buscando componentes de RSAT..."
                                     $capabilities = Get-WindowsCapability -Online | Where-Object { $_.Name -like "Rsat.*" -and $_.State -eq "NotPresent" }
                                     if ($capabilities.Count -eq 0) {
@@ -5087,19 +5106,24 @@ function psSubMenu25 {
                                     else {
                                         Write-Output "Se encontraron $($capabilities.Count) componentes para instalar."
                                         
-                                        # Bypass temporal de WSUS si aplica
+                                        # Bypass de WSUS
                                         $regPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
                                         $wsusBypassed = $false
                                         $originalUseWUServer = $null
                                         
                                         if (Test-Path $regPath) {
-                                            $val = Get-ItemProperty -Path $regPath -Name "UseWUServer" -ErrorAction SilentlyContinue
-                                            if ($val -and $val.UseWUServer -eq 1) {
-                                                Write-Output "Detectado WSUS activo. Desactivando temporalmente para descargar directamente de Windows Update..."
-                                                $originalUseWUServer = 1
-                                                Set-ItemProperty -Path $regPath -Name "UseWUServer" -Value 0 -Force -ErrorAction SilentlyContinue
-                                                Restart-Service -Name "wuauserv" -Force -ErrorAction SilentlyContinue
-                                                $wsusBypassed = $true
+                                            try {
+                                                $val = Get-ItemProperty -Path $regPath -Name "UseWUServer" -ErrorAction Stop
+                                                if ($val -and $val.UseWUServer -eq 1) {
+                                                    Write-Output "Detectado WSUS activo. Desactivando temporalmente..."
+                                                    $originalUseWUServer = 1
+                                                    Set-ItemProperty -Path $regPath -Name "UseWUServer" -Value 0 -Force -ErrorAction Stop
+                                                    Restart-Service -Name "wuauserv" -Force -ErrorAction Stop
+                                                    $wsusBypassed = $true
+                                                }
+                                            }
+                                            catch {
+                                                Write-Output "ADVERTENCIA: No se pudo configurar WSUS o reiniciar wuauserv: $($_.Exception.Message)"
                                             }
                                         }
                                         
@@ -5116,7 +5140,6 @@ function psSubMenu25 {
                                             }
                                         }
                                         finally {
-                                            # Restaurar configuración de WSUS
                                             if ($wsusBypassed -and $originalUseWUServer -ne $null) {
                                                 Write-Output "Restaurando configuracion original de WSUS..."
                                                 Set-ItemProperty -Path $regPath -Name "UseWUServer" -Value $originalUseWUServer -Force -ErrorAction SilentlyContinue
@@ -5125,12 +5148,51 @@ function psSubMenu25 {
                                         }
                                         Write-Output "Instalacion de RSAT completada."
                                     }
-                                } -ErrorAction Stop
+                                }
+                                finally {
+                                    if ($wuauservHabilitado -and $originalStartType -eq "Disabled") {
+                                        Write-Output "Restaurando el estado DESHABILITADO del servicio Windows Update..."
+                                        $serviceWMIRestore = Get-WmiObject -Class Win32_Service -Filter "Name='wuauserv'"
+                                        if ($serviceWMIRestore) {
+                                            $serviceWMIRestore.ChangeStartMode("Disabled") | Out-Null
+                                        }
+                                    }
+                                }
+                            }.ToString()
+
+                            # 3. Decidir método de ejecución (PsExec vs Invoke-Command)
+                            $psexecPath = "C:\PSTools\PsExec.exe"
+                            if ((Test-Path $psexecPath) -and ($usu -ne "")) {
+                                Write-Host "Iniciando instalacion remota via PsExec (Contexto SYSTEM) para evitar restricciones de WinRM..." -ForegroundColor Green
+                                
+                                # Convertir comando a Base64 para evitar problemas de escape de comillas
+                                $bytes = [System.Text.Encoding]::Unicode.GetBytes($scriptString)
+                                $encoded = [Convert]::ToBase64String($bytes)
+                                
+                                # Ejecución con PsExec
+                                $argumentos = "\\$targetMachine -u `"$usu`" -p `"$claTexto`" -h -s powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"
+                                Start-Process -FilePath $psexecPath -ArgumentList $argumentos -Wait
                             }
-                            catch {
-                                Write-Host "ERROR al ejecutar Invoke-Command en $targetMachine." -ForegroundColor Red
-                                Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
-                                Write-Host "Asegurese de que la ejecucion remota este habilitada y tenga permisos de administrador." -ForegroundColor Yellow
+                            else {
+                                # Fallback a Invoke-Command si no hay PsExec o no se proporcionaron credenciales
+                                Write-Host "Iniciando instalacion via Invoke-Command (WinRM)..." -ForegroundColor Yellow
+                                if ($usu -ne "") {
+                                    Write-Host "Nota: Si experimenta 'Acceso denegado', intente instalar PsExec en C:\PSTools\PsExec.exe para ejecución en contexto SYSTEM." -ForegroundColor Cyan
+                                }
+                                try {
+                                    $sb = [ScriptBlock]::Create($scriptString)
+                                    if ($cred -ne $null) {
+                                        Invoke-Command -ComputerName $targetMachine -Credential $cred -ScriptBlock $sb -ErrorAction Stop
+                                    }
+                                    else {
+                                        Invoke-Command -ComputerName $targetMachine -ScriptBlock $sb -ErrorAction Stop
+                                    }
+                                }
+                                catch {
+                                    Write-Host "ERROR al ejecutar Invoke-Command en $targetMachine." -ForegroundColor Red
+                                    Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
+                                    Write-Host "Asegurese de usar credenciales con privilegios de Administrador en el equipo de destino." -ForegroundColor Yellow
+                                }
                             }
                         }
                     }
