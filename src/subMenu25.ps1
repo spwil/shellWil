@@ -103,8 +103,14 @@ function psSubMenu25 {
 
                         if ($nic) {
                             # 3. Formateo de la salida
-                            $dnsActuales = if ($nic.DNSServerSearchOrder) { $nic.DNSServerSearchOrder -join ", " } else { "N/A" }
-                            $tipoIP = if ($nic.DHCPEnabled) { "DINAMICA (DHCP)" } else { "ESTATICA (MANUAL)" }
+                            $dnsActuales = "N/A"
+                            if ($nic.DNSServerSearchOrder) {
+                                $dnsActuales = $nic.DNSServerSearchOrder -join ", "
+                            }
+                            $tipoIP = "ESTATICA (MANUAL)"
+                            if ($nic.DHCPEnabled) {
+                                $tipoIP = "DINAMICA (DHCP)"
+                            }
 
                             Write-Host "`n================================================" -ForegroundColor White
                             Write-Host " INFORMACION DETALLADA DEL EQUIPO" -ForegroundColor Green
@@ -755,7 +761,10 @@ function psSubMenu25 {
                                     $sys = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $ipActual
                                     
                                     # Determinamos el estado visualmente
-                                    $estadoIP = if ($nic.DHCPEnabled) { "DHCP" } else { "ESTATICO" }
+                                    $estadoIP = "ESTATICO"
+                                    if ($nic.DHCPEnabled) {
+                                        $estadoIP = "DHCP"
+                                    }
                                     
                                     $obj = New-Object PSObject -Property @{
                                         IP         = $ipActual
@@ -766,7 +775,10 @@ function psSubMenu25 {
                                     $resultados += $obj | Select-Object IP, HostName, Estado, MACAddress
                                     
                                     # Feedback en consola durante el escaneo
-                                    $color = if ($estadoIP -eq "DHCP") { "Cyan" } else { "Yellow" }
+                                    $color = "Yellow"
+                                    if ($estadoIP -eq "DHCP") {
+                                        $color = "Cyan"
+                                    }
                                     Write-Host "[+] Detectado: ${ipActual} - ${estadoIP} ($($sys.CSName))" -ForegroundColor $color
                                 }
                             }
@@ -1266,8 +1278,14 @@ function psSubMenu25 {
                                     $esRed = $data[3].Trim()
                                     $estado = $data[4].Trim()
 
-                                    $txtRed = if ($esRed -eq "TRUE") { "SI" } else { "Local" }
-                                    $txtPredet = if ($esPredet -eq "TRUE") { "<-- PREDET." } else { "" }
+                                    $txtRed = "Local"
+                                    if ($esRed -eq "TRUE") {
+                                        $txtRed = "SI"
+                                    }
+                                    $txtPredet = ""
+                                    if ($esPredet -eq "TRUE") {
+                                        $txtPredet = "<-- PREDET."
+                                    }
 
                                     Write-Host ($formato -f $nombre, $txtRed, $estado, $txtPredet)
                                 }
@@ -1365,8 +1383,14 @@ function psSubMenu25 {
                             # 3. LEER LA IMPRESORA PREDETERMINADA DEL USUARIO
                             $pathPredeterminada = "$userSID\Software\Microsoft\Windows NT\CurrentVersion\Windows"
                             $keyWindows = $reg.OpenSubKey($pathPredeterminada)
-                            $deviceString = if ($keyWindows) { $keyWindows.GetValue('Device') } else { $null }
-                            $nombrePredeterminada = if ($deviceString) { ($deviceString -split ',')[0] } else { '' }
+                            $deviceString = $null
+                            if ($keyWindows) {
+                                $deviceString = $keyWindows.GetValue('Device')
+                            }
+                            $nombrePredeterminada = ''
+                            if ($deviceString) {
+                                $nombrePredeterminada = ($deviceString -split ',')[0]
+                            }
                             if ($keyWindows) { $keyWindows.Close() }
 
                             # 4. CONSULTAR IMPRESORAS VÍA WMI (Compatible desde Windows 7)
@@ -1384,7 +1408,10 @@ function psSubMenu25 {
                             $resultadoTabla = foreach ($impresora in $wmiImpresoras) {
                                 
                                 # Clasificación del estado "Predeterminado"
-                                $esPredeterminada = if ($impresora.Name -eq $nombrePredeterminada) { 'PREDETERMINADO' } else { 'No' }
+                                $esPredeterminada = 'No'
+                                if ($impresora.Name -eq $nombrePredeterminada) {
+                                    $esPredeterminada = 'PREDETERMINADO'
+                                }
 
                                 # Identificación simplificada de Fabricantes basado en el Driver
                                 $fabricante = 'Generico / Virtual'
@@ -1691,7 +1718,10 @@ function psSubMenu25 {
                         Write-Host "Operacion cancelada." -ForegroundColor Red
                     }
                     else {
-                        $ipRemota = if ($ultimoOcteto -match "\.") { $ultimoOcteto } else { $baseIP + $ultimoOcteto }
+                        $ipRemota = $ultimoOcteto
+                        if ($ultimoOcteto -notmatch "\.") {
+                            $ipRemota = $baseIP + $ultimoOcteto
+                        }
                         
                         Write-Host "Habilitando ejecucion remota en $ipRemota..." -ForegroundColor Cyan
                         $process = Get-WmiObject -List -ComputerName $ipRemota -Class Win32_Process -ErrorAction SilentlyContinue
@@ -1730,7 +1760,10 @@ function psSubMenu25 {
                         Write-Host "Operacion cancelada." -ForegroundColor Red
                     }
                     else {
-                        $ipRemota = if ($ultimoOcteto -match "\.") { $ultimoOcteto } else { $baseIP + $ultimoOcteto }
+                        $ipRemota = $ultimoOcteto
+                        if ($ultimoOcteto -notmatch "\.") {
+                            $ipRemota = $baseIP + $ultimoOcteto
+                        }
                         
                         Write-Host "Deshabilitando ejecucion remota en $ipRemota..." -ForegroundColor Cyan
                         $process = Get-WmiObject -List -ComputerName $ipRemota -Class Win32_Process -ErrorAction SilentlyContinue
@@ -1780,7 +1813,10 @@ function psSubMenu25 {
                         }
                         else {
                             # Es un octeto o IP
-                            $ipRemota = if ($ultimoOcteto -match "\.") { $ultimoOcteto } else { $baseIP + $ultimoOcteto }
+                            $ipRemota = $ultimoOcteto
+                            if ($ultimoOcteto -notmatch "\.") {
+                                $ipRemota = $baseIP + $ultimoOcteto
+                            }
                             Write-Host "Direccion IP de destino: $ipRemota" -ForegroundColor Cyan
                             
                             # Intentar resolver a Hostname para Kerberos / WinRM
