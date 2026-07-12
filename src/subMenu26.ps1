@@ -4,7 +4,7 @@ function psSubMenu26 {
         try {
             #cabecera con informacion del autor
             cabecera
-            Write-Header " 26. ===)) REMOTO: COMANDOS AD ====="
+            Write-Header " 26. ===)) AD: COMANDOS AD ====="
             Write-Host "  1. GESTION DE USUARIO DE DOMINIO | ACTIVE DIRECTORY |"
             Write-Host "    1.1 Mostrar Datos de Usuario de Dominio con C.I, Cargo, Lugar."
             Write-Host "    1.2 Mostrar ultima conexion de Usuario"

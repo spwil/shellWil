@@ -4,7 +4,7 @@ function psSubMenu25 {
         try {
             #cabecera con informacion del autor
             cabecera
-            Write-Header " 25. +++)) REMOTO: COMANDOS RED - ADMINISTRACION REMOTA +++++"
+            Write-Header " 25. +++)) AD: COMANDOS RED - ADMINISTRACION REMOTA +++++"
             Write-Host "  1. Mostrar Hostname y MAC x IP."
             Write-Host "    1.1 Mostrar direccion IP de PC REMOTO."
             Write-Host "    1.2 Asignar direccion IP fija a PC REMOTO."

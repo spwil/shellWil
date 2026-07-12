@@ -3,7 +3,7 @@ function psSubMenu28 {
     do {
         try {
             cabecera
-            Write-Header " 28. ---)) REMOTO: GESTION HELPDESK -----"
+            Write-Header " 28. ---)) AD: GESTION HELPDESK -----"
             Write-Host "  1. Habilitar ejecucion remota de scripts (en PC REMOTA)" -ForegroundColor Cyan
             Write-Host "  2. Ejecutar GPUPDATE /FORCE en PC REMOTA" -ForegroundColor Yellow
             Write-Host "  3. Mostrar Caracteristicas de PC Remoto (Info Hardware/OS/Red)" -ForegroundColor Green

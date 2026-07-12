@@ -45,10 +45,10 @@ function menuPrincipal {
             Write-Host "  22. ---)) LOCAL: SERVICIOS WINDOWS - HERRAMIENTAS AVANZADOS."
             Write-Host "  23. ---)) LOCAL: HELPDESK LOCAL - HERRAMIENTAS DE SISTEMA." -ForegroundColor Green
             Write-Host "  24. ***)) LOCAL: COMANDOS WINDOWS 11 *****"
-            Write-Host "  25. +++)) REMOTO: COMANDOS RED - ADMINISTRACION REMOTA +++++" -ForegroundColor Cyan
-            Write-Host "  26. ===)) REMOTO: COMANDOS AD =====" -ForegroundColor Cyan
+            Write-Host "  25. +++)) AD: COMANDOS RED - ADMINISTRACION REMOTA +++++" -ForegroundColor Cyan
+            Write-Host "  26. ===)) AD: COMANDOS AD =====" -ForegroundColor Cyan
             Write-Host "  27. ###)) ONLINE: Herramientas en INTERNET #####"
-            Write-Host "  28. ---)) REMOTO: GESTION HELPDESK -----" -ForegroundColor Cyan
+            Write-Host "  28. ---)) AD: GESTION HELPDESK -----" -ForegroundColor Cyan
             Write-Host "  29. ***)) LOCAL: APAGADO Y REINICIADO DE PC *****"
             Write-Host "    29.1 Apagar PC." -ForegroundColor Green
             Write-Host "    29.2 Reiniciar Sistema Operativo (shutdown)." -ForegroundColor Green

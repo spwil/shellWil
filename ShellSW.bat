@@ -2916,7 +2916,7 @@ function psSubMenu25 {
         try {
             #cabecera con informacion del autor
             cabecera
-            Write-Header " 25. +++)) REMOTO: COMANDOS RED - ADMINISTRACION REMOTA +++++"
+            Write-Header " 25. +++)) AD: COMANDOS RED - ADMINISTRACION REMOTA +++++"
             Write-Host "  1. Mostrar Hostname y MAC x IP."
             Write-Host "    1.1 Mostrar direccion IP de PC REMOTO."
             Write-Host "    1.2 Asignar direccion IP fija a PC REMOTO."
@@ -4823,7 +4823,7 @@ function psSubMenu26 {
         try {
             #cabecera con informacion del autor
             cabecera
-            Write-Header " 26. ===)) REMOTO: COMANDOS AD ====="
+            Write-Header " 26. ===)) AD: COMANDOS AD ====="
             Write-Host "  1. GESTION DE USUARIO DE DOMINIO | ACTIVE DIRECTORY |"
             Write-Host "    1.1 Mostrar Datos de Usuario de Dominio con C.I, Cargo, Lugar."
             Write-Host "    1.2 Mostrar ultima conexion de Usuario"
@@ -5645,7 +5645,7 @@ function psSubMenu28 {
     do {
         try {
             cabecera
-            Write-Header " 28. ---)) REMOTO: GESTION HELPDESK -----"
+            Write-Header " 28. ---)) AD: GESTION HELPDESK -----"
             Write-Host "  1. Habilitar ejecucion remota de scripts (en PC REMOTA)" -ForegroundColor Cyan
             Write-Host "  2. Ejecutar GPUPDATE /FORCE en PC REMOTA" -ForegroundColor Yellow
             Write-Host "  3. Mostrar Caracteristicas de PC Remoto (Info Hardware/OS/Red)" -ForegroundColor Green
@@ -6024,10 +6024,10 @@ function menuPrincipal {
             Write-Host "  22. ---)) LOCAL: SERVICIOS WINDOWS - HERRAMIENTAS AVANZADOS."
             Write-Host "  23. ---)) LOCAL: HELPDESK LOCAL - HERRAMIENTAS DE SISTEMA." -ForegroundColor Green
             Write-Host "  24. ***)) LOCAL: COMANDOS WINDOWS 11 *****"
-            Write-Host "  25. +++)) REMOTO: COMANDOS RED - ADMINISTRACION REMOTA +++++" -ForegroundColor Cyan
-            Write-Host "  26. ===)) REMOTO: COMANDOS AD =====" -ForegroundColor Cyan
+            Write-Host "  25. +++)) AD: COMANDOS RED - ADMINISTRACION REMOTA +++++" -ForegroundColor Cyan
+            Write-Host "  26. ===)) AD: COMANDOS AD =====" -ForegroundColor Cyan
             Write-Host "  27. ###)) ONLINE: Herramientas en INTERNET #####"
-            Write-Host "  28. ---)) REMOTO: GESTION HELPDESK -----" -ForegroundColor Cyan
+            Write-Host "  28. ---)) AD: GESTION HELPDESK -----" -ForegroundColor Cyan
             Write-Host "  29. ***)) LOCAL: APAGADO Y REINICIADO DE PC *****"
             Write-Host "    29.1 Apagar PC." -ForegroundColor Green
             Write-Host "    29.2 Reiniciar Sistema Operativo (shutdown)." -ForegroundColor Green
