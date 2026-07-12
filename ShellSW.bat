@@ -5932,20 +5932,20 @@ function menuPrincipal {
             Write-Host "  17. Abrir Administrador de Tareas (taskmgr)."
             Write-Host "  18. Abrir Simbolo de SISTEMA (cmd)."
             Write-Host "  19. Abrir PowerShell Administrador"
-            Write-Host "  20. -----)) INFORMACION SISTEMA CMD [RAM] [HDD] - DISM - RESETEAR RED."
-            Write-Host "  21. -----)) VENTANAS ADMINISTRACION WINDOWS - ANTIVIRUS."
-            Write-Host "  22. -----)) SERVICIOS WINDOWS - HERRAMIENTAS AVANZADOS."
-            Write-Host "  23. -----)) COMANDOS EN [[[POWERSHELL]]] - HERRAMIENTAS DE SISTEMA."
-            Write-Host "  24. *****)) COMANDOS WINDOWS 11 *****"
-            Write-Host "  25. +++++)) COMANDOS RED - ADMINISTRACION REMOTA +++++" -ForegroundColor Cyan
-            Write-Host "  26. =====)) COMANDOS AD =====" -ForegroundColor Cyan
-            Write-Host "  27. #####)) Herramientas en INTERNET - ONLINE #####"
-            Write-Host "  28. -----)) GESTION HELPDESK REMOTO -----" -ForegroundColor Cyan
-            Write-Host "  29. *****)) APAGADO Y REINICIADO DE PC *****"
+            Write-Host "  20. ---)) LOCAL: INFORMACION SISTEMA CMD [RAM] [HDD] - DISM - RESETEAR RED."
+            Write-Host "  21. ---)) LOCAL: VENTANAS ADMINISTRACION WINDOWS - ANTIVIRUS."
+            Write-Host "  22. ---)) LOCAL: SERVICIOS WINDOWS - HERRAMIENTAS AVANZADOS."
+            Write-Host "  23. ---)) LOCAL: COMANDOS EN [[[POWERSHELL]]] - HERRAMIENTAS DE SISTEMA."
+            Write-Host "  24. ***)) LOCAL: COMANDOS WINDOWS 11 *****"
+            Write-Host "  25. +++)) REMOTO: COMANDOS RED - ADMINISTRACION REMOTA +++++" -ForegroundColor Cyan
+            Write-Host "  26. ===)) REMOTO: COMANDOS AD =====" -ForegroundColor Cyan
+            Write-Host "  27. ###)) ONLINE: Herramientas en INTERNET #####"
+            Write-Host "  28. ---)) REMOTO: GESTION HELPDESK -----" -ForegroundColor Cyan
+            Write-Host "  29. ***)) LOCAL: APAGADO Y REINICIADO DE PC *****"
             Write-Host "    29.1 Apagar PC." -ForegroundColor Green
             Write-Host "    29.2 Reiniciar Sistema Operativo (shutdown)." -ForegroundColor Green
-            Write-Host "  30 Refresh (Modo LOCAL)"
-            Write-Host "  31 Refresh desde GitHub (Online)" -ForegroundColor Cyan
+            Write-Host "  30. REFRESH (Modo LOCAL)."
+            Write-Host "  31. REFRESH desde GitHub (Online)" -ForegroundColor Cyan
             Write-Host "  0.  Salir"
             Write-Host "======================================================================" -ForegroundColor Yellow
             
@@ -6489,7 +6489,7 @@ function menuPrincipal {
                     cabecera
                     Write-Host "`n[!] Descargando y reiniciando desde repositorio remoto..." -ForegroundColor Cyan
                     Start-Sleep -Seconds 2
-                    Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://raw.githubusercontent.com/spwil/shellWil/main/ShellSW.bat | iex"
+                    Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://raw.githubusercontent.com/spwil/shellSSmain/ShellSW.bat | iex"
                     exit
                 }
 
