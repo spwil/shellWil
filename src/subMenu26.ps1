@@ -48,15 +48,28 @@ function psSubMenu26 {
                 $prop["Surname"] = [string]$entry.Properties["sn"].Value
                 $prop["UserPrincipalName"] = [string]$entry.Properties["userPrincipalName"].Value
                 $prop["ObjectClass"] = [string]$entry.SchemaClassName
-                $prop["ObjectGUID"] = (if ($entry.Guid) { [Guid]$entry.Guid } else { $null })
-                $prop["SID"] = (if ($entry.Properties["objectSid"].Value) { 
-                    (New-Object System.Security.Principal.SecurityIdentifier($entry.Properties["objectSid"].Value, 0)).Value 
-                } else { $null })
+                if ($entry.Guid) {
+                    $prop["ObjectGUID"] = [Guid]$entry.Guid
+                } else {
+                    $prop["ObjectGUID"] = $null
+                }
+
+                if ($entry.Properties["objectSid"].Value) { 
+                    $prop["SID"] = (New-Object System.Security.Principal.SecurityIdentifier($entry.Properties["objectSid"].Value, 0)).Value 
+                } else {
+                    $prop["SID"] = $null
+                }
 
                 $uac = $entry.Properties["userAccountControl"].Value
-                $prop["Enabled"] = (if ($uac) { -not ($uac -band 2) } else { $true })
-                $prop["PasswordExpired"] = (if ($uac) { [bool]($uac -band 0x800000) } else { $false })
-                $prop["PasswordNeverExpires"] = (if ($uac) { [bool]($uac -band 0x10000) } else { $false })
+                if ($uac) {
+                    $prop["Enabled"] = -not ($uac -band 2)
+                    $prop["PasswordExpired"] = [bool]($uac -band 0x800000)
+                    $prop["PasswordNeverExpires"] = [bool]($uac -band 0x10000)
+                } else {
+                    $prop["Enabled"] = $true
+                    $prop["PasswordExpired"] = $false
+                    $prop["PasswordNeverExpires"] = $false
+                }
 
                 $prop["PasswordLastSet"] = $entry.Properties["pwdLastSet"].Value | Get-ADDate
                 $prop["AccountExpirationDate"] = $entry.Properties["accountExpires"].Value | Get-ADDate
@@ -66,7 +79,11 @@ function psSubMenu26 {
                 $prop["LastLogonDate"] = $lastLogonVal | Get-ADDate
 
                 $managerDN = $entry.Properties["manager"].Value
-                $prop["Manager"] = (if ($managerDN) { ($managerDN -split ',')[0].Replace('CN=','') } else { $null })
+                if ($managerDN) {
+                    $prop["Manager"] = ($managerDN -split ',')[0].Replace('CN=','')
+                } else {
+                    $prop["Manager"] = $null
+                }
 
                 $groups = @()
                 foreach ($g in $entry.Properties["memberOf"]) {

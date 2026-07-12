@@ -1533,11 +1533,20 @@ function psSubMenu25 {
                                         }
 
                                         # Construcción del objeto de salida
+                                        $fabricante = $_.DriverName
+                                        if ($_.DriverName -match ' ') {
+                                            $fabricante = $_.DriverName.Split(' ')[0]
+                                        }
+                                        $predeterminada = ""
+                                        if ($_.Default) {
+                                            $predeterminada = "  [ACTIVA]"
+                                        }
+
                                         New-Object PSObject -Property @{
-                                            Fabricante     = (if ($_.DriverName -match ' ') { $_.DriverName.Split(' ')[0] } else { $_.DriverName })
+                                            Fabricante     = $fabricante
                                             Nombre         = $_.Name
                                             Estado         = $estado
-                                            Predeterminada = (if ($_.Default) { "  [ACTIVA]" } else { "" })
+                                            Predeterminada = $predeterminada
                                             Puerto         = $_.PortName
                                         } | Select-Object Fabricante, Nombre, Estado, Predeterminada, Puerto
                                     }

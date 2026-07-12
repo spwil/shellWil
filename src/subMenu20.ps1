@@ -135,35 +135,76 @@ function psSubMenu20 {
                     cabecera
                     menuOpcion "Haz elegido el SUB_MENU: $opcion ;;; Opcion: $op"
 
-                    Write-Host "`n******* ANALISIS DETALLADO DE UNIDADES SSD *******" -ForegroundColor Cyan
+                    Write-Host "`n******* CAPACIDAD Y TIPO DE DISCO DURO *******" -ForegroundColor Cyan
                     Write-Host "------------------------------------------------------------------" -ForegroundColor Gray
 
                     # Verificar si existe Get-PhysicalDisk (Windows 8+)
                     if (Get-Command Get-PhysicalDisk -ErrorAction SilentlyContinue) {
-                        # Obtenemos los discos filtrando por SSD
-                        $ssds = Get-PhysicalDisk | Where-Object { $_.MediaType -eq 'SSD' }
+                        # Obtenemos todos los discos físicos ordenados por DeviceID
+                        $discos = Get-PhysicalDisk | Sort-Object DeviceId
 
-                        if ($null -eq $ssds) {
-                            Write-Host "No se detectaron unidades SSD en este equipo." -ForegroundColor Yellow
+                        if ($null -eq $discos) {
+                            Write-Host "No se detectaron unidades de disco en este equipo." -ForegroundColor Yellow
                         }
                         else {
-                            foreach ($disk in $ssds) {
-                                # Obtenemos detalles adicionales de almacenamiento
-                                $storageDetails = $disk | Get-StorageReliabilityCounter
+                            foreach ($disk in $discos) {
+                                # Intentamos obtener detalles adicionales de almacenamiento
+                                $storageDetails = $null
+                                try {
+                                    $storageDetails = $disk | Get-StorageReliabilityCounter -ErrorAction SilentlyContinue
+                                } catch {}
+
+                                # Determinar el tipo de disco
+                                $tipoDisco = "Disco Rigido (HDD)"
+                                if ($disk.BusType -eq "USB" -or $disk.MediaType -eq "Removable" -or $disk.MediaType -eq "External") {
+                                    $tipoDisco = "Unidad Extraible"
+                                }
+                                elseif ($disk.MediaType -eq "SSD") {
+                                    $tipoDisco = "Disco Solido (SSD)"
+                                }
+                                elseif ($disk.FriendlyName -match "SSD|Solid State|NVMe") {
+                                    $tipoDisco = "Disco Solido (SSD)"
+                                }
+                                elseif ($disk.BusType -eq "USB") {
+                                    $tipoDisco = "Unidad Extraible"
+                                }
+
+                                # Estado de salud
+                                $salud = $disk.HealthStatus
+
+                                # Formatear capacidad
+                                $capacidadGB = "$([Math]::Round($disk.Size / 1GB, 2)) GB"
 
                                 Write-Host "[ Unidad: $($disk.FriendlyName) ]" -ForegroundColor White -BackgroundColor DarkBlue
                                 
-                                # Tabla de información técnica compatible
+                                # Preparar variables para evitar lógica compleja en el hashtable
+                                $usoVida = "N/A"
+                                if ($storageDetails -and $storageDetails.Wear -ne $null) {
+                                    $usoVida = "$($storageDetails.Wear)%"
+                                }
+
+                                $temp = "N/A"
+                                if ($storageDetails -and $storageDetails.Temperature -ne $null) {
+                                    $temp = "$($storageDetails.Temperature)°C"
+                                }
+
+                                $nSerie = "Desconocido"
+                                if ($disk.SerialNumber) {
+                                    $nSerie = $disk.SerialNumber.Trim()
+                                }
+
+                                # Tabla de información técnica compatible en formato de lista idéntico al de la imagen
                                 New-Object PSObject -Property @{
-                                    "Numero"      = $disk.DeviceID
+                                    "Numero"      = $disk.DeviceId
                                     "Modelo"      = $disk.FriendlyName
+                                    "Tipo"        = $tipoDisco
                                     "Protocolo"   = $disk.BusType  # NVMe, SATA, USB
-                                    "Capacidad"   = "$([Math]::Round($disk.Size / 1GB, 2)) GB"
-                                    "EstadoSalud" = $disk.HealthStatus
-                                    "Uso_Vida"    = (if ($storageDetails.Wear -ne $null) { "$($storageDetails.Wear)%" } else { "N/A" })
-                                    "Temp"        = (if ($storageDetails.Temperature -ne $null) { "$($storageDetails.Temperature)°C" } else { "N/A" })
-                                    "N_Serie"     = (if ($disk.SerialNumber) { $disk.SerialNumber.Trim() } else { "Desconocido" })
-                                } | Select-Object Numero, Modelo, Protocolo, Capacidad, EstadoSalud, Uso_Vida, Temp, N_Serie | Format-List
+                                    "Capacidad"   = $capacidadGB
+                                    "EstadoSalud" = $salud
+                                    "Uso_Vida"    = $usoVida
+                                    "Temp"        = $temp
+                                    "N_Serie"     = $nSerie
+                                } | Select-Object Numero, Modelo, Tipo, Protocolo, Capacidad, EstadoSalud, Uso_Vida, Temp, N_Serie | Format-List
                                 
                                 Write-Host "------------------------------------------------------------------" -ForegroundColor Gray
                             }
@@ -171,22 +212,45 @@ function psSubMenu20 {
                     }
                     else {
                         Write-Host "Nota: Get-PhysicalDisk no esta disponible en este sistema operativo (compatible en Windows 8+)." -ForegroundColor Yellow
-                        Write-Host "Obteniendo informacion basica de unidades fisicas a traves de WMI..." -ForegroundColor Yellow
+                        Write-Host "Obteniendo informacion detallada de unidades fisicas a traves de WMI..." -ForegroundColor Yellow
                         Write-Host "------------------------------------------------------------------" -ForegroundColor Gray
                         
-                        $discosWmi = Get-WmiObject Win32_DiskDrive
+                        $discosWmi = Get-WmiObject Win32_DiskDrive | Sort-Object Index
                         foreach ($d in $discosWmi) {
+                            # Determinar el tipo de disco para Windows 7
+                            $tipoDisco = "Disco Rigido (HDD)"
+                            if ($d.InterfaceType -eq "USB" -or $d.MediaType -match "External|Removable" -or $d.Model -match "USB|SD Card|Card Reader") {
+                                $tipoDisco = "Unidad Extraible"
+                            }
+                            elseif ($d.Model -match "SSD|Solid State|NVMe|SATA SSD") {
+                                $tipoDisco = "Disco Solido (SSD)"
+                            }
+
+                            # Estado de salud
+                            $salud = $d.Status
+                            if ($salud -eq "OK") { $salud = "Healthy" }
+
+                            # Capacidad en GB
+                            $capacidadGB = "$([Math]::Round([double]$d.Size / 1GB, 2)) GB"
+
+                            $nSerie = "Desconocido"
+                            if ($d.SerialNumber) {
+                                $nSerie = $d.SerialNumber.Trim()
+                            }
+
                             Write-Host "[ Unidad: $($d.Model) ]" -ForegroundColor White -BackgroundColor DarkBlue
+                            
                             New-Object PSObject -Property @{
-                                 "Numero"      = $d.Index
-                                 "Modelo"      = $d.Model
-                                 "Protocolo"   = $d.InterfaceType
-                                 "Capacidad"   = "$([Math]::Round([double]$d.Size / 1GB, 2)) GB"
-                                 "EstadoSalud" = $d.Status
-                                 "Uso_Vida"    = "N/A (Requiere Windows 8+)"
-                                 "Temp"        = "N/A (Requiere Windows 8+)"
-                                 "N_Serie"     = (if ($d.SerialNumber) { $d.SerialNumber.Trim() } else { "Desconocido" })
-                             } | Select-Object Numero, Modelo, Protocolo, Capacidad, EstadoSalud, Uso_Vida, Temp, N_Serie | Format-List
+                                "Numero"      = $d.Index
+                                "Modelo"      = $d.Model
+                                "Tipo"        = $tipoDisco
+                                "Protocolo"   = $d.InterfaceType  # IDE, SCSI, USB, etc.
+                                "Capacidad"   = $capacidadGB
+                                "EstadoSalud" = $salud
+                                "Uso_Vida"    = "N/A (Requiere Windows 8+)"
+                                "Temp"        = "N/A (Requiere Windows 8+)"
+                                "N_Serie"     = $nSerie
+                            } | Select-Object Numero, Modelo, Tipo, Protocolo, Capacidad, EstadoSalud, Uso_Vida, Temp, N_Serie | Format-List
                             
                             Write-Host "------------------------------------------------------------------" -ForegroundColor Gray
                         }
