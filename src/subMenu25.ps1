@@ -183,42 +183,59 @@ function psSubMenu25 {
 
                         Write-Host "`n[!] Aplicando cambios forzados mediante inyeccion Netsh..." -ForegroundColor Magenta
 
-                        # 3. CONSTRUCCIÓN E INYECCIÓN DE COMANDOS
-                        $cmdIP = "netsh interface ip set address name=`"$interfaceName`" static $nuevaIP 255.255.255.0 $nuevoGW 1"
-                        $cmdDNS1 = "netsh interface ip set dns name=`"$interfaceName`" static 172.25.108.100"
-                        $cmdDNS2 = "netsh interface ip add dns name=`"$interfaceName`" 192.168.13.214 index=2"
+                        # 3. CONSTRUCCIÓN E INYECCIÓN DE COMANDOS (DIFERIDA Y ASÍNCRONA)
+                        $cmdIP = "netsh interface ip set address name=\`"$interfaceName\`" static $nuevaIP 255.255.255.0 $nuevoGW 1"
+                        $cmdDNS1 = "netsh interface ip set dns name=\`"$interfaceName\`" static 172.25.108.100"
+                        $cmdDNS2 = "netsh interface ip add dns name=\`"$interfaceName\`" 192.168.13.214 index=2"
                         
-                        $fullCommand = "cmd.exe /c $cmdIP & $cmdDNS1 & $cmdDNS2"
+                        $fullCommand = "cmd.exe /c start /b `"`" cmd.exe /c `"ping -n 5 127.0.0.1 >nul & $cmdIP & $cmdDNS1 & $cmdDNS2`""
                         $process = Get-WmiObject -List -ComputerName $ipRemota -Class Win32_Process
                         $process.Create($fullCommand) | Out-Null
 
-                        Write-Host "[*] Comandos enviados. Esperando 15 segundos para reconexion..." -ForegroundColor Cyan
+                        Write-Host "[*] Comandos diferidos enviados. Esperando 15 segundos para reconexion..." -ForegroundColor Cyan
                         Start-Sleep -Seconds 15
 
                         # 4. CAPTURA DE DATOS FINALES (EL "DESPUÉS")
                         Write-Host "[*] Generando reporte de validacion...`n" -ForegroundColor Magenta
                         
                         try {
-                            # Consultamos a la NUEVA IP
-                            $confirm = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -ComputerName $nuevaIP `
-                                -Filter "Index=$($nicInfo.Index)" -ErrorAction Stop
+                            # 1. Comprobar primero con ping rápido para evitar hangs de WMI
+                            Write-Host "[*] Verificando conectividad IP con ping a $nuevaIP..." -ForegroundColor Gray
+                            if (-not (Test-Connection -ComputerName $nuevaIP -Count 1 -Quiet)) {
+                                throw "El equipo no responde a ping en la nueva IP $nuevaIP."
+                            }
 
-                            Write-Host "====================================================" -ForegroundColor White
-                            Write-Host "        ESTADO FINAL (DESPUES DEL CAMBIO)" -ForegroundColor Green
-                            Write-Host "====================================================" -ForegroundColor White
-                            Write-Host " HOSTNAME:      $hostName"
-                            Write-Host " MAC ADDRESS:   $macAddress"
-                            Write-Host "----------------------------------------------------"
-                            Write-Host " NUEVA IP:      $($confirm.IPAddress[0])" -ForegroundColor Cyan
-                            Write-Host " MASCARA:       $($confirm.IPSubnet[0])"
-                            Write-Host " NUEVO GW:      $($confirm.DefaultIPGateway -join ', ')" -ForegroundColor Cyan
-                            Write-Host " NUEVOS DNS:    $($confirm.DNSServerSearchOrder -join ', ')" -ForegroundColor Cyan
-                            Write-Host "====================================================" -ForegroundColor White
-                            Write-Host "¡Cambio verificado exitosamente!" -ForegroundColor Green
+                            # 2. Conexión WMI controlada con Timeout de 5 segundos
+                            $options = New-Object System.Management.ConnectionOptions
+                            $options.Timeout = New-Object System.TimeSpan(0, 0, 5) # 5 segundos
+                            $scope = New-Object System.Management.ManagementScope("\\$nuevaIP\root\cimv2", $options)
+                            $scope.Connect()
+
+                            $query = New-Object System.Management.ObjectQuery("SELECT * FROM Win32_NetworkAdapterConfiguration WHERE Index = $($nicInfo.Index)")
+                            $searcher = New-Object System.Management.ManagementObjectSearcher($scope, $query)
+                            $confirm = $searcher.Get() | Select-Object -First 1
+
+                            if ($confirm) {
+                                Write-Host "====================================================" -ForegroundColor White
+                                Write-Host "        ESTADO FINAL (DESPUES DEL CAMBIO)" -ForegroundColor Green
+                                Write-Host "====================================================" -ForegroundColor White
+                                Write-Host " HOSTNAME:      $hostName"
+                                Write-Host " MAC ADDRESS:   $macAddress"
+                                Write-Host "----------------------------------------------------"
+                                Write-Host " NUEVA IP:      $($confirm.IPAddress[0])" -ForegroundColor Cyan
+                                Write-Host " MASCARA:       $($confirm.IPSubnet[0])"
+                                Write-Host " NUEVO GW:      $($confirm.DefaultIPGateway -join ', ')" -ForegroundColor Cyan
+                                Write-Host " NUEVOS DNS:    $($confirm.DNSServerSearchOrder -join ', ')" -ForegroundColor Cyan
+                                Write-Host "====================================================" -ForegroundColor White
+                                Write-Host "¡Cambio verificado exitosamente!" -ForegroundColor Green
+                            } else {
+                                throw "No se pudo recuperar la informacion de red de la interfaz con indice $($nicInfo.Index)."
+                            }
                         } 
                         catch {
                             Write-Host "----------------------------------------------------"
-                            Write-Host "AVISO: El equipo cambio su IP pero no responde WMI aun." -ForegroundColor Yellow
+                            Write-Host "AVISO: El equipo cambio su IP pero no responde WMI aun o la red se cayo." -ForegroundColor Yellow
+                            Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
                             Write-Host "Verifique manualmente: ping $nuevaIP" -ForegroundColor White
                             Write-Host "----------------------------------------------------"
                         }
@@ -276,11 +293,10 @@ function psSubMenu25 {
 
                         Write-Host "[!] Forzando cambio a DHCP y DNS Automatico..." -ForegroundColor Magenta
 
-                        # 2. CONSTRUCCIÓN DEL COMANDO (SIN OPERADORES DE FORMATO)
-                        # Usamos concatenación simple para evitar el error de "cadena de entrada"
-                        $cmdIP = "netsh interface ip set address name=`"$interfaceName`" source=dhcp"
-                        $cmdDNS = "netsh interface ip set dns name=`"$interfaceName`" source=dhcp"
-                        $fullCommand = "cmd.exe /c " + $cmdIP + " & " + $cmdDNS
+                        # 2. CONSTRUCCIÓN DEL COMANDO (DIFERIDA Y ASÍNCRONA)
+                        $cmdIP = "netsh interface ip set address name=\`"$interfaceName\`" source=dhcp"
+                        $cmdDNS = "netsh interface ip set dns name=\`"$interfaceName\`" source=dhcp"
+                        $fullCommand = "cmd.exe /c start /b `"`" cmd.exe /c `"ping -n 5 127.0.0.1 >nul & $cmdIP & $cmdDNS`""
 
                         # 3. EJECUCIÓN MEDIANTE PROCESO INDEPENDIENTE
                         # Esto asegura que el cambio se complete aunque la red se reinicie
