@@ -26,7 +26,9 @@ function psSubMenu20 {
             Write-Host "12. Si es posible realiza operacion de reparacion automatica "DISM 3" - DISM /Online /Cleanup-Image /RestoreHealth"
             Write-Host "13. Limpia los componentes reemplazados "DISM 4" - Dism.exe /Online /Cleanup-Image /StartComponentCleanup"
             Write-Host "14. Revision Exhaustivo "ANALISIS PROFUNDO" (dism) - Escaneo, reparacion, limpieza y verificacion"
-            Write-Host "***********************************************************"
+            Write-Host "15. Resetear IP Red LAN"
+            Write-Host "16. Resetear IP Red y Asignar DHCP"
+            Write-Host "  16.1 Mostrar Claves MAC Address"
             Write-Host "******************************************************************************************"
             Write-Host "17. Listar Usuarios Windows"
             Write-Host "18. Recursos Compartidos de Windows"
@@ -730,7 +732,65 @@ function psSubMenu20 {
                     Sfc /Scannow
                     Write-Host "Analisis terminado: Sfc /Scannow ::: OK" -ForegroundColor Green
                 }
+                "15" { 
+                    # clear-Host
+                    cabecera
+                    menuOpcion "Haz elegido el SUB_MENU: $opcion ;;; Opcion: $op"
 
+                    # netsh int ip reset c:\temp\resetLan.txt
+                    Write-Host "`n******* RESTABLECIMIENTO DE PROTOCOLO IP (TCP/IP) *******" -ForegroundColor Cyan
+                    Write-Host "------------------------------------------------------------------" -ForegroundColor Gray
+
+                    # Definimos la ruta del log
+                    $logPath = "C:\temp"
+                    $logFile = "$logPath\resetLan.txt"
+
+                    # 1. Aseguramos que la carpeta C:\temp exista para evitar errores de ruta
+                    if (-not (Test-Path $logPath)) {
+                        New-Item -Path $logPath -ItemType Directory -Force | Out-Null
+                    }
+
+                    Write-Host "Iniciando reset de interfaz IP..." -ForegroundColor Yellow
+
+                    # 2. Ejecutamos netsh nativo (Funciona igual en PS 2.0 y versiones actuales)
+                    # El operador & asegura la ejecución correcta del ejecutable externo
+                    & netsh int ip reset $logFile
+
+                    # 3. Verificamos el resultado ($LASTEXITCODE es el %errorlevel% de PowerShell)
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Host "El protocolo IP se restablecio correctamente." -ForegroundColor Green
+                        Write-Host "Log generado en: $logFile" -ForegroundColor Gray
+                        Write-Host "NOTA: ES NECESARIO REINICIAR EL EQUIPO PARA APLICAR CAMBIOS." -ForegroundColor Red -BackgroundColor White
+                    }
+                    else {
+                        Write-Host "Ocurrio un error al intentar restablecer el protocolo (Codigo: $LASTEXITCODE)." -ForegroundColor Red
+                    }
+
+                    Write-Host "------------------------------------------------------------------" -ForegroundColor Green
+                }
+                "16" { 
+                    # clear-Host
+                    cabecera
+                    menuOpcion "Haz elegido el SUB_MENU: $opcion ;;; Opcion: $op"
+
+                    Write-Host "Resetear IP Red y Asignar DHCP"
+                    netsh winsock reset
+                    netsh int ip reset c:\resetLan.txt
+                    ipconfig /release
+                    ipconfig /renew
+                    ipconfig /flushdns
+
+                    Write-Host "Presione Enter para volver..." -ForegroundColor Green
+                    Read-Host
+                }
+                "16.1" { 
+                    # clear-Host
+                    cabecera
+                    menuOpcion "Haz elegido el SUB_MENU: $opcion ;;; Opcion: $op"
+
+                    getmac /v /fo list
+
+                }
                 "17" { 
                     # clear-Host
                     cabecera
