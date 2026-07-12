@@ -2034,6 +2034,9 @@ function psSubMenu25 {
                             }
                         }
 
+                        # 2. Solicitar opcionalmente ruta de origen de instalacion offline (FOD)
+                        $sourcePath = Read-Host "Ingrese la ruta de origen local o red (Source) de los archivos FOD/RSAT (Deje vacio para descargar desde Internet)"
+
                         # Determinar si es IP o Hostname directamente
                         $targetMachine = ""
                         $ipRemota = ""
@@ -2074,13 +2077,31 @@ function psSubMenu25 {
                             Write-Host "ERROR: Se requiere un nombre de equipo para continuar." -ForegroundColor Red
                         }
                         else {
-                            # 2. Definir el ScriptBlock a ejecutar
+                            # 3. Definir el ScriptBlock a ejecutar
                             $scriptString = {
+                                param($offlineSource)
+
                                 Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
                                 Import-Module -Name Dism -ErrorAction SilentlyContinue
 
                                 if (-not (Get-Command -Name Get-WindowsCapability -ErrorAction SilentlyContinue)) {
                                     throw "El cmdlet 'Get-WindowsCapability' no está disponible en este equipo."
+                                }
+
+                                # --- CONFIGURACION TEMPORAL DE PROXY (WinHTTP) ---
+                                $proxyModificado = $false
+                                $backupProxy = ""
+                                if ([string]::IsNullOrEmpty($offlineSource)) {
+                                    # Intentar importar el proxy de IE si no se especifica origen offline
+                                    $proxyQuery = netsh winhttp show proxy
+                                    if ($proxyQuery -match "Direct access" -or $proxyQuery -match "Acceso directo") {
+                                        Write-Output "Intentando importar la configuracion de proxy de IE de la maquina para el servicio Windows Update..."
+                                        $backupProxy = "reset"
+                                        $importResult = netsh winhttp import proxy source=ie
+                                        if ($importResult -match "Simple Proxy" -or $importResult -match "Proxy de servidor" -or $importResult -match "bypass") {
+                                            $proxyModificado = $true
+                                        }
+                                    }
                                 }
 
                                 # Gestion del servicio wuauserv
@@ -2106,12 +2127,12 @@ function psSubMenu25 {
                                     else {
                                         Write-Output "Se encontraron $($capabilities.Count) componentes para instalar."
                                         
-                                        # Bypass de WSUS
+                                        # Bypass de WSUS (solo necesario si se descarga de Internet)
                                         $regPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
                                         $wsusBypassed = $false
                                         $originalUseWUServer = $null
                                         
-                                        if (Test-Path $regPath) {
+                                        if ([string]::IsNullOrEmpty($offlineSource) -and (Test-Path $regPath)) {
                                             try {
                                                 $val = Get-ItemProperty -Path $regPath -Name "UseWUServer" -ErrorAction Stop
                                                 if ($val -and $val.UseWUServer -eq 1) {
@@ -2131,11 +2152,20 @@ function psSubMenu25 {
                                             foreach ($cap in $capabilities) {
                                                 Write-Output "Instalando $($cap.Name)..."
                                                 try {
-                                                    Add-WindowsCapability -Online -Name $cap.Name -ErrorAction Stop | Out-Null
+                                                    if (-not [string]::IsNullOrEmpty($offlineSource)) {
+                                                        Write-Output "Usando ruta de origen offline: $offlineSource"
+                                                        Add-WindowsCapability -Online -Name $cap.Name -Source $offlineSource -LimitAccess -ErrorAction Stop | Out-Null
+                                                    }
+                                                    else {
+                                                        Add-WindowsCapability -Online -Name $cap.Name -ErrorAction Stop | Out-Null
+                                                    }
                                                     Write-Output "Instalado: $($cap.Name)"
                                                 }
                                                 catch {
                                                     Write-Output "ERROR al instalar $($cap.Name): $($_.Exception.Message)"
+                                                    if ($_.Exception.Message -match "0x8024401c" -or $_.Exception.Message -match "0x80072ee2") {
+                                                        Write-Output "-> Nota de Red: Se agoto el tiempo de espera. El equipo no tiene acceso directo a Internet o bloquea las descargas de Microsoft."
+                                                    }
                                                 }
                                             }
                                         }
@@ -2150,6 +2180,13 @@ function psSubMenu25 {
                                     }
                                 }
                                 finally {
+                                    # Restaurar proxy WinHTTP
+                                    if ($proxyModificado) {
+                                        Write-Output "Restaurando configuracion original del proxy WinHTTP..."
+                                        netsh winhttp reset proxy | Out-Null
+                                    }
+
+                                    # Restaurar wuauserv
                                     if ($wuauservHabilitado -and $originalStartType -eq "Disabled") {
                                         Write-Output "Restaurando el estado DESHABILITADO del servicio Windows Update..."
                                         $serviceWMIRestore = Get-WmiObject -Class Win32_Service -Filter "Name='wuauserv'"
@@ -2158,15 +2195,20 @@ function psSubMenu25 {
                                         }
                                     }
                                 }
-                            }.ToString()
+                            }
 
-                            # 3. Decidir método de ejecución (PsExec vs Invoke-Command)
+                            # 4. Decidir método de ejecución (PsExec vs Invoke-Command)
                             $psexecPath = "C:\PSTools\PsExec.exe"
                             if ((Test-Path $psexecPath) -and ($usu -ne "")) {
                                 Write-Host "Iniciando instalacion remota via PsExec (Contexto SYSTEM) para evitar restricciones de WinRM..." -ForegroundColor Green
                                 
+                                # Para pasar parámetros al scriptblock ejecutado vía PsExec con Base64,
+                                # inyectamos el parámetro al inicio del texto del script.
+                                $paramPrefix = "`$offlineSource = `"$sourcePath`"`n"
+                                $fullScriptText = $paramPrefix + $scriptString.ToString()
+
                                 # Convertir comando a Base64 para evitar problemas de escape de comillas
-                                $bytes = [System.Text.Encoding]::Unicode.GetBytes($scriptString)
+                                $bytes = [System.Text.Encoding]::Unicode.GetBytes($fullScriptText)
                                 $encoded = [Convert]::ToBase64String($bytes)
                                 
                                 # Ejecución con PsExec
@@ -2180,12 +2222,12 @@ function psSubMenu25 {
                                     Write-Host "Nota: Si experimenta 'Acceso denegado', intente instalar PsExec en C:\PSTools\PsExec.exe para ejecución en contexto SYSTEM." -ForegroundColor Cyan
                                 }
                                 try {
-                                    $sb = [ScriptBlock]::Create($scriptString)
+                                    $sb = [ScriptBlock]::Create($scriptString.ToString())
                                     if ($cred -ne $null) {
-                                        Invoke-Command -ComputerName $targetMachine -Credential $cred -ScriptBlock $sb -ErrorAction Stop
+                                        Invoke-Command -ComputerName $targetMachine -Credential $cred -ScriptBlock $sb -ArgumentList $sourcePath -ErrorAction Stop
                                     }
                                     else {
-                                        Invoke-Command -ComputerName $targetMachine -ScriptBlock $sb -ErrorAction Stop
+                                        Invoke-Command -ComputerName $targetMachine -ScriptBlock $sb -ArgumentList $sourcePath -ArgumentList $sourcePath -ErrorAction Stop
                                     }
                                 }
                                 catch {
