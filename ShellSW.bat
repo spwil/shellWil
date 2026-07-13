@@ -5014,41 +5014,23 @@ function psSubMenu25 {
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
                     $baseIP = "192.168.176."
-                    $ultimoOcteto = Read-Host "Ingrese el ultimo octeto de la IP (192.168.176.XXX), IP completa o Nombre de Equipo"
-                    if ($ultimoOcteto -eq "") { 
+                    $targetInput = Read-Host "Ingrese el ultimo octeto (192.168.176.XXX), IP completa o Nombre de Equipo"
+                    if ($targetInput -eq "") { 
                         Write-Host "Operacion cancelada." -ForegroundColor Red
                     }
                     else {
-                        # 1. Solicitar opcionalmente credenciales administrativas (locales o de dominio)
-                        $cred = $null
-                        $usu = ""
-                        $claTexto = ""
-                        $usarCred = Read-Host "¿Desea especificar credenciales de administrador (local o de dominio) para la conexion? (S/N) [N]"
-                        if ($usarCred -eq "S" -or $usarCred -eq "s") {
-                            $usu = Read-Host "Introduzca usuario (ej: gmsantacruz\usuario o .\administrador)"
-                            if ($usu -ne "") {
-                                $cla = Read-Host "Introduzca clave de usuario" -AsSecureString
-                                $cred = New-Object System.Management.Automation.PSCredential ($usu, $cla)
-                                # Convertir la contraseña a texto plano para PsExec
-                                $claTexto = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($cla))
-                            }
-                        }
-
-                        # 2. Solicitar opcionalmente ruta de origen de instalacion offline (FOD)
-                        $sourcePath = Read-Host "Ingrese la ruta de origen local o red (Source) de los archivos FOD/RSAT (Deje vacio para descargar desde Internet)"
-
                         # Determinar si es IP o Hostname directamente
                         $targetMachine = ""
                         $ipRemota = ""
                         
-                        if ($ultimoOcteto -match "^[a-zA-Z]") {
-                            $targetMachine = $ultimoOcteto
+                        if ($targetInput -match "^[a-zA-Z]") {
+                            $targetMachine = $targetInput
                             Write-Host "Usando Nombre de Equipo proporcionado: $targetMachine" -ForegroundColor Green
                         }
                         else {
-                            $ipRemota = $ultimoOcteto
-                            if ($ultimoOcteto -notmatch "\.") {
-                                $ipRemota = $baseIP + $ultimoOcteto
+                            $ipRemota = $targetInput
+                            if ($targetInput -notmatch "\.") {
+                                $ipRemota = $baseIP + $targetInput
                             }
                             Write-Host "Direccion IP de destino: $ipRemota" -ForegroundColor Cyan
                             
@@ -5060,14 +5042,29 @@ function psSubMenu25 {
                             }
                             catch {
                                 try {
-                                    $targetMachine = [System.Net.Dns]::GetHostEntry($ipRemota).HostName
+                                    $targetMachine = [System.Net.Dns]::GetHostEntry($ipRemota).HostName.Split('.')[0]
                                     Write-Host "Nombre de equipo resuelto via DNS: $targetMachine" -ForegroundColor Green
                                 }
                                 catch {
-                                    Write-Host "ADVERTENCIA: No se pudo resolver la IP a un Nombre de Equipo automaticamente." -ForegroundColor Yellow
-                                    $manualHost = Read-Host "Ingrese el NOMBRE DE EQUIPO (Hostname) del equipo remoto manualmente"
-                                    if ($manualHost -ne "") {
-                                        $targetMachine = $manualHost
+                                    try {
+                                        # Intento por NetBIOS/nbtstat
+                                        $nbt = nbtstat -a $ipRemota
+                                        $lineaName = $nbt | Where-Object { $_ -match "<\x00>.*UNIQUE" } | Select-Object -First 1
+                                        if ($lineaName -and $lineaName -match "^\s*([A-Za-z0-9\-]+)") {
+                                            $targetMachine = $Matches[1].Trim()
+                                            Write-Host "[+] Nombre de equipo resuelto via NetBIOS: $targetMachine" -ForegroundColor Green
+                                        } else {
+                                            throw "No se pudo resolver"
+                                        }
+                                    }
+                                    catch {
+                                        Write-Host "ADVERTENCIA: No se pudo resolver la IP a un Nombre de Equipo automaticamente." -ForegroundColor Yellow
+                                        $manualHost = Read-Host "Ingrese el NOMBRE DE EQUIPO (Hostname) del equipo remoto manualmente (Deje vacio para usar IP)"
+                                        if ($manualHost -ne "") {
+                                            $targetMachine = $manualHost
+                                        } else {
+                                            $targetMachine = $ipRemota
+                                        }
                                     }
                                 }
                             }
@@ -5077,24 +5074,175 @@ function psSubMenu25 {
                             Write-Host "ERROR: Se requiere un nombre de equipo para continuar." -ForegroundColor Red
                         }
                         else {
-                            # 3. Definir el ScriptBlock a ejecutar (Sin declaración param() para evitar error de sintaxis)
+                            # --- 1. SELECCION DE AUTENTICACION ---
+                            Write-Host "`n--- OPCIONES DE AUTENTICACION ---" -ForegroundColor Yellow
+                            Write-Host " [1] Usuario actual de Windows (Inicio de sesion unico / Credenciales integradas)"
+                            Write-Host " [2] Usuario de Dominio (Active Directory - ej: DOMINIO\usuario)"
+                            Write-Host " [3] Usuario Local de la PC Remota (ej: .\Administrador o NOMBREPC\Administrador)"
+                            $authOpt = Read-Host "Seleccione una opcion [1-3] (Por defecto: 1)"
+                            if ($authOpt -eq "") { $authOpt = "1" }
+                            
+                            $cred = $null
+                            $usu = ""
+                            $claTexto = ""
+                            
+                            if ($authOpt -eq "2") {
+                                $domDefecto = $env:USERDOMAIN
+                                Write-Host "Dominio detectado localmente: $domDefecto" -ForegroundColor Cyan
+                                $dom = Read-Host "Ingrese el nombre del Dominio (Presione Enter para usar '$domDefecto')"
+                                if ($dom -eq "") { $dom = $domDefecto }
+                                $usuSimple = Read-Host "Ingrese el nombre de usuario de Dominio"
+                                if ($usuSimple -ne "") {
+                                    $usu = "$dom\$usuSimple"
+                                    $cla = Read-Host "Ingrese la contrasena del usuario" -AsSecureString
+                                    $cred = New-Object System.Management.Automation.PSCredential ($usu, $cla)
+                                    $claTexto = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($cla))
+                                }
+                            }
+                            elseif ($authOpt -eq "3") {
+                                $usuSimple = Read-Host "Ingrese el nombre del Administrador Local (ej: Administrador)"
+                                if ($usuSimple -ne "") {
+                                    if ($usuSimple -notmatch "^([^\\]+)\\" -and $usuSimple -notmatch "^\.\\") {
+                                        $usu = ".\$usuSimple"
+                                    } else {
+                                        $usu = $usuSimple
+                                    }
+                                    $cla = Read-Host "Ingrese la contrasena local" -AsSecureString
+                                    $cred = New-Object System.Management.Automation.PSCredential ($usu, $cla)
+                                    $claTexto = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($cla))
+                                }
+                            }
+
+                            # --- 2. SELECCION DE METODO DE CONEXION ---
+                            Write-Host "`n--- METODOS DE CONEXION DISPONIBLES ---" -ForegroundColor Yellow
+                            Write-Host " [1] Auto-detectar (Intentar WinRM primero, si falla o esta cerrado usar PsExec)"
+                            Write-Host " [2] Forzar WinRM (PowerShell Remoting - Puerto 5985/5986)"
+                            Write-Host " [3] Forzar PsExec (Microsoft Sysinternals - Puerto SMB 445)"
+                            $connOpt = Read-Host "Seleccione una opcion [1-3] (Por defecto: 1)"
+                            if ($connOpt -eq "") { $connOpt = "1" }
+
+                            # --- 3. RUTA DE ORIGEN OFFLINE (OPCIONAL) ---
+                            $sourcePath = Read-Host "Ingrese la ruta de origen local o red (Source) de los archivos FOD/RSAT (Deje vacio para descargar desde Internet)"
+
+                            # --- 4. DIAGNOSTICO DE CONECTIVIDAD Y PUERTOS ---
+                            Write-Host "`n[*] Iniciando diagnostico de red..." -ForegroundColor Cyan
+                            $pingOk = Test-Connection -ComputerName $targetMachine -Count 1 -Quiet
+                            if ($pingOk) {
+                                Write-Host "[+] Ping exitoso a $targetMachine." -ForegroundColor Green
+                            } else {
+                                Write-Host "[-] El equipo no responde a Ping (puede tener ICMP bloqueado en el firewall)." -ForegroundColor Yellow
+                            }
+
+                            $port445 = $false
+                            $port5985 = $false
+                            
+                            Write-Host "[*] Comprobando puerto 445 (SMB/PsExec)..." -ForegroundColor Yellow
+                            try {
+                                $tcpSMB = New-Object System.Net.Sockets.TcpClient
+                                $connectionSMB = $tcpSMB.BeginConnect($targetMachine, 445, $null, $null)
+                                $waitSMB = $connectionSMB.AsyncWaitHandle.WaitOne(1000, $false)
+                                if ($waitSMB) {
+                                    $tcpSMB.EndConnect($connectionSMB)
+                                    $port445 = $true
+                                    Write-Host "[+] Puerto 445 (SMB) ABIERTO." -ForegroundColor Green
+                                } else {
+                                    Write-Host "[-] Puerto 445 (SMB) CERRADO o bloqueado." -ForegroundColor Yellow
+                                }
+                                $tcpSMB.Close()
+                            } catch {
+                                Write-Host "[-] Error al verificar puerto 445: $($_.Exception.Message)" -ForegroundColor Red
+                            }
+
+                            Write-Host "[*] Comprobando puerto 5985 (WinRM HTTP)..." -ForegroundColor Yellow
+                            try {
+                                $tcpRM = New-Object System.Net.Sockets.TcpClient
+                                $connectionRM = $tcpRM.BeginConnect($targetMachine, 5985, $null, $null)
+                                $waitRM = $connectionRM.AsyncWaitHandle.WaitOne(1000, $false)
+                                if ($waitRM) {
+                                    $tcpRM.EndConnect($connectionRM)
+                                    $port5985 = $true
+                                    Write-Host "[+] Puerto 5985 (WinRM) ABIERTO." -ForegroundColor Green
+                                } else {
+                                    Write-Host "[-] Puerto 5985 (WinRM) CERRADO o bloqueado." -ForegroundColor Yellow
+                                }
+                                $tcpRM.Close()
+                            } catch {
+                                Write-Host "[-] Error al verificar puerto 5985: $($_.Exception.Message)" -ForegroundColor Red
+                            }
+
+                            # --- 5. DETERMINAR METODO A USAR ---
+                            $usarWinRM = $false
+                            $usarPsExec = $false
+
+                            if ($connOpt -eq "2") {
+                                $usarWinRM = $true
+                            }
+                            elseif ($connOpt -eq "3") {
+                                $usarPsExec = $true
+                            }
+                            else {
+                                # Auto-detectar
+                                if ($port5985) {
+                                    $usarWinRM = $true
+                                    Write-Host "[*] Auto-detectado: Usando WinRM ya que el puerto 5985 esta abierto." -ForegroundColor Cyan
+                                }
+                                elseif ($port445) {
+                                    $usarPsExec = $true
+                                    Write-Host "[*] Auto-detectado: Usando PsExec ya que el puerto 445 esta abierto y WinRM cerrado." -ForegroundColor Cyan
+                                }
+                                else {
+                                    # Fallback general
+                                    $usarWinRM = $true
+                                    Write-Host "[*] Ningun puerto responde. Se intentara WinRM por defecto." -ForegroundColor Yellow
+                                }
+                            }
+
+                            # --- 6. DEFINIR EL SCRIPTBLOCK DE INSTALACION ---
                             $scriptString = {
                                 Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
                                 Import-Module -Name Dism -ErrorAction SilentlyContinue
 
                                 if (-not (Get-Command -Name Get-WindowsCapability -ErrorAction SilentlyContinue)) {
-                                    throw "El cmdlet 'Get-WindowsCapability' no está disponible en este equipo."
+                                    throw "El cmdlet 'Get-WindowsCapability' no esta disponible en este equipo. Requiere Windows 10/11 o Windows Server 2016 o posterior."
                                 }
 
-                                # --- CONFIGURACION TEMPORAL DE PROXY (WinHTTP) ---
+                                # --- A. CONFIGURACION DE SERVICIOS CRITICOS ---
+                                $servicios = @("wuauserv", "bits", "cryptsvc", "TrustedInstaller")
+                                $originalStates = @{}
+
+                                Write-Output "[*] Configurando servicios de actualizacion en la PC remota..."
+                                foreach ($serv in $servicios) {
+                                    $s = Get-Service -Name $serv -ErrorAction SilentlyContinue
+                                    if ($s) {
+                                        # Guardar estado actual
+                                        $wmiServ = Get-WmiObject -Class Win32_Service -Filter "Name='$serv'"
+                                        if ($wmiServ) {
+                                            $originalStates[$serv] = @{
+                                                "StartMode" = $wmiServ.StartMode
+                                                "State" = $s.Status
+                                            }
+
+                                            # Si el servicio esta deshabilitado, cambiar a Manual
+                                            if ($wmiServ.StartMode -eq "Disabled") {
+                                                Write-Output " -> Cambiando temporalmente $serv a modo Manual..."
+                                                $wmiServ.ChangeStartMode("Manual") | Out-Null
+                                            }
+                                        }
+
+                                        # Si el servicio no esta corriendo, iniciarlo
+                                        if ($s.Status -ne "Running") {
+                                            Write-Output " -> Iniciando servicio $serv..."
+                                            Start-Service -Name $serv -ErrorAction SilentlyContinue
+                                        }
+                                    }
+                                }
+
+                                # --- B. CONFIGURACION DE PROXY ---
                                 $proxyModificado = $false
-                                $backupProxy = ""
                                 if ([string]::IsNullOrEmpty($offlineSource)) {
-                                    # Intentar importar el proxy de IE si no se especifica origen offline
                                     $proxyQuery = netsh winhttp show proxy
                                     if ($proxyQuery -match "Direct access" -or $proxyQuery -match "Acceso directo") {
-                                        Write-Output "Intentando importar la configuracion de proxy de IE de la maquina para el servicio Windows Update..."
-                                        $backupProxy = "reset"
+                                        Write-Output "[*] Configurando temporalmente el proxy del sistema importandolo desde IE..."
                                         $importResult = netsh winhttp import proxy source=ie
                                         if ($importResult -match "Simple Proxy" -or $importResult -match "Proxy de servidor" -or $importResult -match "bypass") {
                                             $proxyModificado = $true
@@ -5102,162 +5250,270 @@ function psSubMenu25 {
                                     }
                                 }
 
-                                # Gestion del servicio wuauserv
-                                $originalStartType = $null
-                                $wuauservHabilitado = $false
-                                $serviceWMI = Get-WmiObject -Class Win32_Service -Filter "Name='wuauserv'"
-                                if ($serviceWMI) {
-                                    $originalStartType = $serviceWMI.StartMode
-                                    if ($originalStartType -eq "Disabled") {
-                                        Write-Output "Detectado que el servicio Windows Update (wuauserv) esta DESHABILITADO."
-                                        Write-Output "Habilitandolo temporalmente en modo Manual para la instalacion..."
-                                        $serviceWMI.ChangeStartMode("Manual") | Out-Null
-                                        $wuauservHabilitado = $true
+                                # --- C. BYPASS DE WSUS PARA INSTALACION DESDE INTERNET ---
+                                $wsusRegPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
+                                $servicingRegPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Servicing"
+                                
+                                $originalUseWUServer = $null
+                                $originalRepairContentSource = $null
+                                $wsusBypassed = $false
+                                $servicingModified = $false
+
+                                if ([string]::IsNullOrEmpty($offlineSource)) {
+                                    # Desactivar WSUS
+                                    if (Test-Path $wsusRegPath) {
+                                        $val = Get-ItemProperty -Path $wsusRegPath -Name "UseWUServer" -ErrorAction SilentlyContinue
+                                        if ($val -and $val.UseWUServer -eq 1) {
+                                            Write-Output "[*] Detectado servidor WSUS activo. Desactivando UseWUServer temporalmente..."
+                                            $originalUseWUServer = 1
+                                            Set-ItemProperty -Path $wsusRegPath -Name "UseWUServer" -Value 0 -Force -ErrorAction SilentlyContinue
+                                            $wsusBypassed = $true
+                                        }
+                                    }
+
+                                    # Forzar la fuente de descarga en Servicing
+                                    if (-not (Test-Path $servicingRegPath)) {
+                                        New-Item -Path $servicingRegPath -Force | Out-Null
+                                    }
+                                    $valServ = Get-ItemProperty -Path $servicingRegPath -Name "RepairContentServerSource" -ErrorAction SilentlyContinue
+                                    if ($valServ) {
+                                        $originalRepairContentSource = $valServ.RepairContentServerSource
+                                    }
+                                    Write-Output "[*] Configurando descarga directa desde servidores de Microsoft Update..."
+                                    Set-ItemProperty -Path $servicingRegPath -Name "RepairContentServerSource" -Value 2 -Force -ErrorAction SilentlyContinue
+                                    Set-ItemProperty -Path $servicingRegPath -Name "UseWindowsUpdate" -Value 1 -Force -ErrorAction SilentlyContinue
+                                    $servicingModified = $true
+
+                                    if ($wsusBypassed -or $servicingModified) {
+                                        Write-Output "[*] Reiniciando servicio de Windows Update para aplicar directivas..."
+                                        Restart-Service -Name "wuauserv" -Force -ErrorAction SilentlyContinue
                                     }
                                 }
 
+                                # --- D. INSTALACION ---
                                 try {
-                                    Write-Output "Buscando componentes de RSAT..."
+                                    Write-Output "[*] Escaneando componentes de RSAT..."
                                     $capabilities = Get-WindowsCapability -Online | Where-Object { $_.Name -like "Rsat.*" -and $_.State -eq "NotPresent" }
                                     if ($capabilities.Count -eq 0) {
-                                        Write-Output "Todos los componentes de RSAT ya estan instalados."
+                                        Write-Output "[+] Todos los componentes de RSAT ya estan instalados en este equipo."
                                     }
                                     else {
-                                        Write-Output "Se encontraron $($capabilities.Count) componentes para instalar."
-                                        
-                                        # Inicializar variables de bypass de WSUS
-                                        $regPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
-                                        $wsusBypassed = $false
-                                        $originalUseWUServer = $null
-                                        $WSUSActivo = $false
-                                        
-                                        if (Test-Path $regPath) {
-                                            $val = Get-ItemProperty -Path $regPath -Name "UseWUServer" -ErrorAction SilentlyContinue
-                                            if ($val -and $val.UseWUServer -eq 1) {
-                                                $WSUSActivo = $true
-                                                $originalUseWUServer = 1
+                                        Write-Output "[+] Se encontraron $($capabilities.Count) componentes pendientes de instalacion."
+                                        foreach ($cap in $capabilities) {
+                                            Write-Output "`n[+] Iniciando instalacion de $($cap.Name)..."
+                                            $success = $false
+                                            $err = ""
+                                            try {
+                                                if (-not [string]::IsNullOrEmpty($offlineSource)) {
+                                                    Write-Output " -> Instalando desde origen offline: $offlineSource"
+                                                    Add-WindowsCapability -Online -Name $cap.Name -Source $offlineSource -LimitAccess -ErrorAction Stop | Out-Null
+                                                }
+                                                else {
+                                                    Add-WindowsCapability -Online -Name $cap.Name -ErrorAction Stop | Out-Null
+                                                }
+                                                Write-Output "[OK] Se instalo: $($cap.Name)"
+                                                $success = $true
+                                            }
+                                            catch {
+                                                $err = $_.Exception.Message
+                                                Write-Output "[ERROR] Fallo al instalar $($cap.Name): $err"
                                             }
                                         }
-                                        
-                                        try {
-                                            foreach ($cap in $capabilities) {
-                                                Write-Output "Instalando $($cap.Name)..."
-                                                $success = $false
-                                                $err = ""
-                                                
-                                                try {
-                                                    if (-not [string]::IsNullOrEmpty($offlineSource)) {
-                                                        Write-Output "Usando ruta de origen offline: $offlineSource"
-                                                        Add-WindowsCapability -Online -Name $cap.Name -Source $offlineSource -LimitAccess -ErrorAction Stop | Out-Null
-                                                    }
-                                                    else {
-                                                        Add-WindowsCapability -Online -Name $cap.Name -ErrorAction Stop | Out-Null
-                                                    }
-                                                    Write-Output "Instalado: $($cap.Name)"
-                                                    $success = $true
-                                                }
-                                                catch {
-                                                    $err = $_.Exception.Message
-                                                    # Si falló por WSUS (0x800f0954) y no se especificó un origen offline
-                                                    if ([string]::IsNullOrEmpty($offlineSource) -and ($err -match "0x800f0954") -and $WSUSActivo -and (-not $wsusBypassed)) {
-                                                        Write-Output "Instalacion bloqueada por WSUS (Error 0x800f0954). Intentando bypass de WSUS y reintento..."
-                                                        try {
-                                                            Set-ItemProperty -Path $regPath -Name "UseWUServer" -Value 0 -Force -ErrorAction Stop
-                                                            Restart-Service -Name "wuauserv" -Force -ErrorAction Stop
-                                                            $wsusBypassed = $true
-                                                            
-                                                            # Reintentar instalación tras bypass
-                                                            if (-not [string]::IsNullOrEmpty($offlineSource)) {
-                                                                Add-WindowsCapability -Online -Name $cap.Name -Source $offlineSource -LimitAccess -ErrorAction Stop | Out-Null
-                                                            }
-                                                            else {
-                                                                Add-WindowsCapability -Online -Name $cap.Name -ErrorAction Stop | Out-Null
-                                                            }
-                                                            Write-Output "Instalado (tras bypass de WSUS): $($cap.Name)"
-                                                            $success = $true
-                                                        }
-                                                        catch {
-                                                            $err = $_.Exception.Message
-                                                        }
-                                                    }
-                                                }
-                                                
-                                                if (-not $success) {
-                                                    Write-Output "ERROR al instalar $($cap.Name): $err"
-                                                    if ($err -match "0x8024401c" -or $err -match "0x80072ee2") {
-                                                        Write-Output "-> Nota de Red: Se agoto el tiempo de espera. El equipo no tiene acceso directo a Internet o bloquea las descargas de Microsoft."
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        finally {
-                                            # Restaurar configuración de WSUS
-                                            if ($wsusBypassed -and $originalUseWUServer -ne $null) {
-                                                Write-Output "Restaurando configuracion original de WSUS..."
-                                                Set-ItemProperty -Path $regPath -Name "UseWUServer" -Value $originalUseWUServer -Force -ErrorAction SilentlyContinue
-                                                Restart-Service -Name "wuauserv" -Force -ErrorAction SilentlyContinue
-                                            }
-                                        }
-                                        Write-Output "Instalacion de RSAT completada."
+                                        Write-Output "`n[+] Proceso de instalacion finalizado."
                                     }
                                 }
                                 finally {
-                                    # Restaurar proxy WinHTTP
+                                    # --- E. RESTAURAR CONFIGURACIONES ---
+                                    Write-Output "`n[*] Restaurando configuraciones del sistema original..."
+                                    
+                                    # Restaurar Proxy
                                     if ($proxyModificado) {
-                                        Write-Output "Restaurando configuracion original del proxy WinHTTP..."
+                                        Write-Output " -> Restableciendo proxy WinHTTP..."
                                         netsh winhttp reset proxy | Out-Null
                                     }
 
-                                    # Restaurar wuauserv
-                                    if ($wuauservHabilitado -and $originalStartType -eq "Disabled") {
-                                        Write-Output "Restaurando el estado DESHABILITADO del servicio Windows Update..."
-                                        $serviceWMIRestore = Get-WmiObject -Class Win32_Service -Filter "Name='wuauserv'"
-                                        if ($serviceWMIRestore) {
-                                            $serviceWMIRestore.ChangeStartMode("Disabled") | Out-Null
+                                    # Restaurar Registro
+                                    $needWuRestart = $false
+                                    if ($wsusBypassed -and $originalUseWUServer -ne $null) {
+                                        Write-Output " -> Re-habilitando UseWUServer..."
+                                        Set-ItemProperty -Path $wsusRegPath -Name "UseWUServer" -Value $originalUseWUServer -Force -ErrorAction SilentlyContinue
+                                        $needWuRestart = $true
+                                    }
+                                    if ($servicingModified) {
+                                        if ($originalRepairContentSource -ne $null) {
+                                            Write-Output " -> Restaurando RepairContentServerSource ($originalRepairContentSource)..."
+                                            Set-ItemProperty -Path $servicingRegPath -Name "RepairContentServerSource" -Value $originalRepairContentSource -Force -ErrorAction SilentlyContinue
+                                        } else {
+                                            Write-Output " -> Eliminando RepairContentServerSource..."
+                                            Remove-ItemProperty -Path $servicingRegPath -Name "RepairContentServerSource" -ErrorAction SilentlyContinue
                                         }
+                                        Remove-ItemProperty -Path $servicingRegPath -Name "UseWindowsUpdate" -ErrorAction SilentlyContinue
+                                        $needWuRestart = $true
+                                    }
+
+                                    if ($needWuRestart) {
+                                        Write-Output " -> Aplicando cambios al servicio Windows Update..."
+                                        Restart-Service -Name "wuauserv" -Force -ErrorAction SilentlyContinue
+                                    }
+
+                                    # Restaurar Servicios
+                                    foreach ($serv in $servicios) {
+                                        if ($originalStates.ContainsKey($serv)) {
+                                            $orig = $originalStates[$serv]
+                                            $s = Get-Service -Name $serv -ErrorAction SilentlyContinue
+                                            if ($s) {
+                                                # Detener si no estaba corriendo originalmente
+                                                if ($orig.State -ne "Running" -and $s.Status -eq "Running") {
+                                                    Write-Output " -> Deteniendo servicio $serv..."
+                                                    Stop-Service -Name $serv -Force -ErrorAction SilentlyContinue
+                                                }
+                                                # Cambiar a Disabled si originalmente estaba deshabilitado
+                                                if ($orig.StartMode -eq "Disabled") {
+                                                    Write-Output " -> Deshabilitando servicio $serv..."
+                                                    $wmiServ = Get-WmiObject -Class Win32_Service -Filter "Name='$serv'"
+                                                    if ($wmiServ) {
+                                                        $wmiServ.ChangeStartMode("Disabled") | Out-Null
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Write-Output "[+] Restauracion completada con exito."
+                                }
+                            }
+
+                            # --- 7. EJECUCION DE LOS METODOS ---
+                            $exitoEjecucion = $false
+
+                            # --- RUTA DE PSEXEC ---
+                            $psexecPath = "C:\PSTools\PsExec.exe"
+                            $psexecFound = $false
+                            if (Test-Path $psexecPath) {
+                                $psexecFound = $true
+                            } else {
+                                # Buscar en el directorio actual
+                                if (Test-Path ".\PsExec.exe") {
+                                    $psexecPath = ".\PsExec.exe"
+                                    $psexecFound = $true
+                                } else {
+                                    $where = Get-Command psexec -ErrorAction SilentlyContinue
+                                    if ($where) {
+                                        $psexecPath = $where.Definition
+                                        $psexecFound = $true
                                     }
                                 }
                             }
 
-                            # 4. Decidir método de ejecución (PsExec vs Invoke-Command)
-                            $psexecPath = "C:\PSTools\PsExec.exe"
-                            if ((Test-Path $psexecPath) -and ($usu -ne "")) {
-                                Write-Host "Iniciando instalacion remota via PsExec (Contexto SYSTEM) para evitar restricciones de WinRM..." -ForegroundColor Green
-                                
-                                # Inyectar el parámetro al inicio del texto del script
-                                $paramPrefix = "`$offlineSource = `"$sourcePath`"`n"
-                                $fullScriptText = $paramPrefix + $scriptString.ToString()
-
-                                # Convertir comando a Base64 para evitar problemas de escape de comillas
-                                $bytes = [System.Text.Encoding]::Unicode.GetBytes($fullScriptText)
-                                $encoded = [Convert]::ToBase64String($bytes)
-                                
-                                # Ejecución con PsExec
-                                $argumentos = "\\$targetMachine -u `"$usu`" -p `"$claTexto`" -h -s powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"
-                                Start-Process -FilePath $psexecPath -ArgumentList $argumentos -Wait
-                            }
-                            else {
-                                # Fallback a Invoke-Command
-                                Write-Host "Iniciando instalacion via Invoke-Command (WinRM)..." -ForegroundColor Yellow
+                            # --- INTENTO WINRM ---
+                            if ($usarWinRM) {
+                                Write-Host "`n[*] Iniciando instalacion remota via WinRM (Invoke-Command)..." -ForegroundColor Yellow
                                 if ($usu -ne "") {
-                                    Write-Host "Nota: Si experimenta 'Acceso denegado', intente instalar PsExec en C:\PSTools\PsExec.exe para ejecución en contexto SYSTEM." -ForegroundColor Cyan
+                                    Write-Host "Usando credenciales explicitas de: $usu" -ForegroundColor Cyan
+                                } else {
+                                    Write-Host "Usando credenciales del usuario actual..." -ForegroundColor Cyan
                                 }
+
                                 try {
                                     $paramPrefix = "`$offlineSource = `"$sourcePath`"`n"
                                     $fullScriptText = $paramPrefix + $scriptString.ToString()
                                     $sb = [ScriptBlock]::Create($fullScriptText)
+                                    
                                     if ($cred -ne $null) {
                                         Invoke-Command -ComputerName $targetMachine -Credential $cred -ScriptBlock $sb -ErrorAction Stop
-                                    }
-                                    else {
+                                    } else {
                                         Invoke-Command -ComputerName $targetMachine -ScriptBlock $sb -ErrorAction Stop
                                     }
+                                    Write-Host "[OK] Instalacion finalizada via WinRM con éxito!" -ForegroundColor Green
+                                    $exitoEjecucion = $true
                                 }
                                 catch {
-                                    Write-Host "ERROR al ejecutar Invoke-Command en $targetMachine." -ForegroundColor Red
-                                    Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
-                                    Write-Host "Asegurese de usar credenciales con privilegios de Administrador en el equipo de destino." -ForegroundColor Yellow
+                                    Write-Host "[-] Error al ejecutar via WinRM: $($_.Exception.Message)" -ForegroundColor Red
+                                    if ($connOpt -eq "1" -and $port445 -and $psexecFound) {
+                                        Write-Host "[*] Fallback: Intentando con PsExec de manera automatica..." -ForegroundColor Yellow
+                                        $usarPsExec = $true
+                                    } else {
+                                        Write-Host "Asegurese de que la PC de destino tenga habilitado WinRM y el firewall permita la conexion (puerto 5985/5986)." -ForegroundColor Yellow
+                                        if (-not $psexecFound) {
+                                            Write-Host "Sugerencia: Coloque PsExec.exe en C:\PSTools o en la carpeta del script para tener una alternativa potente." -ForegroundColor Cyan
+                                        }
+                                    }
                                 }
+                            }
+
+                            # --- INTENTO PSEXEC ---
+                            if ($usarPsExec -and -not $exitoEjecucion) {
+                                if (-not $psexecFound) {
+                                    Write-Host "`n[ERROR] Se requiere PsExec pero no se encontro PsExec.exe en C:\PSTools, en el PATH, ni en la carpeta actual." -ForegroundColor Red
+                                    Write-Host "Por favor, descargue PsExec desde Microsoft Sysinternals e instálelo para usar esta opcion." -ForegroundColor Cyan
+                                }
+                                else {
+                                    Write-Host "`n[*] Iniciando instalacion remota via PsExec (Contexto SYSTEM)..." -ForegroundColor Yellow
+                                    
+                                    # Preparar script
+                                    $paramPrefix = "`$offlineSource = `"$sourcePath`"`n"
+                                    $fullScriptText = $paramPrefix + $scriptString.ToString()
+
+                                    # Codificar en Base64
+                                    $bytes = [System.Text.Encoding]::Unicode.GetBytes($fullScriptText)
+                                    $encoded = [Convert]::ToBase64String($bytes)
+                                    
+                                    # Argumentos basicos
+                                    $argsBase = "-accepteula -h -s powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"
+
+                                    # Si hay credenciales, las inyectamos
+                                    if ($usu -ne "") {
+                                        Write-Host "Usando credenciales explicitas de: $usu" -ForegroundColor Cyan
+                                        # En PsExec, si no usamos -s, corre en el contexto del usuario pero elevado por -h.
+                                        # Pero RSAT requiere privilegios SYSTEM o Administrador Local muy elevados.
+                                        # Intentamos correr como SYSTEM y autenticar SMB con las credenciales dadas.
+                                        $argsFull = "\\$targetMachine -u `"$usu`" -p `"$claTexto`" $argsBase"
+                                    }
+                                    else {
+                                        Write-Host "Usando credenciales del usuario actual..." -ForegroundColor Cyan
+                                        $argsFull = "\\$targetMachine $argsBase"
+                                    }
+
+                                    try {
+                                        Write-Host "Ejecutando PsExec en: $psexecPath" -ForegroundColor Gray
+                                        $p = Start-Process -FilePath $psexecPath -ArgumentList $argsFull -Wait -NoNewWindow -PassThru -ErrorAction Stop
+                                        if ($p -and $p.ExitCode -eq 0) {
+                                            Write-Host "[OK] Instalacion finalizada via PsExec con exito!" -ForegroundColor Green
+                                            $exitoEjecucion = $true
+                                        } else {
+                                            $codigo = if ($p) { $p.ExitCode } else { "N/A" }
+                                            Write-Host "[-] PsExec retorno un codigo de error: $codigo." -ForegroundColor Red
+                                            
+                                            # Si fallo con el usuario actual y con -s, puede ser que el sistema requiera token de usuario.
+                                            # Intentamos correr sin -s (en el contexto del usuario proporcionado directamente)
+                                            if ($usu -ne "") {
+                                                Write-Host "[*] Reintentando PsExec sin el parametro -s (modo Usuario Administrativo)..." -ForegroundColor Yellow
+                                                $argsNoSystem = "\\$targetMachine -u `"$usu`" -p `"$claTexto`" -accepteula -h powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"
+                                                $p2 = Start-Process -FilePath $psexecPath -ArgumentList $argsNoSystem -Wait -NoNewWindow -PassThru -ErrorAction Stop
+                                                if ($p2 -and $p2.ExitCode -eq 0) {
+                                                    Write-Host "[OK] Instalacion finalizada via PsExec en modo Usuario Administrativo!" -ForegroundColor Green
+                                                    $exitoEjecucion = $true
+                                                } else {
+                                                    $codigo2 = if ($p2) { $p2.ExitCode } else { "N/A" }
+                                                    Write-Host "[-] El reintento de PsExec sin -s tambien fallo (Codigo: $codigo2)." -ForegroundColor Red
+                                                }
+                                            }
+                                        }
+                                    }
+                                    catch {
+                                        Write-Host "[-] Error al ejecutar PsExec: $($_.Exception.Message)" -ForegroundColor Red
+                                    }
+                                }
+                            }
+
+                            if ($exitoEjecucion) {
+                                Write-Host "`n========================================================" -ForegroundColor Green
+                                Write-Host "   PROCESO DE INSTALACION DE RSAT REMOTO COMPLETADO" -ForegroundColor White -BackgroundColor DarkGreen
+                                Write-Host "========================================================" -ForegroundColor Green
+                            } else {
+                                Write-Host "`n========================================================" -ForegroundColor Red
+                                Write-Host "      ERROR: NO SE PUDO INSTALAR RSAT EN LA PC REMOTA" -ForegroundColor White -BackgroundColor DarkRed
+                                Write-Host "========================================================" -ForegroundColor Red
+                                Write-Host "Revise los errores de conexion anteriores." -ForegroundColor Yellow
                             }
                         }
                     }
