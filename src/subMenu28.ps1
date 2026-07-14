@@ -8,6 +8,9 @@ function psSubMenu28 {
             Write-Host "  2. Ejecutar GPUPDATE /FORCE en PC REMOTA" -ForegroundColor Yellow
             Write-Host "  3. Mostrar Caracteristicas de PC Remoto (Info Hardware/OS/Red)" -ForegroundColor Green
             Write-Host "  ------------------------------------------------------"
+            Write-Host "  4. Habilitacion de Administracion Remota"
+            Write-Host "    4.1 || HABILITAR || WMI, RPC y PSRemoting - en PC REMOTO." -ForegroundColor Green
+            Write-Host "  ------------------------------------------------------"
             Write-Host "  0. V O L V E R   A L   M E N U    P R I N C I P A L"
             Write-Host ""
             Write-Header "==============================="
@@ -311,6 +314,16 @@ function psSubMenu28 {
                             Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
                         }
                     }
+                }
+                "4" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op28"
+                    Write-Host "Por favor seleccione una sub-opcion especifica (4.1)" -ForegroundColor Yellow
+                }
+                "4.1" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op28"
+                    psHabilitarAdministracionRemota
                 }
                 "0" {
                     menuPrincipal

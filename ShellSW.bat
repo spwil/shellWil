@@ -106,6 +106,156 @@ function psReconstruirSiDesarrollo {
     }
 }
 
+function psHabilitarAdministracionRemota {
+    param(
+        [string]$targetInput,
+        [string]$baseIP = "192.168.176."
+    )
+
+    # --- HABILITACIÓN REMOTA DE ADMINISTRACIÓN ---
+    if ([string]::IsNullOrEmpty($targetInput)) {
+        $targetInput = Read-Host "Ingrese el ultimo octeto de la IP (192.168.176.XXX) o la IP completa / Nombre de Equipo"
+    }
+    
+    if ($targetInput -eq "") {
+        Write-Host "Operacion cancelada." -ForegroundColor Red
+        return
+    }
+
+    $ipRemota = $targetInput
+    if ($targetInput -notmatch "\." -and $targetInput -notmatch "^[a-zA-Z]") {
+        $ipRemota = $baseIP + $targetInput
+    }
+
+    # 1. Resolución de Hostname
+    $computerTarget = $ipRemota
+    Write-Host "`n[*] Resolviendo Hostname de $ipRemota para habilitar Kerberos..." -ForegroundColor Yellow
+    try {
+        $entry = [System.Net.Dns]::GetHostEntry($ipRemota)
+        $computerTarget = $entry.HostName.Split('.')[0]
+        Write-Host "[+] Hostname resuelto: $computerTarget (Kerberos habilitado)" -ForegroundColor Green
+    }
+    catch {
+        $nbt = nbtstat -a $ipRemota
+        $lineaName = $nbt | Where-Object { $_ -match "<\x00>.*UNIQUE" } | Select-Object -First 1
+        if ($lineaName -and $lineaName -match "^\s*([A-Za-z0-9\-]+)") {
+            $computerTarget = $Matches[1].Trim()
+            Write-Host "[+] Hostname resuelto via NetBIOS: $computerTarget" -ForegroundColor Green
+        } else {
+            Write-Host "[-] No se pudo resolver Hostname. Usando IP directamente ($ipRemota)." -ForegroundColor Yellow
+        }
+    }
+
+    # 2. Verificar conectividad
+    Write-Host "`n[*] Verificando enlace con $computerTarget (Ping)..." -ForegroundColor Yellow
+    if (-not (Test-Connection -ComputerName $computerTarget -Count 1 -Quiet)) {
+        Write-Warning "El equipo $computerTarget no responde a ping. Es posible que este apagado o tenga el firewall activo."
+    }
+
+    # 3. Construcción del Bloque de Comandos de Firewall y Servicios
+    $cmds = @(
+        'netsh advfirewall firewall set rule group="Windows Management Instrumentation (WMI)" new enable=yes',
+        'netsh advfirewall firewall set rule group="Instrumentacion de administracion de Windows (WMI)" new enable=yes',
+        'netsh advfirewall firewall set rule group="Windows Remote Management" new enable=yes',
+        'netsh advfirewall firewall set rule group="Administracion remota de Windows" new enable=yes',
+        'netsh advfirewall firewall set rule group="File and Printer Sharing" new enable=yes',
+        'netsh advfirewall firewall set rule group="Compartir archivos e impresoras" new enable=yes',
+        'netsh advfirewall firewall set rule group="Remote Administration" new enable=yes',
+        'netsh advfirewall firewall set rule group="Administracion remota" new enable=yes'
+    )
+    $cmdFirewall = $cmds -join " & "
+    $cmdPS = "powershell.exe -NoProfile -Command `"try { Enable-PSRemoting -SkipNetworkProfileCheck -Force } catch {}; try { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force } catch {}`""
+    $fullCommand = "cmd.exe /c $cmdFirewall & $cmdPS"
+
+    $exito = $false
+
+    # A. Método 1: PsExec (Puerto SMB 445)
+    $psexecPath = "C:\PSTools\PsExec.exe"
+    $psexecFound = $false
+    if (Test-Path $psexecPath) {
+        $psexecFound = $true
+    } else {
+        $where = Get-Command psexec -ErrorAction SilentlyContinue
+        if ($where) {
+            $psexecPath = $where.Definition
+            $psexecFound = $true
+        }
+    }
+
+    if ($psexecFound) {
+        Write-Host "[*] Intentando habilitacion via PsExec (SMB puerto 445)..." -ForegroundColor Yellow
+        $argsList = "\\$computerTarget -accepteula -s cmd.exe /c $fullCommand"
+        $p = Start-Process -FilePath $psexecPath -ArgumentList $argsList -Wait -NoNewWindow -PassThru -ErrorAction SilentlyContinue
+        if ($p -and $p.ExitCode -eq 0) {
+            Write-Host "[OK] Habilitacion remota ejecutada exitosamente via PsExec!" -ForegroundColor Green
+            $exito = $true
+        } else {
+            $code = if ($p) { $p.ExitCode } else { "N/A" }
+            Write-Host "[-] PsExec no pudo completar la accion (Codigo: $code)." -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "[-] PsExec.exe no detectado en C:\PSTools ni en el PATH. Omitiendo." -ForegroundColor Gray
+    }
+
+    # B. Método 2: WinRM / PSRemoting (WS-Man 5985)
+    if (-not $exito) {
+        Write-Host "[*] Intentando habilitacion via WinRM (PowerShell Remoting)..." -ForegroundColor Yellow
+        try {
+            Invoke-Command -ComputerName $computerTarget -ScriptBlock {
+                netsh advfirewall firewall set rule group="Windows Management Instrumentation (WMI)" new enable=yes
+                netsh advfirewall firewall set rule group="Instrumentacion de administracion de Windows (WMI)" new enable=yes
+                netsh advfirewall firewall set rule group="File and Printer Sharing" new enable=yes
+                netsh advfirewall firewall set rule group="Compartir archivos e impresoras" new enable=yes
+                netsh advfirewall firewall set rule group="Remote Administration" new enable=yes
+                netsh advfirewall firewall set rule group="Administracion remota" new enable=yes
+            } -ErrorAction Stop | Out-Null
+            Write-Host "[OK] Habilitacion remota ejecutada exitosamente via WinRM!" -ForegroundColor Green
+            $exito = $true
+        }
+        catch {
+            Write-Host "[-] WinRM no esta disponible en ${computerTarget}: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+
+    # C. Método 3: WMI (WMI 135)
+    if (-not $exito) {
+        Write-Host "[*] Intentando habilitacion via WMI (Win32_Process)..." -ForegroundColor Yellow
+        try {
+            $result = Invoke-WmiMethod -Class Win32_Process -Name Create -ComputerName $computerTarget -ArgumentList $fullCommand -ErrorAction Stop
+            if ($result -and $result.ReturnValue -eq 0) {
+                Write-Host "[OK] Comando enviado via WMI con exito!" -ForegroundColor Green
+                $exito = $true
+            } else {
+                $val = if ($result) { $result.ReturnValue } else { "N/A" }
+                Write-Host "[-] WMI retorno codigo de error: $val" -ForegroundColor Yellow
+            }
+        }
+        catch {
+            Write-Host "[-] WMI/RPC no esta disponible en ${computerTarget}: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+
+    # 4. Reporte final
+    if ($exito) {
+        Write-Host "`n================================================" -ForegroundColor White
+        Write-Host "   CONFIGURACION DE ADMINISTRACION HABILITADA" -ForegroundColor Green
+        Write-Host "================================================" -ForegroundColor White
+        Write-Host "El equipo remoto $computerTarget ahora deberia aceptar"
+        Write-Host "consultas de red, WMI, ping y PSRemoting."
+        Write-Host "================================================" -ForegroundColor White
+    } else {
+        Write-Host "`n================================================" -ForegroundColor White
+        Write-Host "       ERROR: NO SE PUDO CONFIGURAR EL EQUIPO" -ForegroundColor Red
+        Write-Host "================================================" -ForegroundColor White
+        Write-Host "No se pudo conectar por WMI, WinRM ni PsExec."
+        Write-Host "Asegurese de:"
+        Write-Host "1. Que PsExec este en C:\PSTools\PsExec.exe"
+        Write-Host "2. Que su usuario tenga privilegios de Administrador"
+        Write-Host "   en el equipo remoto $computerTarget."
+        Write-Host "================================================" -ForegroundColor White
+    }
+}
+
 #******************************************************** SUB MENU.20 *************************************************************
 #**********************************************************************************************************************************
 
@@ -3764,150 +3914,8 @@ function psSubMenu25 {
                 "1.9" { 
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
-
-                    # --- HABILITACIÓN REMOTA DE ADMINISTRACIÓN ---
-                    $baseIP = "192.168.176."
-                    $ultimoOcteto = Read-Host "Ingrese el ultimo octeto de la IP (192.168.176.XXX) o la IP completa"
-                    if ($ultimoOcteto -eq "") {
-                        Write-Host "Operacion cancelada." -ForegroundColor Red
-                    }
-                    else {
-                        $ipRemota = $ultimoOcteto
-                        if ($ultimoOcteto -notmatch "\.") {
-                            $ipRemota = $baseIP + $ultimoOcteto
-                        }
-
-                        # 1. Resolución de Hostname
-                        $computerTarget = $ipRemota
-                        Write-Host "`n[*] Resolviendo Hostname de $ipRemota para habilitar Kerberos..." -ForegroundColor Yellow
-                        try {
-                            $entry = [System.Net.Dns]::GetHostEntry($ipRemota)
-                            $computerTarget = $entry.HostName.Split('.')[0]
-                            Write-Host "[+] Hostname resuelto: $computerTarget (Kerberos habilitado)" -ForegroundColor Green
-                        }
-                        catch {
-                            $nbt = nbtstat -a $ipRemota
-                            $lineaName = $nbt | Where-Object { $_ -match "<\x00>.*UNIQUE" } | Select-Object -First 1
-                            if ($lineaName -and $lineaName -match "^\s*([A-Za-z0-9\-]+)") {
-                                $computerTarget = $Matches[1].Trim()
-                                Write-Host "[+] Hostname resuelto via NetBIOS: $computerTarget" -ForegroundColor Green
-                            } else {
-                                Write-Host "[-] No se pudo resolver Hostname. Usando IP directamente ($ipRemota)." -ForegroundColor Yellow
-                            }
-                        }
-
-                        # 2. Verificar conectividad
-                        Write-Host "`n[*] Verificando enlace con $computerTarget (Ping)..." -ForegroundColor Yellow
-                        if (-not (Test-Connection -ComputerName $computerTarget -Count 1 -Quiet)) {
-                            Write-Warning "El equipo $computerTarget no responde a ping. Es posible que este apagado o tenga el firewall activo."
-                        }
-
-                        # 3. Construcción del Bloque de Comandos de Firewall y Servicios
-                        $cmds = @(
-                            'netsh advfirewall firewall set rule group="Windows Management Instrumentation (WMI)" new enable=yes',
-                            'netsh advfirewall firewall set rule group="Instrumentacion de administracion de Windows (WMI)" new enable=yes',
-                            'netsh advfirewall firewall set rule group="Windows Remote Management" new enable=yes',
-                            'netsh advfirewall firewall set rule group="Administracion remota de Windows" new enable=yes',
-                            'netsh advfirewall firewall set rule group="File and Printer Sharing" new enable=yes',
-                            'netsh advfirewall firewall set rule group="Compartir archivos e impresoras" new enable=yes',
-                            'netsh advfirewall firewall set rule group="Remote Administration" new enable=yes',
-                            'netsh advfirewall firewall set rule group="Administracion remota" new enable=yes'
-                        )
-                        $cmdFirewall = $cmds -join " & "
-                        $cmdPS = "powershell.exe -NoProfile -Command `"try { Enable-PSRemoting -SkipNetworkProfileCheck -Force } catch {}; try { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force } catch {}`""
-                        $fullCommand = "cmd.exe /c $cmdFirewall & $cmdPS"
-
-                        $exito = $false
-
-                        # A. Método 1: PsExec (Puerto SMB 445)
-                        $psexecPath = "C:\PSTools\PsExec.exe"
-                        $psexecFound = $false
-                        if (Test-Path $psexecPath) {
-                            $psexecFound = $true
-                        } else {
-                            $where = Get-Command psexec -ErrorAction SilentlyContinue
-                            if ($where) {
-                                $psexecPath = $where.Definition
-                                $psexecFound = $true
-                            }
-                        }
-
-                        if ($psexecFound) {
-                            Write-Host "[*] Intentando habilitacion via PsExec (SMB puerto 445)..." -ForegroundColor Yellow
-                            $argsList = "\\$computerTarget -accepteula -s cmd.exe /c $fullCommand"
-                            $p = Start-Process -FilePath $psexecPath -ArgumentList $argsList -Wait -NoNewWindow -PassThru -ErrorAction SilentlyContinue
-                            if ($p -and $p.ExitCode -eq 0) {
-                                Write-Host "[OK] Habilitacion remota ejecutada exitosamente via PsExec!" -ForegroundColor Green
-                                $exito = $true
-                            } else {
-                                $code = if ($p) { $p.ExitCode } else { "N/A" }
-                                Write-Host "[-] PsExec no pudo completar la accion (Codigo: $code)." -ForegroundColor Yellow
-                            }
-                        } else {
-                            Write-Host "[-] PsExec.exe no detectado en C:\PSTools ni en el PATH. Omitiendo." -ForegroundColor Gray
-                        }
-
-                        # B. Método 2: WinRM / PSRemoting (WS-Man 5985)
-                        if (-not $exito) {
-                            Write-Host "[*] Intentando habilitacion via WinRM (PowerShell Remoting)..." -ForegroundColor Yellow
-                            try {
-                                Invoke-Command -ComputerName $computerTarget -ScriptBlock {
-                                    netsh advfirewall firewall set rule group="Windows Management Instrumentation (WMI)" new enable=yes
-                                    netsh advfirewall firewall set rule group="Instrumentacion de administracion de Windows (WMI)" new enable=yes
-                                    netsh advfirewall firewall set rule group="File and Printer Sharing" new enable=yes
-                                    netsh advfirewall firewall set rule group="Compartir archivos e impresoras" new enable=yes
-                                    netsh advfirewall firewall set rule group="Remote Administration" new enable=yes
-                                    netsh advfirewall firewall set rule group="Administracion remota" new enable=yes
-                                } -ErrorAction Stop | Out-Null
-                                Write-Host "[OK] Habilitacion remota ejecutada exitosamente via WinRM!" -ForegroundColor Green
-                                $exito = $true
-                            }
-                            catch {
-                                Write-Host "[-] WinRM no esta disponible en ${computerTarget}: $($_.Exception.Message)" -ForegroundColor Yellow
-                            }
-                        }
-
-                        # C. Método 3: WMI (WMI 135)
-                        if (-not $exito) {
-                            Write-Host "[*] Intentando habilitacion via WMI (Win32_Process)..." -ForegroundColor Yellow
-                            try {
-                                $result = Invoke-WmiMethod -Class Win32_Process -Name Create -ComputerName $computerTarget -ArgumentList $fullCommand -ErrorAction Stop
-                                if ($result -and $result.ReturnValue -eq 0) {
-                                    Write-Host "[OK] Comando enviado via WMI con exito!" -ForegroundColor Green
-                                    $exito = $true
-                                } else {
-                                    $val = if ($result) { $result.ReturnValue } else { "N/A" }
-                                    Write-Host "[-] WMI retorno codigo de error: $val" -ForegroundColor Yellow
-                                }
-                            }
-                            catch {
-                                Write-Host "[-] WMI/RPC no esta disponible en ${computerTarget}: $($_.Exception.Message)" -ForegroundColor Yellow
-                            }
-                        }
-
-                        # 4. Reporte final
-                        if ($exito) {
-                            Write-Host "`n================================================" -ForegroundColor White
-                            Write-Host "   CONFIGURACION DE ADMINISTRACION HABILITADA" -ForegroundColor Green
-                            Write-Host "================================================" -ForegroundColor White
-                            Write-Host "El equipo remoto $computerTarget ahora deberia aceptar"
-                            Write-Host "consultas de red, WMI, ping y PSRemoting."
-                            Write-Host "================================================" -ForegroundColor White
-                        } else {
-                            Write-Host "`n================================================" -ForegroundColor White
-                            Write-Host "       ERROR: NO SE PUDO CONFIGURAR EL EQUIPO" -ForegroundColor Red
-                            Write-Host "================================================" -ForegroundColor White
-                            Write-Host "No se pudo conectar por WMI, WinRM ni PsExec."
-                            Write-Host "Asegurese de:"
-                            Write-Host "1. Que PsExec este en C:\PSTools\PsExec.exe"
-                            Write-Host "2. Que su usuario tenga privilegios de Administrador"
-                            Write-Host "   en el equipo remoto $computerTarget."
-                            Write-Host "================================================" -ForegroundColor White
-                        }
-                    }
-
+                    psHabilitarAdministracionRemota
                     Read-Host "Presione ENTER para continuar..."
-
                 }
 
                 "2.1" { 
@@ -6586,6 +6594,9 @@ function psSubMenu28 {
             Write-Host "  2. Ejecutar GPUPDATE /FORCE en PC REMOTA" -ForegroundColor Yellow
             Write-Host "  3. Mostrar Caracteristicas de PC Remoto (Info Hardware/OS/Red)" -ForegroundColor Green
             Write-Host "  ------------------------------------------------------"
+            Write-Host "  4. Habilitacion de Administracion Remota"
+            Write-Host "    4.1 || HABILITAR || WMI, RPC y PSRemoting - en PC REMOTO." -ForegroundColor Green
+            Write-Host "  ------------------------------------------------------"
             Write-Host "  0. V O L V E R   A L   M E N U    P R I N C I P A L"
             Write-Host ""
             Write-Header "==============================="
@@ -6889,6 +6900,16 @@ function psSubMenu28 {
                             Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
                         }
                     }
+                }
+                "4" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op28"
+                    Write-Host "Por favor seleccione una sub-opcion especifica (4.1)" -ForegroundColor Yellow
+                }
+                "4.1" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op28"
+                    psHabilitarAdministracionRemota
                 }
                 "0" {
                     menuPrincipal
@@ -7490,6 +7511,107 @@ function menuPrincipal {
                     Start-Sleep -Seconds 2
                     Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://raw.githubusercontent.com/spwil/shellWil/main/ShellSW.bat | iex"
                     exit
+                }
+
+                "1010" {
+                    cabecera
+                    menuOpcion "MODO DESARROLLADOR: PUBLICAR EN GITHUB (Opcion 1010)"
+                    
+                    # 1. Resolver ruta del repositorio
+                    $repoPath = if ($env:SCRIPT_PATH) { Split-Path $env:SCRIPT_PATH } else { $PSScriptRoot }
+                    if (-not $repoPath) { $repoPath = Get-Location }
+
+                    # 2. Detección técnica estricta de entorno de desarrollo
+                    $esDesarrollo = $false
+                    $gitPath = Get-Command git -ErrorAction SilentlyContinue
+                    
+                    if ($gitPath -and (Test-Path (Join-Path $repoPath ".git"))) {
+                        Push-Location $repoPath
+                        try {
+                            $remoteUrl = git remote get-url origin 2>$null
+                            # Validamos que el origin coincida con el repositorio del proyecto
+                            if ($remoteUrl -like "*spwil/shellWil*") {
+                                $esDesarrollo = $true
+                            }
+                        }
+                        finally {
+                            Pop-Location
+                        }
+                    }
+
+                    if (-not $esDesarrollo) {
+                        Write-Host "`n[INFO] Esta opcion solo esta disponible en el entorno de desarrollo autorizado." -ForegroundColor Yellow
+                        Write-Host "No se detecto la carpeta local de Git o el repositorio origin correcto." -ForegroundColor Gray
+                        Write-Host ""
+                    }
+                    else {
+                        # 3. Auto-compilación automática
+                        Write-Host "`n[*] Iniciando auto-compilacion del script unificado (build.ps1)..." -ForegroundColor Cyan
+                        psReconstruirSiDesarrollo
+
+                        # 4. Mostrar resumen de cambios
+                        Push-Location $repoPath
+                        try {
+                            Write-Host "`n[*] Resumen de archivos modificados para subir:" -ForegroundColor Yellow
+                            $gitStatus = git status -s
+                            if ([string]::IsNullOrEmpty($gitStatus)) {
+                                Write-Host "No hay cambios pendientes de confirmacion en el repositorio." -ForegroundColor Green
+                                Pop-Location
+                                return
+                            }
+                            Write-Host $gitStatus -ForegroundColor Gray
+                            Write-Host ""
+
+                            # 5. Solicitar descripción del commit
+                            $desc = Read-Host "Ingrese la descripcion para el commit (Mensaje de Git)"
+                            if ([string]::IsNullOrEmpty($desc)) {
+                                Write-Host "`n[!] Operacion cancelada: El mensaje de commit no puede estar vacio." -ForegroundColor Red
+                                Pop-Location
+                                return
+                            }
+
+                            # 6. Confirmación de seguridad
+                            $confirmar = Read-Host "¿Proceder con la actualizacion en GitHub? (S/N) [N]"
+                            if ($confirmar -notmatch "^[sS]$") {
+                                Write-Host "`n[!] Operacion cancelada por el usuario." -ForegroundColor Yellow
+                                Pop-Location
+                                return
+                            }
+
+                            # 7. Ejecución de Git
+                            Write-Host "`n[*] Agregando archivos al area de preparacion (git add -A)..." -ForegroundColor Gray
+                            git add -A
+                            
+                            Write-Host "[*] Confirmando cambios localmente (git commit)..." -ForegroundColor Gray
+                            $commitResult = git commit -m "$desc" 2>&1
+                            Write-Host $commitResult -ForegroundColor Gray
+
+                            # Detectar rama activa actual dinámicamente
+                            $activeBranch = git branch --show-current
+                            if ([string]::IsNullOrEmpty($activeBranch)) {
+                                $activeBranch = "main" # fallback
+                            }
+
+                            Write-Host "[*] Subiendo cambios a GitHub en la rama '$activeBranch' (git push)..." -ForegroundColor Yellow
+                            $pushResult = git push origin $activeBranch 2>&1
+                            
+                            # Comprobar código de salida
+                            if ($LASTEXITCODE -eq 0) {
+                                Write-Host "`n[OK] ¡Repositorio de GitHub actualizado exitosamente en la rama '$activeBranch'!" -ForegroundColor Green
+                            } else {
+                                Write-Host "`n[ERROR] Ocurrio un problema al subir los cambios." -ForegroundColor Red
+                                Write-Host "Detalle del error:" -ForegroundColor Red
+                                Write-Host $pushResult -ForegroundColor Gray
+                            }
+                        }
+                        catch {
+                            Write-Host "`n[ERROR NO ESPERADO] Error al interactuar con Git: $_" -ForegroundColor Red
+                        }
+                        finally {
+                            Pop-Location
+                        }
+                    }
+                    Write-Host ""
                 }
 
                 "0" { 

@@ -577,6 +577,107 @@ function menuPrincipal {
                     exit
                 }
 
+                "1010" {
+                    cabecera
+                    menuOpcion "MODO DESARROLLADOR: PUBLICAR EN GITHUB (Opcion 1010)"
+                    
+                    # 1. Resolver ruta del repositorio
+                    $repoPath = if ($env:SCRIPT_PATH) { Split-Path $env:SCRIPT_PATH } else { $PSScriptRoot }
+                    if (-not $repoPath) { $repoPath = Get-Location }
+
+                    # 2. Detección técnica estricta de entorno de desarrollo
+                    $esDesarrollo = $false
+                    $gitPath = Get-Command git -ErrorAction SilentlyContinue
+                    
+                    if ($gitPath -and (Test-Path (Join-Path $repoPath ".git"))) {
+                        Push-Location $repoPath
+                        try {
+                            $remoteUrl = git remote get-url origin 2>$null
+                            # Validamos que el origin coincida con el repositorio del proyecto
+                            if ($remoteUrl -like "*spwil/shellWil*") {
+                                $esDesarrollo = $true
+                            }
+                        }
+                        finally {
+                            Pop-Location
+                        }
+                    }
+
+                    if (-not $esDesarrollo) {
+                        Write-Host "`n[INFO] Esta opcion solo esta disponible en el entorno de desarrollo autorizado." -ForegroundColor Yellow
+                        Write-Host "No se detecto la carpeta local de Git o el repositorio origin correcto." -ForegroundColor Gray
+                        Write-Host ""
+                    }
+                    else {
+                        # 3. Auto-compilación automática
+                        Write-Host "`n[*] Iniciando auto-compilacion del script unificado (build.ps1)..." -ForegroundColor Cyan
+                        psReconstruirSiDesarrollo
+
+                        # 4. Mostrar resumen de cambios
+                        Push-Location $repoPath
+                        try {
+                            Write-Host "`n[*] Resumen de archivos modificados para subir:" -ForegroundColor Yellow
+                            $gitStatus = git status -s
+                            if ([string]::IsNullOrEmpty($gitStatus)) {
+                                Write-Host "No hay cambios pendientes de confirmacion en el repositorio." -ForegroundColor Green
+                                Pop-Location
+                                return
+                            }
+                            Write-Host $gitStatus -ForegroundColor Gray
+                            Write-Host ""
+
+                            # 5. Solicitar descripción del commit
+                            $desc = Read-Host "Ingrese la descripcion para el commit (Mensaje de Git)"
+                            if ([string]::IsNullOrEmpty($desc)) {
+                                Write-Host "`n[!] Operacion cancelada: El mensaje de commit no puede estar vacio." -ForegroundColor Red
+                                Pop-Location
+                                return
+                            }
+
+                            # 6. Confirmación de seguridad
+                            $confirmar = Read-Host "¿Proceder con la actualizacion en GitHub? (S/N) [N]"
+                            if ($confirmar -notmatch "^[sS]$") {
+                                Write-Host "`n[!] Operacion cancelada por el usuario." -ForegroundColor Yellow
+                                Pop-Location
+                                return
+                            }
+
+                            # 7. Ejecución de Git
+                            Write-Host "`n[*] Agregando archivos al area de preparacion (git add -A)..." -ForegroundColor Gray
+                            git add -A
+                            
+                            Write-Host "[*] Confirmando cambios localmente (git commit)..." -ForegroundColor Gray
+                            $commitResult = git commit -m "$desc" 2>&1
+                            Write-Host $commitResult -ForegroundColor Gray
+
+                            # Detectar rama activa actual dinámicamente
+                            $activeBranch = git branch --show-current
+                            if ([string]::IsNullOrEmpty($activeBranch)) {
+                                $activeBranch = "main" # fallback
+                            }
+
+                            Write-Host "[*] Subiendo cambios a GitHub en la rama '$activeBranch' (git push)..." -ForegroundColor Yellow
+                            $pushResult = git push origin $activeBranch 2>&1
+                            
+                            # Comprobar código de salida
+                            if ($LASTEXITCODE -eq 0) {
+                                Write-Host "`n[OK] ¡Repositorio de GitHub actualizado exitosamente en la rama '$activeBranch'!" -ForegroundColor Green
+                            } else {
+                                Write-Host "`n[ERROR] Ocurrio un problema al subir los cambios." -ForegroundColor Red
+                                Write-Host "Detalle del error:" -ForegroundColor Red
+                                Write-Host $pushResult -ForegroundColor Gray
+                            }
+                        }
+                        catch {
+                            Write-Host "`n[ERROR NO ESPERADO] Error al interactuar con Git: $_" -ForegroundColor Red
+                        }
+                        finally {
+                            Pop-Location
+                        }
+                    }
+                    Write-Host ""
+                }
+
                 "0" { 
                     #$salirPrincipal = $true 
                     Write-Host "C E R R A N D O   A P L I C A C I O N  ..." -ForegroundColor Magenta
