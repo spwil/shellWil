@@ -7113,6 +7113,20 @@ function psSubMenu28 {
                             $os = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $ip -ErrorAction Stop
                             $cs = Get-WmiObject -Class Win32_ComputerSystem -ComputerName $ip -ErrorAction Stop
                             $cpu = Get-WmiObject -Class Win32_Processor -ComputerName $ip -ErrorAction Stop | Select-Object -First 1
+                            $bios = Get-WmiObject -Class Win32_BIOS -ComputerName $ip -ErrorAction Stop
+                            
+                            # Obtener Monitor Instalado
+                            $monitors = Get-WmiObject -Class Win32_PnPEntity -ComputerName $ip -Filter "Service='monitor'" -ErrorAction SilentlyContinue
+                            if ($monitors) {
+                                $monitorModels = ($monitors | Select-Object -ExpandProperty Name) -join ", "
+                            } else {
+                                $desktopMonitors = Get-WmiObject -Class Win32_DesktopMonitor -ComputerName $ip -ErrorAction SilentlyContinue
+                                if ($desktopMonitors) {
+                                    $monitorModels = ($desktopMonitors | Select-Object -ExpandProperty Name) -join ", "
+                                } else {
+                                    $monitorModels = "No detectado"
+                                }
+                            }
                             
                             # 2. Determinar Tipo de Arranque (UEFI vs Legacy) y Tabla (GPT vs MBR)
                             $bootStyle = "LEGACY (BIOS)"
@@ -7244,6 +7258,11 @@ function psSubMenu28 {
                             Write-Host "          INFORMACION DETALLADA DE SOPORTE REMOTO: $($os.CSName)" -ForegroundColor Green
                             Write-Host "======================================================================" -ForegroundColor White
                             Write-Host " Hostname:            $($os.CSName)"
+                            Write-Host " Fabricante:          $($cs.Manufacturer)" -ForegroundColor White
+                            Write-Host " Modelo PC:           $($cs.Model)" -ForegroundColor White
+                            Write-Host " Service TAG (S/N):   $($bios.SerialNumber)" -ForegroundColor Cyan
+                            Write-Host " Version BIOS:        $($bios.Name)"
+                            Write-Host " Monitor Instalado:   $monitorModels" -ForegroundColor White
                             Write-Host " Usuario Activo:      $activeUser" -ForegroundColor Cyan
                             Write-Host " Sistema de Arranque: $bootStyle ($partitionStyle)" -ForegroundColor Yellow
                             Write-Host " Sistema Operativo:   $($os.Caption) ($($os.OSArchitecture))"
