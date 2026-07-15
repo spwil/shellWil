@@ -11,6 +11,11 @@ function psSubMenu28 {
             Write-Host "  4. Habilitacion de Administracion Remota"
             Write-Host "    4.1 || HABILITAR || WMI, RPC y PSRemoting - en PC REMOTO." -ForegroundColor Green
             Write-Host "  ------------------------------------------------------"
+            Write-Host "  5. Servicios Windows Update"
+            Write-Host "    5.1 || HABILITAR || Servicios de Actualizacion (Remoto)" -ForegroundColor Green
+            Write-Host "    5.2 || DESHABILITAR || Servicios de Actualizacion (Remoto)" -ForegroundColor Red
+            Write-Host "    5.3 || ESTADO || de Servicios Windows Update (Remoto)" -ForegroundColor Cyan
+            Write-Host "  ------------------------------------------------------"
             Write-Host "  0. V O L V E R   A L   M E N U    P R I N C I P A L"
             Write-Host ""
             Write-Header "==============================="
@@ -324,6 +329,20 @@ function psSubMenu28 {
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op28"
                     psHabilitarAdministracionRemota
+                }
+                "5" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op28"
+                    Write-Host "Por favor seleccione una sub-opcion especifica (5.1, 5.2 o 5.3)" -ForegroundColor Yellow
+                }
+                "5.1" {
+                    psGestionarServiciosUpdateRemoto -accion "Habilitar"
+                }
+                "5.2" {
+                    psGestionarServiciosUpdateRemoto -accion "Deshabilitar"
+                }
+                "5.3" {
+                    psGestionarServiciosUpdateRemoto -accion "Estado"
                 }
                 "0" {
                     menuPrincipal
