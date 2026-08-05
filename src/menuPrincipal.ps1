@@ -14,15 +14,12 @@ function menuPrincipal {
         try {
             #cabecera con informacion del autor
             cabecera
-
             Write-Header " ATENCION: ESTA HERRAMIENTA REALIZA CAMBIOS EN EL SISTEMA OPERATIVO"
-            #Write-Host "======================================================================" -ForegroundColor Cyan -BackgroundColor Black
             Write-Host "  1.  Hostname e IP" -ForegroundColor Green
             Write-Host "  3.  Desfragmentar Unidad C: (Principal)" -ForegroundColor DarkCyan
             Write-Host "  4.  Desfragmentar Otras Unidades (HDD)"
             Write-Host "    4.1 Optimizar Unidades de SSD (alternativa a defrag)."
             Write-Host "  5.  Eliminar Archivos Temporales S.O." -ForegroundColor DarkCyan
-
             Write-Host "  7.  Resetear Internet Explorer"
             Write-Host "  9.  Abrir Internet Explorer con Topacio"
             Write-Host "  10. Ping Infraestructura"
@@ -52,7 +49,7 @@ function menuPrincipal {
             Write-Host "  0.  Salir"
             Write-Host "======================================================================" -ForegroundColor Yellow
             
-            Write-Host $header -ForegroundColor Cyan
+            #Write-Host $header -ForegroundColor Cyan
 
             # 3. Bucle Principal
 
@@ -125,7 +122,8 @@ function menuPrincipal {
                                 if ($dnsServers.Count -gt 0) {
                                     Write-Host "      DNS:       " -NoNewline
                                     Write-Host ($dnsServers -join ", ") -ForegroundColor Green
-                                } else {
+                                }
+                                else {
                                     Write-Host "      DNS:       " -NoNewline
                                     Write-Host "No configurados" -ForegroundColor DarkGray
                                 }
@@ -592,7 +590,8 @@ function menuPrincipal {
                             # Comprobar código de salida
                             if ($LASTEXITCODE -eq 0) {
                                 Write-Host "`n[OK] ¡Repositorio de GitHub actualizado exitosamente en la rama '$activeBranch'!" -ForegroundColor Green
-                            } else {
+                            }
+                            else {
                                 Write-Host "`n[ERROR] Ocurrio un problema al subir los cambios." -ForegroundColor Red
                                 Write-Host "Detalle del error:" -ForegroundColor Red
                                 Write-Host $pushResult -ForegroundColor Gray

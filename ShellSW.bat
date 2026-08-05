@@ -32,15 +32,18 @@ function psLimpiarRAM {
     try {
         $procesos = [System.Diagnostics.Process]::GetProcesses()
         foreach ($p in $procesos) {
-            if ($p.Id -gt 4) { # Omitimos Idle y System
+            if ($p.Id -gt 4) {
+                # Omitimos Idle y System
                 try {
                     [RamUtil]::EmptyWorkingSet($p.Handle) | Out-Null
-                } catch {}
+                }
+                catch {}
             }
             if ($p) { $p.Dispose() }
         }
         Write-Host "RAM optimizada correctamente." -ForegroundColor Green
-    } catch {
+    }
+    catch {
         Write-Host "Error al optimizar." -ForegroundColor Red
     }
 }
@@ -96,10 +99,12 @@ function psReconstruirSiDesarrollo {
                 $p = Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$buildScript`"" -NoNewWindow -PassThru -Wait
                 if ($p.ExitCode -eq 0) {
                     Write-Host "[DEV] Reconstruccion completa y exitosa." -ForegroundColor Green
-                } else {
+                }
+                else {
                     Write-Host "[DEV] Error en la reconstruccion (Codigo de salida: $($p.ExitCode))." -ForegroundColor Red
                 }
-            } catch {
+            }
+            catch {
                 Write-Host "[DEV] Fallo al ejecutar el script de ensamblado: $_" -ForegroundColor Red
             }
         }
@@ -141,7 +146,8 @@ function psHabilitarAdministracionRemota {
         if ($lineaName -and $lineaName -match "^\s*([A-Za-z0-9\-]+)") {
             $computerTarget = $Matches[1].Trim()
             Write-Host "[+] Hostname resuelto via NetBIOS: $computerTarget" -ForegroundColor Green
-        } else {
+        }
+        else {
             Write-Host "[-] No se pudo resolver Hostname. Usando IP directamente ($ipRemota)." -ForegroundColor Yellow
         }
     }
@@ -174,7 +180,8 @@ function psHabilitarAdministracionRemota {
     $psexecFound = $false
     if (Test-Path $psexecPath) {
         $psexecFound = $true
-    } else {
+    }
+    else {
         $where = Get-Command psexec -ErrorAction SilentlyContinue
         if ($where) {
             $psexecPath = $where.Definition
@@ -189,11 +196,13 @@ function psHabilitarAdministracionRemota {
         if ($p -and $p.ExitCode -eq 0) {
             Write-Host "[OK] Habilitacion remota ejecutada exitosamente via PsExec!" -ForegroundColor Green
             $exito = $true
-        } else {
+        }
+        else {
             $code = if ($p) { $p.ExitCode } else { "N/A" }
             Write-Host "[-] PsExec no pudo completar la accion (Codigo: $code)." -ForegroundColor Yellow
         }
-    } else {
+    }
+    else {
         Write-Host "[-] PsExec.exe no detectado en C:\PSTools ni en el PATH. Omitiendo." -ForegroundColor Gray
     }
 
@@ -225,7 +234,8 @@ function psHabilitarAdministracionRemota {
             if ($result -and $result.ReturnValue -eq 0) {
                 Write-Host "[OK] Comando enviado via WMI con exito!" -ForegroundColor Green
                 $exito = $true
-            } else {
+            }
+            else {
                 $val = if ($result) { $result.ReturnValue } else { "N/A" }
                 Write-Host "[-] WMI retorno codigo de error: $val" -ForegroundColor Yellow
             }
@@ -243,7 +253,8 @@ function psHabilitarAdministracionRemota {
         Write-Host "El equipo remoto $computerTarget ahora deberia aceptar"
         Write-Host "consultas de red, WMI, ping y PSRemoting."
         Write-Host "================================================" -ForegroundColor White
-    } else {
+    }
+    else {
         Write-Host "`n================================================" -ForegroundColor White
         Write-Host "       ERROR: NO SE PUDO CONFIGURAR EL EQUIPO" -ForegroundColor Red
         Write-Host "================================================" -ForegroundColor White
@@ -295,7 +306,8 @@ function psGestionarServiciosUpdateRemoto {
         if ($lineaName -and $lineaName -match "^\s*([A-Za-z0-9\-]+)") {
             $computerTarget = $Matches[1].Trim()
             Write-Host "[+] Hostname resuelto via NetBIOS: $computerTarget" -ForegroundColor Green
-        } else {
+        }
+        else {
             Write-Host "[-] No se pudo resolver Hostname. Usando IP directamente ($ipRemota)." -ForegroundColor Yellow
         }
     }
@@ -321,13 +333,14 @@ function psGestionarServiciosUpdateRemoto {
                 $serviceWmi = Get-WmiObject -Class Win32_Service -ComputerName $ip -Filter "Name='$serv'" -ErrorAction Stop
                 if ($serviceWmi) {
                     $estadoResultados += [PSCustomObject]@{
-                        Servicio    = $serv
-                        Nombre      = $serviceWmi.DisplayName
-                        TipoInicio  = $serviceWmi.StartMode
-                        Estado      = $serviceWmi.State
-                        Metodo      = "WMI"
+                        Servicio   = $serv
+                        Nombre     = $serviceWmi.DisplayName
+                        TipoInicio = $serviceWmi.StartMode
+                        Estado     = $serviceWmi.State
+                        Metodo     = "WMI"
                     }
-                } else {
+                }
+                else {
                     throw "Servicio no encontrado"
                 }
             }
@@ -345,21 +358,21 @@ function psGestionarServiciosUpdateRemoto {
                     param($servs)
                     Get-Service -Name $servs | ForEach-Object {
                         [PSCustomObject]@{
-                            Servicio    = $_.Name
-                            Nombre      = $_.DisplayName
-                            TipoInicio  = $_.StartType.ToString()
-                            Estado      = $_.Status.ToString()
+                            Servicio   = $_.Name
+                            Nombre     = $_.DisplayName
+                            TipoInicio = $_.StartType.ToString()
+                            Estado     = $_.Status.ToString()
                         }
                     }
-                } -ArgumentList (,$serviciosConsulta) -ErrorAction Stop
+                } -ArgumentList (, $serviciosConsulta) -ErrorAction Stop
                 
                 foreach ($res in $remoteResults) {
                     $estadoResultados += [PSCustomObject]@{
-                        Servicio    = $res.Servicio
-                        Nombre      = $res.Nombre
-                        TipoInicio  = $res.TipoInicio
-                        Estado      = $res.Estado
-                        Metodo      = "WinRM"
+                        Servicio   = $res.Servicio
+                        Nombre     = $res.Nombre
+                        TipoInicio = $res.TipoInicio
+                        Estado     = $res.Estado
+                        Metodo     = "WinRM"
                     }
                 }
                 $queryExito = $true
@@ -402,11 +415,11 @@ function psGestionarServiciosUpdateRemoto {
                         }
 
                         $estadoResultados += [PSCustomObject]@{
-                            Servicio    = $serv
-                            Nombre      = $serv # fallback
-                            TipoInicio  = $startMode
-                            Estado      = $state
-                            Metodo      = "PsExec (sc)"
+                            Servicio   = $serv
+                            Nombre     = $serv # fallback
+                            TipoInicio = $startMode
+                            Estado     = $state
+                            Metodo     = "PsExec (sc)"
                         }
                     }
                     $queryExito = $true
@@ -438,7 +451,8 @@ function psGestionarServiciosUpdateRemoto {
                 Write-Host ("{0,-15}" -f $res.Metodo)
             }
             Write-Host "==========================================================================`n" -ForegroundColor White
-        } else {
+        }
+        else {
             Write-Host "`n========================================================" -ForegroundColor Red
             Write-Host "         ERROR AL CONSULTAR EL ESTADO DE SERVICIOS" -ForegroundColor White -BackgroundColor DarkRed
             Write-Host "========================================================" -ForegroundColor Red
@@ -456,7 +470,8 @@ function psGestionarServiciosUpdateRemoto {
             @{ Name = "TrustedInstaller"; StartMode = "Manual"; ScStart = "demand"; Action = "None" },
             @{ Name = "cryptsvc"; StartMode = "Automatic"; ScStart = "auto"; Action = "Start" }
         )
-    } else {
+    }
+    else {
         $serviciosConfig = @(
             @{ Name = "wuauserv"; StartMode = "Disabled"; ScStart = "disabled"; Action = "Stop" },
             @{ Name = "bits"; StartMode = "Disabled"; ScStart = "disabled"; Action = "Stop" },
@@ -484,7 +499,8 @@ function psGestionarServiciosUpdateRemoto {
                 $resAct = 0
                 if ($act -eq "Start") {
                     $resAct = $serviceWmi.StartService().ReturnValue
-                } elseif ($act -eq "Stop") {
+                }
+                elseif ($act -eq "Stop") {
                     $resAct = $serviceWmi.StopService().ReturnValue
                 }
                 
@@ -497,20 +513,24 @@ function psGestionarServiciosUpdateRemoto {
                 
                 if ($act -eq "Start") {
                     $isActOk = ($resAct -eq 0 -or $resAct -eq 10)
-                } elseif ($act -eq "Stop") {
+                }
+                elseif ($act -eq "Stop") {
                     $isActOk = ($resAct -eq 0 -or $resAct -eq 5 -or $resAct -eq 6)
-                } else {
+                }
+                else {
                     $isActOk = $true # Acción "None"
                 }
 
                 if ($isModeOk -and $isActOk) {
                     Write-Host " -> Servicio ${serv}: Modo=$mode, Accion=$act [OK]" -ForegroundColor Green
-                } else {
+                }
+                else {
                     $wmiExito = $false
                     # Cambiamos a color amarillo para advertir que requiere fallback, sin asustar al usuario con un error rojo fatal
                     Write-Host " -> Servicio ${serv}: Requiere fallback (ModoRes=$resMode, ActRes=$resAct)." -ForegroundColor Yellow
                 }
-            } else {
+            }
+            else {
                 $wmiExito = $false
                 Write-Host " -> Servicio ${serv}: No encontrado via WMI." -ForegroundColor Yellow
             }
@@ -539,11 +559,12 @@ function psGestionarServiciosUpdateRemoto {
                     Set-Service -Name $name -StartupType $mode -ErrorAction SilentlyContinue
                     if ($act -eq "Start") {
                         Start-Service -Name $name -ErrorAction SilentlyContinue
-                    } elseif ($act -eq "Stop") {
+                    }
+                    elseif ($act -eq "Stop") {
                         Stop-Service -Name $name -Force -ErrorAction SilentlyContinue
                     }
                 }
-            } -ArgumentList (,$serviciosConfig) -ErrorAction Stop
+            } -ArgumentList (, $serviciosConfig) -ErrorAction Stop
             Write-Host "[OK] Servicios configurados exitosamente via WinRM!" -ForegroundColor Green
             $exito = $true
         }
@@ -560,11 +581,13 @@ function psGestionarServiciosUpdateRemoto {
         $psexecFound = $false
         if (Test-Path $psexecPath) {
             $psexecFound = $true
-        } else {
+        }
+        else {
             if (Test-Path ".\PsExec.exe") {
                 $psexecPath = ".\PsExec.exe"
                 $psexecFound = $true
-            } else {
+            }
+            else {
                 $where = Get-Command psexec -ErrorAction SilentlyContinue
                 if ($where) {
                     $psexecPath = $where.Definition
@@ -588,7 +611,8 @@ function psGestionarServiciosUpdateRemoto {
                 $argsAct = ""
                 if ($act -eq "Start") {
                     $argsAct = "\\$computerTarget -accepteula -s cmd.exe /c sc start $serv"
-                } elseif ($act -eq "Stop") {
+                }
+                elseif ($act -eq "Stop") {
                     $argsAct = "\\$computerTarget -accepteula -s cmd.exe /c sc stop $serv"
                 }
                 
@@ -598,7 +622,8 @@ function psGestionarServiciosUpdateRemoto {
                 
                 if ($pConfig -and $pConfig.ExitCode -eq 0) {
                     Write-Host " -> Servicio $serv configurado via PsExec [OK]" -ForegroundColor Green
-                } else {
+                }
+                else {
                     $psExito = $false
                     $code = if ($pConfig) { $pConfig.ExitCode } else { "N/A" }
                     Write-Host " -> Error al configurar $serv via PsExec (Codigo: $code)." -ForegroundColor Red
@@ -607,7 +632,8 @@ function psGestionarServiciosUpdateRemoto {
             if ($psExito) {
                 $exito = $true
             }
-        } else {
+        }
+        else {
             Write-Host "[-] PsExec.exe no detectado en C:\PSTools ni en el PATH. Omitiendo." -ForegroundColor Gray
         }
     }
@@ -618,7 +644,8 @@ function psGestionarServiciosUpdateRemoto {
         Write-Host "   SERVICIOS WINDOWS UPDATE CONFIGURADOS CON EXITO" -ForegroundColor White -BackgroundColor DarkGreen
         Write-Host "========================================================" -ForegroundColor Green
         Write-Host "La accion de '$accion' se ejecuto correctamente."
-    } else {
+    }
+    else {
         Write-Host "`n========================================================" -ForegroundColor Red
         Write-Host "        ERROR AL CONFIGURAR LOS SERVICIOS REMOTOS" -ForegroundColor White -BackgroundColor DarkRed
         Write-Host "========================================================" -ForegroundColor Red
@@ -7890,15 +7917,12 @@ function menuPrincipal {
         try {
             #cabecera con informacion del autor
             cabecera
-
             Write-Header " ATENCION: ESTA HERRAMIENTA REALIZA CAMBIOS EN EL SISTEMA OPERATIVO"
-            #Write-Host "======================================================================" -ForegroundColor Cyan -BackgroundColor Black
             Write-Host "  1.  Hostname e IP" -ForegroundColor Green
             Write-Host "  3.  Desfragmentar Unidad C: (Principal)" -ForegroundColor DarkCyan
             Write-Host "  4.  Desfragmentar Otras Unidades (HDD)"
             Write-Host "    4.1 Optimizar Unidades de SSD (alternativa a defrag)."
             Write-Host "  5.  Eliminar Archivos Temporales S.O." -ForegroundColor DarkCyan
-
             Write-Host "  7.  Resetear Internet Explorer"
             Write-Host "  9.  Abrir Internet Explorer con Topacio"
             Write-Host "  10. Ping Infraestructura"
@@ -7928,7 +7952,7 @@ function menuPrincipal {
             Write-Host "  0.  Salir"
             Write-Host "======================================================================" -ForegroundColor Yellow
             
-            Write-Host $header -ForegroundColor Cyan
+            #Write-Host $header -ForegroundColor Cyan
 
             # 3. Bucle Principal
 
@@ -8001,7 +8025,8 @@ function menuPrincipal {
                                 if ($dnsServers.Count -gt 0) {
                                     Write-Host "      DNS:       " -NoNewline
                                     Write-Host ($dnsServers -join ", ") -ForegroundColor Green
-                                } else {
+                                }
+                                else {
                                     Write-Host "      DNS:       " -NoNewline
                                     Write-Host "No configurados" -ForegroundColor DarkGray
                                 }
@@ -8468,7 +8493,8 @@ function menuPrincipal {
                             # Comprobar código de salida
                             if ($LASTEXITCODE -eq 0) {
                                 Write-Host "`n[OK] ¡Repositorio de GitHub actualizado exitosamente en la rama '$activeBranch'!" -ForegroundColor Green
-                            } else {
+                            }
+                            else {
                                 Write-Host "`n[ERROR] Ocurrio un problema al subir los cambios." -ForegroundColor Red
                                 Write-Host "Detalle del error:" -ForegroundColor Red
                                 Write-Host $pushResult -ForegroundColor Gray
