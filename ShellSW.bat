@@ -3265,7 +3265,8 @@ function psSubMenu23 {
                     $profiles = $null
                     if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) {
                         $profiles = Get-CimInstance -ClassName Win32_UserProfile -ErrorAction SilentlyContinue
-                    } else {
+                    }
+                    else {
                         $profiles = Get-WmiObject -Class Win32_UserProfile -ErrorAction SilentlyContinue
                     }
 
@@ -3282,8 +3283,8 @@ function psSubMenu23 {
                     # Fallback si WMI falla
                     if ($profilePaths.Count -eq 0) {
                         $profilePaths = Get-ChildItem -Path "C:\Users" -Directory -ErrorAction SilentlyContinue | 
-                                        Where-Object { $_.Name -notin "Default", "Default User", "All Users", "Public" } | 
-                                        Select-Object -ExpandProperty FullName
+                        Where-Object { $_.Name -notin "Default", "Default User", "All Users", "Public" } | 
+                        Select-Object -ExpandProperty FullName
                     }
 
                     Write-Host "Perfiles de usuario detectados a procesar: $($profilePaths.Count)" -ForegroundColor Yellow
@@ -3329,8 +3330,8 @@ function psSubMenu23 {
 
                             # Eliminar directorios vacíos recursivamente
                             $dirs = Get-ChildItem -Path "$tempPath\*" -Recurse -Force -ErrorAction SilentlyContinue | 
-                                    Where-Object { $_.PSIsContainer } | 
-                                    Sort-Object FullName -Descending
+                            Where-Object { $_.PSIsContainer } | 
+                            Sort-Object FullName -Descending
                             foreach ($dir in $dirs) {
                                 try {
                                     Remove-Item -Path $dir.FullName -Force -ErrorAction Stop
@@ -3344,7 +3345,8 @@ function psSubMenu23 {
                             $mbLiberados = [Math]::Round($espacioUser / 1MB, 2)
                             Write-Host "  -> Archivos eliminados: $eliminadosUser | Bloqueados/En uso: $fallidosUser" -ForegroundColor Green
                             Write-Host "  -> Espacio liberado: $mbLiberados MB" -ForegroundColor Green
-                        } else {
+                        }
+                        else {
                             Write-Host "  -> Directorio Temp no inicializado para este usuario." -ForegroundColor Yellow
                         }
                         Write-Host ""
@@ -3445,8 +3447,8 @@ function psSubMenuPortatil {
             cabecera
             Write-Header " 23.20. ---)) LOCAL: HERRAMIENTAS PC PORTATIL."
             Write-Host "  1. BitLocker - Dell - HP - Lenovo" -ForegroundColor Green
-            Write-Host "    1.1. Activar BitLocker (Deshabilitar protectores C: - Mantenimiento)"
-            Write-Host "    1.2. Desactivar BitLocker (Habilitar protectores C: - Fin Mantenimiento)"
+            Write-Host "    1.1. Desactivar BitLocker (Deshabilitar protectores C: - Mantenimiento)"
+            Write-Host "    1.2. Activar BitLocker (Habilitar protectores C: - Fin Mantenimiento)"
             Write-Host "    1.3. Verificar Estado de BitLocker"
             Write-Host "    1.4. Desactivar BitLocker de forma Permanente"
             Write-Host "    1.5. Mostrar Progreso de Desactivacion (Descifrado)"
@@ -3551,17 +3553,20 @@ function psSubMenuPortatil {
                     $baterias = $null
                     if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) {
                         $baterias = Get-CimInstance -ClassName Win32_Battery -ErrorAction SilentlyContinue
-                    } else {
+                    }
+                    else {
                         $baterias = Get-WmiObject -Class Win32_Battery -ErrorAction SilentlyContinue
                     }
                     
                     if ($baterias) {
                         $isLaptop = $true
-                    } else {
+                    }
+                    else {
                         $chassisTypes = @()
                         if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) {
                             $chassisTypes = (Get-CimInstance -ClassName Win32_SystemEnclosure -ErrorAction SilentlyContinue).ChassisTypes
-                        } else {
+                        }
+                        else {
                             $chassisTypes = (Get-WmiObject -Class Win32_SystemEnclosure -ErrorAction SilentlyContinue).ChassisTypes
                         }
                         
@@ -3578,7 +3583,8 @@ function psSubMenuPortatil {
                     if ($isLaptop) {
                         Write-Host "Tipo de equipo detectado: PC Portatil (Laptop)" -ForegroundColor Green
                         Write-Host "Detected System Type: Laptop" -ForegroundColor Green
-                    } else {
+                    }
+                    else {
                         Write-Host "Tipo de equipo detectado: PC de Escritorio (Desktop)" -ForegroundColor Yellow
                         Write-Host "Detected System Type: Desktop" -ForegroundColor Yellow
                     }
@@ -3598,7 +3604,8 @@ function psSubMenuPortatil {
                         $pOutput = powercfg /batteryreport /output $rutaHTML 2>&1
                         if (Test-Path $rutaHTML) {
                             Write-Host "Reporte generado en: $rutaHTML" -ForegroundColor Green
-                        } else {
+                        }
+                        else {
                             Write-Host "No se pudo generar el reporte. Asegurese de ejecutar el script como Administrador." -ForegroundColor Red
                             Write-Host "Detalle del sistema: $pOutput" -ForegroundColor Gray
                         }
@@ -3659,7 +3666,8 @@ function psSubMenuPortatil {
                             $win32Battery = $null
                             if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) {
                                 $win32Battery = Get-CimInstance -ClassName "Win32_Battery" -ErrorAction SilentlyContinue
-                            } else {
+                            }
+                            else {
                                 $win32Battery = Get-WmiObject -Class "Win32_Battery" -ErrorAction SilentlyContinue
                             }
                             
@@ -3744,11 +3752,13 @@ function psSubMenuPortatil {
                                 Write-Host "2. PRECAUCION: Examine visualmente si la bateria se encuentra inflada (esto se nota si el touchpad o el teclado se sienten duros o levantados). Si detecta hinchazon, retire la bateria de inmediato, ya que representa un peligro fisico (riesgo de incendio o explosion)."
                                 Write-Host "3. Si utiliza la laptop fija conectada permanentemente, puede optar por remover la bateria (si es extraible) para evitar calor innecesario, o bien limitar estrictamente la carga via software."
                             }
-                        } else {
+                        }
+                        else {
                             Write-Host "No se pudieron extraer los datos detallados de la bateria a traves de WMI/CIM." -ForegroundColor Yellow
                             Write-Host "Por favor, revise el reporte detallado generado en la ruta indicada." -ForegroundColor Yellow
                         }
-                    } else {
+                    }
+                    else {
                         # Recomendaciones para PC de Escritorio
                         Write-Host "RECOMENDACIONES DE EXPERTO (PC DE ESCRITORIO O SERVIDOR):" -ForegroundColor Yellow
                         Write-Host "1. Al tratarse de un equipo de escritorio, se recomienda encarecidamente el uso de un UPS (No-Break) o Sistema de Alimentacion Ininterrumpida."
