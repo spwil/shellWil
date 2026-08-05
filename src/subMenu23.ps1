@@ -863,229 +863,151 @@ function psSubMenuPortatil {
                     Write-Host "===========================================================" -ForegroundColor Cyan
                     Write-Host "      ANALISIS DE SALUD Y DESGASTE DE LA BATERIA           " -ForegroundColor Cyan
                     Write-Host "===========================================================" -ForegroundColor Cyan
+                    Write-Host ""
 
-                    $rutaHTML = "C:\estadoBateria.html"
-                    $rutaNoExt = "C:\estadoBateria"
-                    $targetFile = ""
-
-                    if (Test-Path $rutaHTML) {
-                        $targetFile = $rutaHTML
+                    # 1. Determinar si el equipo es Laptop o PC de Escritorio
+                    $isLaptop = $false
+                    $baterias = $null
+                    if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) {
+                        $baterias = Get-CimInstance -ClassName Win32_Battery -ErrorAction SilentlyContinue
+                    } else {
+                        $baterias = Get-WmiObject -Class Win32_Battery -ErrorAction SilentlyContinue
                     }
-                    elseif (Test-Path $rutaNoExt) {
-                        $targetFile = $rutaNoExt
-                    }
-
-                    if (-not $targetFile) {
-                        Write-Host "No se encontro un reporte previo. Generando un nuevo reporte..." -ForegroundColor Cyan
-                        try {
-                            powercfg /batteryreport /output $rutaHTML | Out-Null
-                            if (Test-Path $rutaHTML) {
-                                $targetFile = $rutaHTML
-                                Write-Host "Reporte generado en: $rutaHTML" -ForegroundColor Green
+                    
+                    if ($baterias) {
+                        $isLaptop = $true
+                    } else {
+                        $chassisTypes = @()
+                        if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) {
+                            $chassisTypes = (Get-CimInstance -ClassName Win32_SystemEnclosure -ErrorAction SilentlyContinue).ChassisTypes
+                        } else {
+                            $chassisTypes = (Get-WmiObject -Class Win32_SystemEnclosure -ErrorAction SilentlyContinue).ChassisTypes
+                        }
+                        
+                        foreach ($t in $chassisTypes) {
+                            # Códigos de chasis portátiles comunes
+                            if ($t -in 8, 9, 10, 11, 12, 14, 18, 21, 30, 31, 32) {
+                                $isLaptop = $true
+                                break
                             }
                         }
-                        catch {
-                            Write-Host "No se pudo generar el reporte mediante powercfg." -ForegroundColor Red
-                        }
                     }
 
-                    $parsedOK = $false
-                    $designCapacityVal = 0
-                    $fullChargeCapacityVal = 0
-                    $cycleCountVal = $null
-                    $manufacturer = "Desconocido"
-                    $chemistry = "Desconocido"
+                    # Mostrar detección
+                    if ($isLaptop) {
+                        Write-Host "Tipo de equipo detectado: PC Portatil (Laptop)" -ForegroundColor Green
+                        Write-Host "Detected System Type: Laptop" -ForegroundColor Green
+                    } else {
+                        Write-Host "Tipo de equipo detectado: PC de Escritorio (Desktop)" -ForegroundColor Yellow
+                        Write-Host "Detected System Type: Desktop" -ForegroundColor Yellow
+                    }
+                    Write-Host ""
 
-                    if ($targetFile -and (Test-Path $targetFile)) {
-                        $content = Get-Content $targetFile -Raw
-                        
-                        $noBatteries = ($content -match "No batteries are currently installed") -or ($content -match "No hay bater.as instaladas")
-                        
-                        if (-not $noBatteries) {
-                            # Extract Design Capacity
-                            $designCapacityMatch = [regex]::Match($content, '(DESIGN CAPACITY|CAPACIDAD DE DISEÑO|CAPACIDAD DE DISENO)\s*<\/td>\s*<td[^>]*>\s*([\d,.\s\u00a0]+)\s*mWh', 'IgnoreCase')
-                            # Extract Full Charge Capacity
-                            $fullChargeCapacityMatch = [regex]::Match($content, '(FULL CHARGE CAPACITY|CAPACIDAD CON CARGA COMPLETA)\s*<\/td>\s*<td[^>]*>\s*([\d,.\s\u00a0]+)\s*mWh', 'IgnoreCase')
-                            # Extract Cycle Count
-                            $cycleCountMatch = [regex]::Match($content, '(CYCLE COUNT|CONTEO DE CICLOS|CICLOS|CICLO DE REPETICIÓN|CICLO DE REPETICION)\s*<\/td>\s*<td[^>]*>\s*([\d,.\s\u00a0]+)\s*', 'IgnoreCase')
-                            # Extract Manufacturer
-                            $manufacturerMatch = [regex]::Match($content, '(MANUFACTURER|FABRICANTE)\s*<\/td>\s*<td[^>]*>\s*([^<]+)\s*<\/td>', 'IgnoreCase')
-                            # Extract Chemistry
-                            $chemistryMatch = [regex]::Match($content, '(CHEMISTRY|QUÍMICA|QUIMICA)\s*<\/td>\s*<td[^>]*>\s*([^<]+)\s*<\/td>', 'IgnoreCase')
+                    # 2. Mostrar Fórmulas
+                    Write-Host "Formula para calcular la salud / Battery health formula:" -ForegroundColor Cyan
+                    Write-Host "  Espanol: Porcentaje de Vida Util = (Capacidad de Carga Completa / Capacidad de Diseno) * 100" -ForegroundColor Gray
+                    Write-Host "  English: Battery Health Percentage = (Full Charge Capacity / Design Capacity) * 100" -ForegroundColor Gray
+                    Write-Host ""
+
+                    # 3. Generar reporte HTML en C:\bateriaReporte.html
+                    $rutaHTML = "C:\bateriaReporte.html"
+                    Write-Host "Generando reporte de bateria en C:\bateriaReporte.html... / Generating battery report..." -ForegroundColor Gray
+                    
+                    try {
+                        $pOutput = powercfg /batteryreport /output $rutaHTML 2>&1
+                        if (Test-Path $rutaHTML) {
+                            Write-Host "Reporte generado en: $rutaHTML" -ForegroundColor Green
+                        } else {
+                            Write-Host "No se pudo generar el reporte. Asegurese de ejecutar el script como Administrador." -ForegroundColor Red
+                            Write-Host "Detalle del sistema: $pOutput" -ForegroundColor Gray
+                        }
+                    }
+                    catch {
+                        Write-Host "No se pudo generar el reporte mediante powercfg: $($_.Exception.Message)" -ForegroundColor Red
+                    }
+                    Write-Host ""
+
+                    # 4. Obtener y mostrar datos reales de batería si es una Laptop
+                    if ($isLaptop) {
+                        $designedCapacityVal = 0
+                        $fullChargeCapacityVal = 0
+                        $cycleCountVal = $null
+                        $manufacturer = "Desconocido"
+                        $chemistry = "Desconocido"
+                        $parsedOK = $false
+
+                        # Intentar obtener datos a través de WMI/CIM en root/wmi
+                        if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) {
+                            $staticData = Get-CimInstance -Namespace "root\wmi" -ClassName "BatteryStaticData" -ErrorAction SilentlyContinue
+                            $fullChargeData = Get-CimInstance -Namespace "root\wmi" -ClassName "BatteryFullChargedCapacity" -ErrorAction SilentlyContinue
+                            $cycleData = Get-CimInstance -Namespace "root\wmi" -ClassName "BatteryCycleCount" -ErrorAction SilentlyContinue
                             
-                            if ($designCapacityMatch.Success) {
-                                $designCapacityVal = [int]($designCapacityMatch.Groups[2].Value -replace '[^\d]', '')
+                            if ($staticData) {
+                                $designedCapacityVal = $staticData[0].DesignedCapacity
+                                $chemistry = $staticData[0].Chemistry
+                                $manufacturer = $staticData[0].ManufacturerName
                             }
-                            if ($fullChargeCapacityMatch.Success) {
-                                $fullChargeCapacityVal = [int]($fullChargeCapacityMatch.Groups[2].Value -replace '[^\d]', '')
+                            if ($fullChargeData) {
+                                $fullChargeCapacityVal = $fullChargeData[0].FullChargedCapacity
                             }
-                            if ($cycleCountMatch.Success) {
-                                $cycleCountVal = [int]($cycleCountMatch.Groups[2].Value -replace '[^\d]', '')
-                            }
-                            if ($manufacturerMatch.Success) {
-                                $manufacturer = $manufacturerMatch.Groups[2].Value.Trim()
-                            }
-                            if ($chemistryMatch.Success) {
-                                $chemistry = $chemistryMatch.Groups[2].Value.Trim()
-                            }
-                            
-                            if ($designCapacityVal -gt 0 -and $fullChargeCapacityVal -gt 0) {
-                                $parsedOK = $true
+                            if ($cycleData) {
+                                $cycleCountVal = $cycleData[0].CycleCount
                             }
                         }
-                    }
+                        
+                        if ($designedCapacityVal -eq 0 -and (Get-Command Get-WmiObject -ErrorAction SilentlyContinue)) {
+                            $staticData = Get-WmiObject -Namespace "root\wmi" -Class "BatteryStaticData" -ErrorAction SilentlyContinue
+                            $fullChargeData = Get-WmiObject -Namespace "root\wmi" -Class "BatteryFullChargedCapacity" -ErrorAction SilentlyContinue
+                            $cycleData = Get-WmiObject -Namespace "root\wmi" -Class "BatteryCycleCount" -ErrorAction SilentlyContinue
+                            
+                            if ($staticData) {
+                                $designedCapacityVal = $staticData[0].DesignedCapacity
+                                $chemistry = $staticData[0].Chemistry
+                                $manufacturer = $staticData[0].ManufacturerName
+                            }
+                            if ($fullChargeData) {
+                                $fullChargeCapacityVal = $fullChargeData[0].FullChargedCapacity
+                            }
+                            if ($cycleData) {
+                                $cycleCountVal = $cycleData[0].CycleCount
+                            }
+                        }
 
-                    if (-not $parsedOK) {
-                        # Intentar obtener datos via WMI como plan B
-                        $battery = Get-WmiObject -Class Win32_Battery
-                        if ($battery) {
-                            $designCapacityVal = $battery.DesignCapacity
-                            $fullChargeCapacityVal = $battery.FullChargeCapacity
-                            $manufacturer = $battery.Manufacturer
-                            $chemistry = $battery.Chemistry
-                            if ($designCapacityVal -gt 0 -and $fullChargeCapacityVal -gt 0) {
-                                $parsedOK = $true
-                            }
-                        }
-                    }
-
-                    if ($parsedOK) {
-                        $porcentajeVida = [Math]::Round(($fullChargeCapacityVal / $designCapacityVal) * 100, 1)
-                        $porcentajeDesgaste = [Math]::Round(100 - $porcentajeVida, 1)
-                        
-                        Write-Host "--- DATOS GENERALES DE LA BATERIA ---" -ForegroundColor Cyan
-                        Write-Host "Fabricante:        $manufacturer"
-                        Write-Host "Quimica:           $chemistry"
-                        Write-Host "Capacidad Diseno:  $designCapacityVal mWh"
-                        Write-Host "Capacidad Actual:  $fullChargeCapacityVal mWh"
-                        if ($null -ne $cycleCountVal) {
-                            Write-Host "Ciclos de Carga:   $cycleCountVal"
-                        }
-                        
-                        Write-Host "`n--- REPORTE DE SALUD Y DESGASTE ---" -ForegroundColor Yellow
-                        Write-Host "Porcentaje de Salud (Vida Util): " -NoNewline
-                        if ($porcentajeVida -ge 90) {
-                            Write-Host "$porcentajeVida%" -ForegroundColor Green
-                        }
-                        elseif ($porcentajeVida -ge 75) {
-                            Write-Host "$porcentajeVida%" -ForegroundColor Yellow
-                        }
-                        else {
-                            Write-Host "$porcentajeVida%" -ForegroundColor Red
-                        }
-                        
-                        Write-Host "Porcentaje de Desgaste:          " -NoNewline
-                        if ($porcentajeDesgaste -le 10) {
-                            Write-Host "$porcentajeDesgaste%" -ForegroundColor Green
-                        }
-                        elseif ($porcentajeDesgaste -le 25) {
-                            Write-Host "$porcentajeDesgaste%" -ForegroundColor Yellow
-                        }
-                        else {
-                            Write-Host "$porcentajeDesgaste%" -ForegroundColor Red
-                        }
-                        
-                        Write-Host "`n--- INTERPRETACION TECNICA ---" -ForegroundColor Cyan
-                        if ($porcentajeVida -ge 90) {
-                            Write-Host "ESTADO: EXCELENTE" -ForegroundColor Green
-                            Write-Host "La bateria esta en optimas condiciones y retiene la mayor parte de su capacidad original."
-                            Write-Host "`nRECOMENDACIONES DE EXPERTO:" -ForegroundColor Yellow
-                            Write-Host "1. Evite descargar la bateria por completo por debajo del 20%; las descargas profundas estresan las celdas de Ion-Litio."
-                            Write-Host "2. No mantenga la laptop cargando permanentemente al 100% en ambientes de alta temperatura (esto acelera el desgaste quimico)."
-                            Write-Host "3. Si la marca de su laptop posee herramientas de gestion (Dell Power Manager, HP Support Assistant, Lenovo Vantage), configure un limite de carga al 80% si planea utilizarla conectada a la corriente la mayor parte del tiempo."
-                        }
-                        elseif ($porcentajeVida -ge 75) {
-                            Write-Host "ESTADO: BUENO / NORMAL" -ForegroundColor Yellow
-                            Write-Host "La bateria presenta un nivel de desgaste normal debido al uso transcurrido. La autonomia es adecuada."
-                            Write-Host "`nRECOMENDACIONES DE EXPERTO:" -ForegroundColor Yellow
-                            Write-Host "1. Mantenga habitos de carga estables, evitando descargas completas recurrentes."
-                            Write-Host "2. Realice una calibracion de bateria cada 3 meses: carguela al 100%, dejela descargar completamente hasta que el equipo se apague solo, y vuelva a cargarla al 100% de manera ininterrumpida con el equipo apagado. Esto recalibra el chip indicador."
-                            Write-Host "3. Asegurese de que las rejillas de ventilacion del portatil esten limpias, ya que el calor excesivo es el peor enemigo de la vida util de la bateria."
-                        }
-                        elseif ($porcentajeVida -ge 50) {
-                            Write-Host "ESTADO: REGULAR / DESGASTADO" -ForegroundColor Red
-                            Write-Host "La bateria tiene un desgaste considerable. La duracion de la carga es menor y el rendimiento movil se vera reducido."
-                            Write-Host "`nRECOMENDACIONES DE EXPERTO:" -ForegroundColor Yellow
-                            Write-Host "1. Evite ejecutar aplicaciones de alto rendimiento (juegos, edicion de video) operando unicamente con bateria, ya que la alta demanda de corriente incrementa el estres termico."
-                            Write-Host "2. Desactive servicios en segundo plano y reduzca el brillo de pantalla para maximizar los periodos de uso portatil."
-                            Write-Host "3. Vaya planificando el reemplazo de la bateria si su ritmo de trabajo requiere movilidad constante."
-                        }
-                        else {
-                            Write-Host "ESTADO: CRITICO / REEMPLAZAR" -ForegroundColor Red -BackgroundColor Black
-                            Write-Host "La bateria ha cumplido su ciclo de vida util y la retencion de carga es minima o nula."
-                            Write-Host "`nRECOMENDACIONES DE EXPERTO:" -ForegroundColor Yellow
-                            Write-Host "1. Se aconseja encarecidamente cambiar la bateria por una original o compatible certificada para restaurar la portabilidad."
-                            Write-Host "2. PRECAUCION: Examine visualmente si la bateria se encuentra inflada (esto se nota si el touchpad o el teclado se sienten duros o levantados). Si detecta hinchazon, retire la bateria de inmediato, ya que representa un peligro fisico (riesgo de incendio o explosion)."
-                            Write-Host "3. Si utiliza la laptop fija conectada permanentemente, puede optar por remover la bateria (si es extraible) para evitar calor innecesario, o bien limitar estrictamente la carga via software."
-                        }
-                    }
-                    else {
-                        Write-Host "--- ESTADO DE LA BATERIA ---" -ForegroundColor Cyan
-                        Write-Host "No se detecto una bateria real de portatil en el sistema (posiblemente una PC de escritorio o servidor)." -ForegroundColor Yellow
-                        Write-Host ""
-                        $verSimulacion = Read-Host "¿Desea simular y visualizar el estado de bateria de una PC portatil de prueba (Dell, HP, Lenovo)? (S/N)"
-                        
-                        if ($verSimulacion -eq "S" -or $verSimulacion -eq "s") {
-                            cabecera
-                            Write-Host "=== SELECCION DE MARCA PARA SIMULACION ===" -ForegroundColor Cyan
-                            Write-Host "1. Dell (Salud Buena - 82% de vida util)"
-                            Write-Host "2. HP (Salud Regular - 75% de vida util)"
-                            Write-Host "3. Lenovo (Salud Critica - 48% de vida util - Reemplazar)"
-                            Write-Host "4. Lenovo (Salud Excelente - 96% de vida util)"
-                            $opSim = Read-Host "Seleccione una marca (1-4)"
-                            
-                            $simDesign = 42000
-                            $simFull = 34440
-                            $simCycles = 124
-                            $simMan = "DELL"
-                            $simChem = "LION"
-                            
-                            switch ($opSim) {
-                                "1" {
-                                    $simDesign = 42000
-                                    $simFull = 34440
-                                    $simCycles = 124
-                                    $simMan = "DELL (Simulado)"
-                                    $simChem = "LION"
-                                }
-                                "2" {
-                                    $simDesign = 55000
-                                    $simFull = 41250
-                                    $simCycles = 210
-                                    $simMan = "Hewlett-Packard (Simulado)"
-                                    $simChem = "LION"
-                                }
-                                "3" {
-                                    $simDesign = 60000
-                                    $simFull = 28800
-                                    $simCycles = 380
-                                    $simMan = "LENOVO (Simulado)"
-                                    $simChem = "LION"
-                                }
-                                "4" {
-                                    $simDesign = 52000
-                                    $simFull = 49920
-                                    $simCycles = 18
-                                    $simMan = "LENOVO (Simulado)"
-                                    $simChem = "LION"
-                                }
-                                Default {
-                                    Write-Host "Opcion invalida. Usando Dell por defecto." -ForegroundColor Yellow
-                                }
+                        # Fallback a Win32_Battery
+                        if ($designedCapacityVal -eq 0) {
+                            $win32Battery = $null
+                            if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) {
+                                $win32Battery = Get-CimInstance -ClassName "Win32_Battery" -ErrorAction SilentlyContinue
+                            } else {
+                                $win32Battery = Get-WmiObject -Class "Win32_Battery" -ErrorAction SilentlyContinue
                             }
                             
-                            # Realizar calculo con valores simulados
-                            $porcentajeVida = [Math]::Round(($simFull / $simDesign) * 100, 1)
+                            if ($win32Battery) {
+                                $designedCapacityVal = $win32Battery[0].DesignCapacity
+                                $fullChargeCapacityVal = $win32Battery[0].FullChargeCapacity
+                                $manufacturer = $win32Battery[0].Manufacturer
+                                $chemistry = $win32Battery[0].Chemistry
+                            }
+                        }
+
+                        if ($designedCapacityVal -gt 0 -and $fullChargeCapacityVal -gt 0) {
+                            $parsedOK = $true
+                        }
+
+                        if ($parsedOK) {
+                            $porcentajeVida = [Math]::Round(($fullChargeCapacityVal / $designedCapacityVal) * 100, 1)
                             $porcentajeDesgaste = [Math]::Round(100 - $porcentajeVida, 1)
                             
-                            Write-Host "`n--- DATOS SIMULADOS DE LA BATERIA ---" -ForegroundColor Cyan
-                            Write-Host "Fabricante:        $simMan"
-                            Write-Host "Quimica:           $simChem"
-                            Write-Host "Capacidad Diseno:  $simDesign mWh"
-                            Write-Host "Capacidad Actual:  $simFull mWh"
-                            Write-Host "Ciclos de Carga:   $simCycles"
+                            Write-Host "--- DATOS GENERALES DE LA BATERIA ---" -ForegroundColor Cyan
+                            Write-Host "Fabricante:        $manufacturer"
+                            Write-Host "Quimica:           $chemistry"
+                            Write-Host "Capacidad Diseno:  $designedCapacityVal mWh"
+                            Write-Host "Capacidad Actual:  $fullChargeCapacityVal mWh"
+                            if ($null -ne $cycleCountVal) {
+                                Write-Host "Ciclos de Carga:   $cycleCountVal"
+                            }
                             
-                            Write-Host "`n--- REPORTE DE SALUD Y DESGASTE (SIMULADO) ---" -ForegroundColor Yellow
+                            Write-Host "`n--- REPORTE DE SALUD Y DESGASTE ---" -ForegroundColor Yellow
                             Write-Host "Porcentaje de Salud (Vida Util): " -NoNewline
                             if ($porcentajeVida -ge 90) {
                                 Write-Host "$porcentajeVida%" -ForegroundColor Green
@@ -1111,7 +1033,7 @@ function psSubMenuPortatil {
                             Write-Host "`n--- INTERPRETACION TECNICA ---" -ForegroundColor Cyan
                             if ($porcentajeVida -ge 90) {
                                 Write-Host "ESTADO: EXCELENTE" -ForegroundColor Green
-                                Write-Host "La bateria esta en optimas condiciones y retiene la mayor parte de su capacidad original."
+                                Write-Host "La bateria esta en optimas condiciones and retiene la mayor parte de su capacidad original."
                                 Write-Host "`nRECOMENDACIONES DE EXPERTO:" -ForegroundColor Yellow
                                 Write-Host "1. Evite descargar la bateria por completo por debajo del 20%; las descargas profundas estresan las celdas de Ion-Litio."
                                 Write-Host "2. No mantenga la laptop cargando permanentemente al 100% en ambientes de alta temperatura (esto acelera el desgaste quimico)."
@@ -1141,21 +1063,30 @@ function psSubMenuPortatil {
                                 Write-Host "2. PRECAUCION: Examine visualmente si la bateria se encuentra inflada (esto se nota si el touchpad o el teclado se sienten duros o levantados). Si detecta hinchazon, retire la bateria de inmediato, ya que representa un peligro fisico (riesgo de incendio o explosion)."
                                 Write-Host "3. Si utiliza la laptop fija conectada permanentemente, puede optar por remover la bateria (si es extraible) para evitar calor innecesario, o bien limitar estrictamente la carga via software."
                             }
+                        } else {
+                            Write-Host "No se pudieron extraer los datos detallados de la bateria a traves de WMI/CIM." -ForegroundColor Yellow
+                            Write-Host "Por favor, revise el reporte detallado generado en la ruta indicada." -ForegroundColor Yellow
                         }
-                        else {
-                            Write-Host "`nRECOMENDACIONES DE EXPERTO (PC DE ESCRITORIO O SERVIDOR):" -ForegroundColor Yellow
-                            Write-Host "1. Al tratarse de un equipo de escritorio, se recomienda encarecidamente el uso de un UPS (No-Break) o Sistema de Alimentacion Ininterrumpida."
-                            Write-Host "2. Un UPS protegera su PC contra apagones repentinos (que pueden causar corrupcion de archivos y danos en el sistema operativo o SSD/HDD) y contra sobretensiones electricas."
-                            Write-Host "3. Realice mantenimientos preventivos de limpieza de polvo interno de la PC y renovacion de pasta termica cada 12 o 18 meses para asegurar temperaturas optimas en el procesador."
-                        }
+                    } else {
+                        # Recomendaciones para PC de Escritorio
+                        Write-Host "RECOMENDACIONES DE EXPERTO (PC DE ESCRITORIO O SERVIDOR):" -ForegroundColor Yellow
+                        Write-Host "1. Al tratarse de un equipo de escritorio, se recomienda encarecidamente el uso de un UPS (No-Break) o Sistema de Alimentacion Ininterrumpida."
+                        Write-Host "2. Un UPS protegera su PC contra apagones repentinos (que pueden causar corrupcion de archivos y danos en el sistema operativo o SSD/HDD) y contra sobretensiones electricas."
+                        Write-Host "3. Realice mantenimientos preventivos de limpieza de polvo interno de la PC y renovacion de pasta termica cada 12 o 18 meses para asegurar temperaturas optimas en el procesador."
                     }
 
-                    if ($targetFile -and (Test-Path $targetFile)) {
+                    # 5. Preguntar si se desea abrir el reporte generado
+                    if (Test-Path $rutaHTML) {
                         Write-Host ""
                         $openBrowser = Read-Host "¿Desea abrir el reporte HTML detallado en el navegador? (S/N)"
                         if ($openBrowser -eq "S" -or $openBrowser -eq "s") {
                             Write-Host "Abriendo el reporte en el navegador..." -ForegroundColor Gray
-                            Start-Process $targetFile
+                            try {
+                                Start-Process $rutaHTML
+                            }
+                            catch {
+                                Write-Host "No se pudo abrir automaticamente. Puede encontrar el archivo en: $rutaHTML" -ForegroundColor Red
+                            }
                         }
                     }
                 }
