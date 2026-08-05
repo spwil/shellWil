@@ -3461,11 +3461,125 @@ function psSubMenuPortatil {
                         }
                     } else {
                         Write-Host "--- ESTADO DE LA BATERIA ---" -ForegroundColor Cyan
-                        Write-Host "No se detectaron baterias de portatil en el sistema." -ForegroundColor Yellow
-                        Write-Host "`nRECOMENDACIONES DE EXPERTO (PC DE ESCRITORIO O SERVIDOR):" -ForegroundColor Yellow
-                        Write-Host "1. Al tratarse de un equipo de escritorio, se recomienda encarecidamente el uso de un UPS (No-Break) o Sistema de Alimentacion Ininterrumpida."
-                        Write-Host "2. Un UPS protegera su PC contra apagones repentinos (que pueden causar corrupcion de archivos y danos en el sistema operativo o SSD/HDD) y contra sobretensiones electricas."
-                        Write-Host "3. Realice mantenimientos preventivos de limpieza de polvo interno de la PC y renovacion de pasta termica cada 12 o 18 meses para asegurar temperaturas optimas en el procesador."
+                        Write-Host "No se detecto una bateria real de portatil en el sistema (posiblemente una PC de escritorio o servidor)." -ForegroundColor Yellow
+                        Write-Host ""
+                        $verSimulacion = Read-Host "¿Desea simular y visualizar el estado de bateria de una PC portatil de prueba (Dell, HP, Lenovo)? (S/N)"
+                        
+                        if ($verSimulacion -eq "S" -or $verSimulacion -eq "s") {
+                            cabecera
+                            Write-Host "=== SELECCION DE MARCA PARA SIMULACION ===" -ForegroundColor Cyan
+                            Write-Host "1. Dell (Salud Buena - 82% de vida util)"
+                            Write-Host "2. HP (Salud Regular - 75% de vida util)"
+                            Write-Host "3. Lenovo (Salud Critica - 48% de vida util - Reemplazar)"
+                            Write-Host "4. Lenovo (Salud Excelente - 96% de vida util)"
+                            $opSim = Read-Host "Seleccione una marca (1-4)"
+                            
+                            $simDesign = 42000
+                            $simFull = 34440
+                            $simCycles = 124
+                            $simMan = "DELL"
+                            $simChem = "LION"
+                            
+                            switch ($opSim) {
+                                "1" {
+                                    $simDesign = 42000
+                                    $simFull = 34440
+                                    $simCycles = 124
+                                    $simMan = "DELL (Simulado)"
+                                    $simChem = "LION"
+                                }
+                                "2" {
+                                    $simDesign = 55000
+                                    $simFull = 41250
+                                    $simCycles = 210
+                                    $simMan = "Hewlett-Packard (Simulado)"
+                                    $simChem = "LION"
+                                }
+                                "3" {
+                                    $simDesign = 60000
+                                    $simFull = 28800
+                                    $simCycles = 380
+                                    $simMan = "LENOVO (Simulado)"
+                                    $simChem = "LION"
+                                }
+                                "4" {
+                                    $simDesign = 52000
+                                    $simFull = 49920
+                                    $simCycles = 18
+                                    $simMan = "LENOVO (Simulado)"
+                                    $simChem = "LION"
+                                }
+                                Default {
+                                    Write-Host "Opcion invalida. Usando Dell por defecto." -ForegroundColor Yellow
+                                }
+                            }
+                            
+                            # Realizar calculo con valores simulados
+                            $porcentajeVida = [Math]::Round(($simFull / $simDesign) * 100, 1)
+                            $porcentajeDesgaste = [Math]::Round(100 - $porcentajeVida, 1)
+                            
+                            Write-Host "`n--- DATOS SIMULADOS DE LA BATERIA ---" -ForegroundColor Cyan
+                            Write-Host "Fabricante:        $simMan"
+                            Write-Host "Quimica:           $simChem"
+                            Write-Host "Capacidad Diseno:  $simDesign mWh"
+                            Write-Host "Capacidad Actual:  $simFull mWh"
+                            Write-Host "Ciclos de Carga:   $simCycles"
+                            
+                            Write-Host "`n--- REPORTE DE SALUD Y DESGASTE (SIMULADO) ---" -ForegroundColor Yellow
+                            Write-Host "Porcentaje de Salud (Vida Util): " -NoNewline
+                            if ($porcentajeVida -ge 90) {
+                                Write-Host "$porcentajeVida%" -ForegroundColor Green
+                            } elseif ($porcentajeVida -ge 75) {
+                                Write-Host "$porcentajeVida%" -ForegroundColor Yellow
+                            } else {
+                                Write-Host "$porcentajeVida%" -ForegroundColor Red
+                            }
+                            
+                            Write-Host "Porcentaje de Desgaste:          " -NoNewline
+                            if ($porcentajeDesgaste -le 10) {
+                                Write-Host "$porcentajeDesgaste%" -ForegroundColor Green
+                            } elseif ($porcentajeDesgaste -le 25) {
+                                Write-Host "$porcentajeDesgaste%" -ForegroundColor Yellow
+                            } else {
+                                Write-Host "$porcentajeDesgaste%" -ForegroundColor Red
+                            }
+                            
+                            Write-Host "`n--- INTERPRETACION TECNICA ---" -ForegroundColor Cyan
+                            if ($porcentajeVida -ge 90) {
+                                Write-Host "ESTADO: EXCELENTE" -ForegroundColor Green
+                                Write-Host "La bateria esta en optimas condiciones y retiene la mayor parte de su capacidad original."
+                                Write-Host "`nRECOMENDACIONES DE EXPERTO:" -ForegroundColor Yellow
+                                Write-Host "1. Evite descargar la bateria por completo por debajo del 20%; las descargas profundas estresan las celdas de Ion-Litio."
+                                Write-Host "2. No mantenga la laptop cargando permanentemente al 100% en ambientes de alta temperatura (esto acelera el desgaste quimico)."
+                                Write-Host "3. Si la marca de su laptop posee herramientas de gestion (Dell Power Manager, HP Support Assistant, Lenovo Vantage), configure un limite de carga al 80% si planea utilizarla conectada a la corriente la mayor parte del tiempo."
+                            } elseif ($porcentajeVida -ge 75) {
+                                Write-Host "ESTADO: BUENO / NORMAL" -ForegroundColor Yellow
+                                Write-Host "La bateria presenta un nivel de desgaste normal debido al uso transcurrido. La autonomia es adecuada."
+                                Write-Host "`nRECOMENDACIONES DE EXPERTO:" -ForegroundColor Yellow
+                                Write-Host "1. Mantenga habitos de carga estables, evitando descargas completas recurrentes."
+                                Write-Host "2. Realice una calibracion de bateria cada 3 meses: carguela al 100%, dejela descargar completamente hasta que el equipo se apague solo, y vuelva a cargarla al 100% de manera ininterrumpida con el equipo apagado. Esto recalibra el chip indicador."
+                                Write-Host "3. Asegurese de que las rejillas de ventilacion del portatil esten limpias, ya que el calor excesivo es el peor enemigo de la vida util de la bateria."
+                            } elseif ($porcentajeVida -ge 50) {
+                                Write-Host "ESTADO: REGULAR / DESGASTADO" -ForegroundColor Red
+                                Write-Host "La bateria tiene un desgaste considerable. La duracion de la carga es menor y el rendimiento movil se vera reducido."
+                                Write-Host "`nRECOMENDACIONES DE EXPERTO:" -ForegroundColor Yellow
+                                Write-Host "1. Evite ejecutar aplicaciones de alto rendimiento (juegos, edicion de video) operando unicamente con bateria, ya que la alta demanda de corriente incrementa el estres termico."
+                                Write-Host "2. Desactive servicios en segundo plano y reduzca el brillo de pantalla para maximizar los periodos de uso portatil."
+                                Write-Host "3. Vaya planificando el reemplazo de la bateria si su ritmo de trabajo requiere movilidad constante."
+                            } else {
+                                Write-Host "ESTADO: CRITICO / REEMPLAZAR" -ForegroundColor Red -BackgroundColor Black
+                                Write-Host "La bateria ha cumplido su ciclo de vida util y la retencion de carga es minima o nula."
+                                Write-Host "`nRECOMENDACIONES DE EXPERTO:" -ForegroundColor Yellow
+                                Write-Host "1. Se aconseja encarecidamente cambiar la bateria por una original o compatible certificada para restaurar la portabilidad."
+                                Write-Host "2. PRECAUCION: Examine visualmente si la bateria se encuentra inflada (esto se nota si el touchpad o el teclado se sienten duros o levantados). Si detecta hinchazon, retire la bateria de inmediato, ya que representa un peligro fisico (riesgo de incendio o explosion)."
+                                Write-Host "3. Si utiliza la laptop fija conectada permanentemente, puede optar por remover la bateria (si es extraible) para evitar calor innecesario, o bien limitar estrictamente la carga via software."
+                            }
+                        } else {
+                            Write-Host "`nRECOMENDACIONES DE EXPERTO (PC DE ESCRITORIO O SERVIDOR):" -ForegroundColor Yellow
+                            Write-Host "1. Al tratarse de un equipo de escritorio, se recomienda encarecidamente el uso de un UPS (No-Break) o Sistema de Alimentacion Ininterrumpida."
+                            Write-Host "2. Un UPS protegera su PC contra apagones repentinos (que pueden causar corrupcion de archivos y danos en el sistema operativo o SSD/HDD) y contra sobretensiones electricas."
+                            Write-Host "3. Realice mantenimientos preventivos de limpieza de polvo interno de la PC y renovacion de pasta termica cada 12 o 18 meses para asegurar temperaturas optimas en el procesador."
+                        }
                     }
 
                     if ($targetFile -and (Test-Path $targetFile)) {
