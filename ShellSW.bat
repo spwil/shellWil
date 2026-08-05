@@ -3446,13 +3446,13 @@ function psSubMenuPortatil {
             # cabecera con informacion del autor
             cabecera
             Write-Header " 23.20. ---)) LOCAL: HERRAMIENTAS PC PORTATIL."
-             Write-Host "  1. BitLocker - Dell - HP - Lenovo" -ForegroundColor Green
+            Write-Host "  1. BitLocker - Dell - HP - Lenovo" -ForegroundColor Green
             Write-Host "    1.1. Deshabilitar BitLocker (Deshabilitar protectores C: - Mantenimiento)"
             Write-Host "    1.2. Activar BitLocker (Habilitar protectores C: - Fin Mantenimiento)"
-            Write-Host "    1.3. Verificar Estado de BitLocker"
+            Write-Host "    1.3. Verificar Estado de BitLocker" -ForegroundColor Yellow
             Write-Host "    1.4. Desactivar Cifrado BitLocker de forma Permanente"
             Write-Host "    1.5. Activar Cifrado de BitLocker de forma Permanente"
-            Write-Host "    1.6. Mostrar Progreso de Desactivacion (Descifrado)"
+            Write-Host "    1.6. Mostrar Progreso de Desactivacion (Descifrado)" -ForegroundColor Yellow
             Write-Host "  2. Estado de bateria Laptop (Diagnostico de Salud y Desgaste)." -ForegroundColor Green
             Write-Host ""
             Write-Host "  0. V O L V E R   A L   M E N U   A N T E R I O R   (SUB-MENU 23)"
@@ -3816,7 +3816,7 @@ function psSubMenuPortatil {
 #**********************************************************************************************************************************
 
 #******************************************************** INICIO SUB MENU.24 ******************************************************
-#**********************************************************************************************************************************
+#****************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************
 function psSubMenu24 {
     $salirSub = $false
     do {
