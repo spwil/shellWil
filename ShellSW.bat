@@ -3446,12 +3446,13 @@ function psSubMenuPortatil {
             # cabecera con informacion del autor
             cabecera
             Write-Header " 23.20. ---)) LOCAL: HERRAMIENTAS PC PORTATIL."
-            Write-Host "  1. BitLocker - Dell - HP - Lenovo" -ForegroundColor Green
-            Write-Host "    1.1. Desactivar BitLocker (Deshabilitar protectores C: - Mantenimiento)"
+             Write-Host "  1. BitLocker - Dell - HP - Lenovo" -ForegroundColor Green
+            Write-Host "    1.1. Deshabilitar BitLocker (Deshabilitar protectores C: - Mantenimiento)"
             Write-Host "    1.2. Activar BitLocker (Habilitar protectores C: - Fin Mantenimiento)"
             Write-Host "    1.3. Verificar Estado de BitLocker"
-            Write-Host "    1.4. Desactivar BitLocker de forma Permanente"
-            Write-Host "    1.5. Mostrar Progreso de Desactivacion (Descifrado)"
+            Write-Host "    1.4. Desactivar Cifrado BitLocker de forma Permanente"
+            Write-Host "    1.5. Activar Cifrado de BitLocker de forma Permanente"
+            Write-Host "    1.6. Mostrar Progreso de Desactivacion (Descifrado)"
             Write-Host "  2. Estado de bateria Laptop (Diagnostico de Salud y Desgaste)." -ForegroundColor Green
             Write-Host ""
             Write-Host "  0. V O L V E R   A L   M E N U   A N T E R I O R   (SUB-MENU 23)"
@@ -3461,7 +3462,7 @@ function psSubMenuPortatil {
 
             switch ($opPortatil) {
                 "1" {
-                    Write-Host "Por favor seleccione una opcion valida (1.1 - 1.5) para gestionar BitLocker." -ForegroundColor Yellow
+                    Write-Host "Por favor seleccione una opcion valida (1.1 - 1.6) para gestionar BitLocker." -ForegroundColor Yellow
                 }
                 "1.1" {
                     cabecera
@@ -3494,13 +3495,27 @@ function psSubMenuPortatil {
                     if ($confirm -eq "S" -or $confirm -eq "s") {
                         Write-Host "Iniciando descifrado permanente de BitLocker en la unidad C:..." -ForegroundColor Yellow
                         manage-bde -off C:
-                        Write-Host "`nProceso iniciado con exito. Puede monitorear el progreso usando la opcion 1.5." -ForegroundColor Green
+                        Write-Host "`nProceso iniciado con exito. Puede monitorear el progreso usando la opcion 1.6." -ForegroundColor Green
                     }
                     else {
                         Write-Host "Operacion cancelada." -ForegroundColor Cyan
                     }
                 }
                 "1.5" {
+                    cabecera
+                    menuOpcion "HERRAMIENTAS PC PORTATIL -> Activar Cifrado de BitLocker permanentemente"
+                    Write-Host "¡ATENCION! Esta opcion activara e iniciara el cifrado de BitLocker permanentemente en C:." -ForegroundColor Red
+                    $confirm = Read-Host "¿Esta seguro de que desea continuar? (S/N)"
+                    if ($confirm -eq "S" -or $confirm -eq "s") {
+                        Write-Host "Iniciando cifrado permanente de BitLocker en la unidad C:..." -ForegroundColor Yellow
+                        manage-bde -on C:
+                        Write-Host "`nProceso iniciado con exito. Puede monitorear el progreso usando la opcion 1.6." -ForegroundColor Green
+                    }
+                    else {
+                        Write-Host "Operacion cancelada." -ForegroundColor Cyan
+                    }
+                }
+                "1.6" {
                     cabecera
                     menuOpcion "HERRAMIENTAS PC PORTATIL -> Progreso de desactivacion de BitLocker"
                     Write-Host "Consultando el estado de progreso en la unidad C:..." -ForegroundColor Cyan
