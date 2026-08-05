@@ -17,17 +17,12 @@ function menuPrincipal {
 
             Write-Header " ATENCION: ESTA HERRAMIENTA REALIZA CAMBIOS EN EL SISTEMA OPERATIVO"
             #Write-Host "======================================================================" -ForegroundColor Cyan -BackgroundColor Black
-            Write-Host "  1.  Mostrar IP LOCAL (Ipconfig)"
-            Write-Host "  2.  Mostrar Nombre (HOSTNAME)"
+            Write-Host "  1.  Hostname e IP" -ForegroundColor Green
             Write-Host "  3.  Desfragmentar Unidad C: (Principal)" -ForegroundColor DarkCyan
             Write-Host "  4.  Desfragmentar Otras Unidades (HDD)"
             Write-Host "    4.1 Optimizar Unidades de SSD (alternativa a defrag)."
             Write-Host "  5.  Eliminar Archivos Temporales S.O." -ForegroundColor DarkCyan
-            Write-Host "  6.  Liberar Recursos" -ForegroundColor Green
-            Write-Host "    6.1 Eliminar Archivos TEMPORALES CARPETAS" -ForegroundColor DarkCyan
-            Write-Host "    6.2 Eliminar Archivos Temporales ProgramData." -ForegroundColor DarkCyan
-            Write-Host "    6.3 Liberar RAM." -ForegroundColor DarkCyan
-            Write-Host "    6.4 Liberar Procesador." -ForegroundColor DarkCyan
+
             Write-Host "  7.  Resetear Internet Explorer"
             Write-Host "  9.  Abrir Internet Explorer con Topacio"
             Write-Host "  10. Ping Infraestructura"
@@ -65,24 +60,86 @@ function menuPrincipal {
 
             switch ($opcion) {
                 "1" { 
-                    # Clear-Host 
                     cabecera
-                    menuOpcion "Haz elegido la opcion: $opcion"
+                    menuOpcion "Haz elegido la opcion: $opcion (Hostname e IP)"
 
-                    Write-Host "--- Configuracion IP ---" -ForegroundColor Yellow
-                    ipconfig 
+                    # 1. Obtener Hostname
+                    $hostname = [System.Net.Dns]::GetHostName()
+                    
+                    # 2. Obtener adaptadores de red activos
+                    $interfaces = [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()
+                    
+                    Write-Host "===========================================================" -ForegroundColor Cyan
+                    Write-Host "                  INFORMACION DE RED                       " -ForegroundColor Cyan
+                    Write-Host "===========================================================" -ForegroundColor Cyan
+                    Write-Host ""
+                    Write-Host "  Nombre del Equipo (Hostname): " -NoNewline
+                    Write-Host "$hostname" -ForegroundColor Green
+                    Write-Host ""
+                    Write-Host "  --- Adaptadores de Red Detectados ---" -ForegroundColor Yellow
+                    Write-Host ""
 
-                    #Read-Host "Presione Enter para volver..."
-                    Write-Host " "
-                }
-                "2" { 
-                    # Clear-Host 
-                    cabecera
-                    menuOpcion "Haz elegido la opcion: $opcion"
+                    $hayAdaptadorActivo = $false
 
-                    Write-Host "Nombre del Equipo: $(hostname)" -ForegroundColor Green 
-                    Write-Host " "
-                        
+                    foreach ($adapter in $interfaces) {
+                        # Solo procesar adaptadores activos/conectados que no sean de loopback
+                        if ($adapter.OperationalStatus -eq "Up" -and $adapter.NetworkInterfaceType -ne "Loopback") {
+                            $properties = $adapter.GetIPProperties()
+                            
+                            # Obtener IPs
+                            $ips = @()
+                            foreach ($unicast in $properties.UnicastAddresses) {
+                                if ($unicast.Address.AddressFamily -eq "InterNetwork") {
+                                    $ips += $unicast.Address.ToString()
+                                }
+                            }
+
+                            if ($ips.Count -gt 0) {
+                                $hayAdaptadorActivo = $true
+                                Write-Host "  [+] Adaptador: " -NoNewline
+                                Write-Host $adapter.Description -ForegroundColor Cyan
+                                Write-Host "      Estado:    " -NoNewline
+                                Write-Host "Conectado / Activo" -ForegroundColor Green
+                                Write-Host "      Tipo:      " -NoNewline
+                                Write-Host $adapter.NetworkInterfaceType
+                                Write-Host "      IP(s):     " -NoNewline
+                                Write-Host ($ips -join ", ") -ForegroundColor Yellow
+
+                                # Obtener Puerta de Enlace (Gateway)
+                                $gateways = @()
+                                foreach ($gateway in $properties.GatewayAddresses) {
+                                    $gateways += $gateway.Address.ToString()
+                                }
+                                if ($gateways.Count -gt 0) {
+                                    Write-Host "      Gateway:   " -NoNewline
+                                    Write-Host ($gateways -join ", ") -ForegroundColor Gray
+                                }
+
+                                # Obtener Servidores DNS
+                                $dnsServers = @()
+                                foreach ($dns in $properties.DnsAddresses) {
+                                    if ($dns.AddressFamily -eq "InterNetwork") {
+                                        $dnsServers += $dns.ToString()
+                                    }
+                                }
+                                if ($dnsServers.Count -gt 0) {
+                                    Write-Host "      DNS:       " -NoNewline
+                                    Write-Host ($dnsServers -join ", ") -ForegroundColor Green
+                                } else {
+                                    Write-Host "      DNS:       " -NoNewline
+                                    Write-Host "No configurados" -ForegroundColor DarkGray
+                                }
+                                Write-Host ""
+                            }
+                        }
+                    }
+
+                    if (-not $hayAdaptadorActivo) {
+                        Write-Host "  No se detectaron adaptadores de red activos con IPv4 configurada." -ForegroundColor Red
+                    }
+
+                    Write-Host "===========================================================" -ForegroundColor Cyan
+                    Write-Host ""
                 }
                 "3" { 
                     # clear-Host 
@@ -143,133 +200,6 @@ function menuPrincipal {
                     }
                         
                     Write-Host " "
-                }
-                "6.1" { 
-                    # clear-Host
-                    cabecera
-                    menuOpcion "Haz elegido la opcion: $opcion"
-                        
-                    # 1. Definir rutas usando variables de entorno de forma segura
-                    $userTemp = "$env:TEMP"             # C:\Users\Nombre\AppData\Local\Temp
-                    $systemTemp = "$env:SystemRoot\Temp"  # C:\Windows\Temp
-                    $prefetch = "$env:SystemRoot\Prefetch"
-
-                    Write-Host "Iniciando limpieza profunda de temporales..." -ForegroundColor Yellow
-
-                    # 2. Limpieza de Temporales de Usuario
-                    Write-Host " > Limpiando Temp de Usuario..." -NoNewline
-                    Remove-Item -Path "$userTemp\*" -Recurse -Force -ErrorAction SilentlyContinue
-                    Write-Host " [OK]" -ForegroundColor Green
-
-                    # 3. Limpieza de Temporales del Sistema
-                    Write-Host " > Limpiando Temp de Windows..." -NoNewline
-                    Remove-Item -Path "$systemTemp\*" -Recurse -Force -ErrorAction SilentlyContinue
-                    Write-Host " [OK]" -ForegroundColor Green
-
-                    # 4. Limpieza de Prefetch
-                    Write-Host " > Limpiando Prefetch..." -NoNewline
-                    Remove-Item -Path "$prefetch\*" -Recurse -Force -ErrorAction SilentlyContinue
-                    Write-Host " [OK]" -ForegroundColor Green
-
-                    # 5. Abrir carpetas para verificación (Opcional, emulando tu .bat)
-                    Start-Process explorer.exe $userTemp
-                    Start-Process explorer.exe $prefetch
-
-                    Write-Host "Limpieza finalizada correctamente." -ForegroundColor White -BackgroundColor DarkGreen
-                        
-                    Write-Host ""
-                }
-                "6.2" { 
-                    # clear-Host
-                    cabecera
-                    menuOpcion "Haz elegido la opcion: $opcion"
-                        
-                    # 1. Definimos las carpetas que NO queremos tocar bajo ninguna circunstancia
-                    $excluir = @("*Microsoft*", "*Package Cache*", "*Antivirus*", "*SoftwareLicensing*", "*NVIDIA*")
-
-                    # 2. Ejecutamos la búsqueda con filtros de seguridad
-                    Get-ChildItem -Path "C:\ProgramData" -Recurse -File -Force -ErrorAction SilentlyContinue | 
-                    Where-Object {
-                        # Filtro 1: Que no esté en la lista de exclusión
-                        $itemPath = $_.FullName
-                        $safe = $true
-                        foreach ($pattern in $excluir) {
-                            if ($itemPath -like $pattern) { $safe = $false; break }
-                        }
-
-                        # Filtro 2: Solo extensiones típicas de basura y con más de 7 días
-                        $safe -and 
-                        ($_.Extension -match "\.(tmp|log|bak|old|chk|temp)$") -and 
-                        ($_.LastWriteTime -lt (Get-Date).AddDays(-7))
-                    } | 
-                    Remove-Item -Force -ErrorAction SilentlyContinue
-                        
-                    Write-Host "Proceso finalizado" -ForegroundColor Green
-                    Write-Host ""
-                        
-                }
-
-                "6.3" {
-                    cabecera
-                    menuOpcion "Haz elegido la opcion: $opcion"
-                    psLimpiarRAM
-
-                    Write-Host "Presione Enter para volver..." -ForegroundColor Green
-
-                }
-
-                "6.4" {
-                    cabecera
-                    menuOpcion "Haz elegido la opcion: $opcion"
-
-                    # ==============================================================================
-                    # Script: Optimizar_CPU.ps1
-                    # Compatibilidad: Windows 7, 8.1, 10, 11 (PowerShell 2.0+)
-                    # Descripción: Identifica y ajusta procesos con alto consumo de recursos.
-                    # ==============================================================================
-
-                    Write-Host "--- Reporte de Estado Inicial del Procesador ---" -ForegroundColor Yellow
-
-                    # 1. Obtener carga total del procesador usando WMI (Máxima compatibilidad)
-                    $cpuLoad = (Get-WmiObject Win32_Processor).LoadPercentage
-                    Write-Host "Carga actual del sistema: $cpuLoad%" -ForegroundColor Cyan
-
-                    # 2. Identificar procesos que consumen más del 20% de CPU
-                    # Usamos Get-Process y seleccionamos los primeros 10 por uso de tiempo de CPU
-                    $procesosPesados = Get-Process | Sort-Object CPU -Descending | Select-Object -First 10
-
-                    Write-Host "`nTop 10 procesos por consumo acumulado:" -ForegroundColor Yellow
-                    $procesosPesados | Format-Table Name, ID, CPU, PriorityClass -AutoSize
-
-                    # 3. Acción de optimización: Cambiar prioridad a 'BelowNormal' 
-                    # Esto evita que los procesos "estrangulen" el sistema sin llegar a cerrarlos bruscamente.
-                    foreach ($proc in $procesosPesados) {
-                        if ($proc.Name -ne "Idle" -and $proc.Name -ne "powershell") {
-                            try {
-                                $proc.PriorityClass = "BelowNormal"
-                                Write-Host "Prioridad ajustada para: $($proc.Name) (ID: $($proc.Id))" -ForegroundColor Green
-                            }
-                            catch {
-                                Write-Host "No se pudo cambiar prioridad de: $($proc.Name) (Permisos insuficientes)" -ForegroundColor Gray
-                            }
-                        }
-                    }
-
-                    # 4. Limpieza de memoria de trabajo (Working Set)
-                    # Ayuda a liberar presión indirecta sobre el procesador al reducir el paginado
-                    Write-Host "`nLiberando memoria de trabajo innecesaria..." -ForegroundColor Yellow
-                    [System.GC]::Collect()
-
-                    Write-Host "`nOptimizacion completada." -ForegroundColor White
-
-                    # 5. Opción de cierre (Basado en el archivo previo 'Cerrar Ventana PowerShell')
-                    Write-Host "`nProceso finalizado..." -ForegroundColor Yellow
-                    Write-Host ""
-                        
-                    # $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-                        
-                        
-
                 }
 
                 "7" { 

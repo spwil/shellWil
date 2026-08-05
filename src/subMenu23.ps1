@@ -18,9 +18,15 @@ function psSubMenu23 {
             Write-Host "    5.2. Resetear IP Red y Asignar DHCP." -ForegroundColor Cyan
             Write-Host "    5.3. Mostrar Claves MAC Address." -ForegroundColor Cyan
             Write-Host "    5.4. Actualizacion y Diagnostico de Politicas (gpupdate)." -ForegroundColor Yellow
-            Write-Host "  11. Vaciar Papelera de Reciclaje"
+            Write-Host "  6. OPTIMIZACION Y LIMPIEZA DE SISTEMA:" -ForegroundColor Green
+            Write-Host "    6.1. Eliminar Archivos TEMPORALES CARPETAS" -ForegroundColor DarkCyan
+            Write-Host "    6.2. Eliminar Archivos Temporales ProgramData." -ForegroundColor DarkCyan
+            Write-Host "    6.3. Liberar RAM." -ForegroundColor DarkCyan
+            Write-Host "    6.4. Liberar Procesador." -ForegroundColor DarkCyan
+            Write-Host "    6.5. Vaciar Papelera de Reciclaje" -ForegroundColor DarkCyan
+            Write-Host "    6.6. Eliminacion avanzada de temporales (Todos los usuarios)" -ForegroundColor Yellow
             Write-Host "  12. Revisiones Instaladas de Windows."
-            Write-Host "  20 ---)) HERRAMIENTAS PC PORTATIL (Laptops)." -ForegroundColor Green
+            Write-Host "  20 ---)) HERRAMIENTAS PC y PORTATIL (Laptops)." -ForegroundColor Green
             Write-Host ""
             Write-Host "  0. V O L V E R   A L   M E N U    P R I N C I P A L"
             Write-Header "===================================================================="
@@ -416,7 +422,114 @@ function psSubMenu23 {
                     Write-Host "Proceso realizado..." -ForegroundColor Green
                     Write-Host ""
                 }
-                "11" { 
+                "6.1" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op23"
+                        
+                    # 1. Definir rutas usando variables de entorno de forma segura
+                    $userTemp = "$env:TEMP"             # C:\Users\Nombre\AppData\Local\Temp
+                    $systemTemp = "$env:SystemRoot\Temp"  # C:\Windows\Temp
+                    $prefetch = "$env:SystemRoot\Prefetch"
+
+                    Write-Host "Iniciando limpieza profunda de temporales..." -ForegroundColor Yellow
+
+                    # 2. Limpieza de Temporales de Usuario
+                    Write-Host " > Limpiando Temp de Usuario..." -NoNewline
+                    Remove-Item -Path "$userTemp\*" -Recurse -Force -ErrorAction SilentlyContinue
+                    Write-Host " [OK]" -ForegroundColor Green
+
+                    # 3. Limpieza de Temporales del Sistema
+                    Write-Host " > Limpiando Temp de Windows..." -NoNewline
+                    Remove-Item -Path "$systemTemp\*" -Recurse -Force -ErrorAction SilentlyContinue
+                    Write-Host " [OK]" -ForegroundColor Green
+
+                    # 4. Limpieza de Prefetch
+                    Write-Host " > Limpiando Prefetch..." -NoNewline
+                    Remove-Item -Path "$prefetch\*" -Recurse -Force -ErrorAction SilentlyContinue
+                    Write-Host " [OK]" -ForegroundColor Green
+
+                    # 5. Abrir carpetas para verificación (Opcional, emulando tu .bat)
+                    Start-Process explorer.exe $userTemp
+                    Start-Process explorer.exe $prefetch
+
+                    Write-Host "Limpieza finalizada correctamente." -ForegroundColor White -BackgroundColor DarkGreen
+                    Write-Host ""
+                }
+                "6.2" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op23"
+                        
+                    # 1. Definimos las carpetas que NO queremos tocar bajo ninguna circunstancia
+                    $excluir = @("*Microsoft*", "*Package Cache*", "*Antivirus*", "*SoftwareLicensing*", "*NVIDIA*")
+
+                    # 2. Ejecutamos la búsqueda con filtros de seguridad
+                    Get-ChildItem -Path "C:\ProgramData" -Recurse -File -Force -ErrorAction SilentlyContinue | 
+                    Where-Object {
+                        # Filtro 1: Que no esté en la lista de exclusión
+                        $itemPath = $_.FullName
+                        $safe = $true
+                        foreach ($pattern in $excluir) {
+                            if ($itemPath -like $pattern) { $safe = $false; break }
+                        }
+
+                        # Filtro 2: Solo extensiones típicas de basura y con más de 7 días
+                        $safe -and 
+                        ($_.Extension -match "\.(tmp|log|bak|old|chk|temp)$") -and 
+                        ($_.LastWriteTime -lt (Get-Date).AddDays(-7))
+                    } | 
+                    Remove-Item -Force -ErrorAction SilentlyContinue
+                        
+                    Write-Host "Proceso finalizado" -ForegroundColor Green
+                    Write-Host ""
+                }
+                "6.3" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op23"
+                    psLimpiarRAM
+
+                    Write-Host "Presione Enter para volver..." -ForegroundColor Green
+                }
+                "6.4" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op23"
+
+                    Write-Host "--- Reporte de Estado Inicial del Procesador ---" -ForegroundColor Yellow
+
+                    # 1. Obtener carga total del procesador usando WMI (Máxima compatibilidad)
+                    $cpuLoad = (Get-WmiObject Win32_Processor).LoadPercentage
+                    Write-Host "Carga actual del sistema: $cpuLoad%" -ForegroundColor Cyan
+
+                    # 2. Identificar procesos que consumen más del 20% de CPU
+                    # Usamos Get-Process y seleccionamos los primeros 10 por uso de tiempo de CPU
+                    $procesosPesados = Get-Process | Sort-Object CPU -Descending | Select-Object -First 10
+
+                    Write-Host "`nTop 10 procesos por consumo acumulado:" -ForegroundColor Yellow
+                    $procesosPesados | Format-Table Name, ID, CPU, PriorityClass -AutoSize
+
+                    # 3. Acción de optimización: Cambiar prioridad a 'BelowNormal' 
+                    # Esto evita que los procesos "estrangulen" el sistema sin llegar a cerrarlos bruscamente.
+                    foreach ($proc in $procesosPesados) {
+                        if ($proc.Name -ne "Idle" -and $proc.Name -ne "powershell") {
+                            try {
+                                $proc.PriorityClass = "BelowNormal"
+                                Write-Host "Prioridad ajustada para: $($proc.Name) (ID: $($proc.Id))" -ForegroundColor Green
+                            }
+                            catch {
+                                Write-Host "No se pudo cambiar prioridad de: $($proc.Name) (Permisos insuficientes)" -ForegroundColor Gray
+                            }
+                        }
+                    }
+
+                    # 4. Limpieza de memoria de trabajo (Working Set)
+                    # Ayuda a liberar presión indirecta sobre el procesador al reducir el paginado
+                    Write-Host "`nLiberando memoria de trabajo innecesaria..." -ForegroundColor Yellow
+                    [System.GC]::Collect()
+
+                    Write-Host "`nOptimizacion completada." -ForegroundColor White
+                    Write-Host "`nProceso finalizado..." -ForegroundColor Yellow
+                    Write-Host ""
+                }
+                "6.5" { 
 
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op23"
@@ -444,9 +557,126 @@ function psSubMenu23 {
                         }
                     }
 
+                    # Abrir la ventana de la Papelera de Reciclaje para verificación visual
+                    Write-Host "`nAbriendo la papelera de reciclaje para verificacion..." -ForegroundColor Yellow
+                    try {
+                        Start-Process "explorer.exe" "shell:RecycleBinFolder"
+                    }
+                    catch {
+                        # Fallback de seguridad mediante .NET en caso de que Start-Process falle
+                        [System.Diagnostics.Process]::Start("explorer.exe", "shell:RecycleBinFolder") | Out-Null
+                    }
+
                     Write-Host "-------------------------------------------------------"
                     Write-Host " "
 
+                }
+                "6.6" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op23"
+
+                    Write-Host "===========================================================" -ForegroundColor Cyan
+                    Write-Host "   ELIMINACION DE TEMPORALES PARA TODOS LOS USUARIOS       " -ForegroundColor Cyan
+                    Write-Host "===========================================================" -ForegroundColor Cyan
+                    Write-Host ""
+
+                    # 1. Obtener perfiles de usuario locales y de dominio
+                    $profiles = $null
+                    if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) {
+                        $profiles = Get-CimInstance -ClassName Win32_UserProfile -ErrorAction SilentlyContinue
+                    } else {
+                        $profiles = Get-WmiObject -Class Win32_UserProfile -ErrorAction SilentlyContinue
+                    }
+
+                    $profilePaths = @()
+                    if ($profiles) {
+                        foreach ($p in $profiles) {
+                            # Evitar carpetas de sistema (SYSTEM, LocalService, NetworkService) y Default
+                            if ($p.Special -eq $false -and $p.LocalPath -and (Test-Path $p.LocalPath)) {
+                                $profilePaths += $p.LocalPath
+                            }
+                        }
+                    }
+
+                    # Fallback si WMI falla
+                    if ($profilePaths.Count -eq 0) {
+                        $profilePaths = Get-ChildItem -Path "C:\Users" -Directory -ErrorAction SilentlyContinue | 
+                                        Where-Object { $_.Name -notin "Default", "Default User", "All Users", "Public" } | 
+                                        Select-Object -ExpandProperty FullName
+                    }
+
+                    Write-Host "Perfiles de usuario detectados a procesar: $($profilePaths.Count)" -ForegroundColor Yellow
+                    Write-Host ""
+
+                    $totalArchivosEliminados = 0
+                    $totalCarpetasEliminadas = 0
+                    $totalEspacioLiberado = 0
+
+                    foreach ($path in $profilePaths) {
+                        $tempPath = Join-Path $path "AppData\Local\Temp"
+                        $userName = Split-Path $path -Leaf
+                        
+                        Write-Host "Procesando perfil: $userName ($path)..." -ForegroundColor Cyan
+
+                        if (Test-Path $tempPath) {
+                            Write-Host "  Ruta Temp: $tempPath" -ForegroundColor Gray
+                            
+                            # Obtener elementos en la carpeta Temp
+                            $items = Get-ChildItem -Path "$tempPath\*" -Recurse -Force -ErrorAction SilentlyContinue
+                            
+                            $eliminadosUser = 0
+                            $fallidosUser = 0
+                            $espacioUser = 0
+
+                            # Eliminar archivos individualmente
+                            foreach ($item in $items) {
+                                if (-not $item.PSIsContainer) {
+                                    $size = $item.Length
+                                    try {
+                                        Remove-Item -Path $item.FullName -Force -Recurse -ErrorAction Stop
+                                        $totalEspacioLiberado += $size
+                                        $espacioUser += $size
+                                        $eliminadosUser++
+                                        $totalArchivosEliminados++
+                                    }
+                                    catch {
+                                        # Archivo en uso por el usuario/sistema o sin permisos
+                                        $fallidosUser++
+                                    }
+                                }
+                            }
+
+                            # Eliminar directorios vacíos recursivamente
+                            $dirs = Get-ChildItem -Path "$tempPath\*" -Recurse -Force -ErrorAction SilentlyContinue | 
+                                    Where-Object { $_.PSIsContainer } | 
+                                    Sort-Object FullName -Descending
+                            foreach ($dir in $dirs) {
+                                try {
+                                    Remove-Item -Path $dir.FullName -Force -ErrorAction Stop
+                                    $totalCarpetasEliminadas++
+                                }
+                                catch {
+                                    # Directorio no está vacío o en uso
+                                }
+                            }
+
+                            $mbLiberados = [Math]::Round($espacioUser / 1MB, 2)
+                            Write-Host "  -> Archivos eliminados: $eliminadosUser | Bloqueados/En uso: $fallidosUser" -ForegroundColor Green
+                            Write-Host "  -> Espacio liberado: $mbLiberados MB" -ForegroundColor Green
+                        } else {
+                            Write-Host "  -> Directorio Temp no inicializado para este usuario." -ForegroundColor Yellow
+                        }
+                        Write-Host ""
+                    }
+
+                    $totalMBLiberados = [Math]::Round($totalEspacioLiberado / 1MB, 2)
+                    Write-Host "-----------------------------------------------------------" -ForegroundColor Gray
+                    Write-Host "RESUMEN GLOBAL DE LIMPIEZA MULTI-USUARIO:" -ForegroundColor Cyan
+                    Write-Host "Total archivos eliminados: $totalArchivosEliminados" -ForegroundColor White
+                    Write-Host "Total carpetas eliminadas: $totalCarpetasEliminadas" -ForegroundColor White
+                    Write-Host "Total espacio liberado:    $totalMBLiberados MB" -ForegroundColor Green
+                    Write-Host "-----------------------------------------------------------" -ForegroundColor Gray
+                    Write-Host ""
                 }
                 "12" { 
                     cabecera
@@ -582,7 +812,8 @@ function psSubMenuPortatil {
                         Write-Host "Iniciando descifrado permanente de BitLocker en la unidad C:..." -ForegroundColor Yellow
                         manage-bde -off C:
                         Write-Host "`nProceso iniciado con exito. Puede monitorear el progreso usando la opcion 1.5." -ForegroundColor Green
-                    } else {
+                    }
+                    else {
                         Write-Host "Operacion cancelada." -ForegroundColor Cyan
                     }
                 }
@@ -639,7 +870,8 @@ function psSubMenuPortatil {
 
                     if (Test-Path $rutaHTML) {
                         $targetFile = $rutaHTML
-                    } elseif (Test-Path $rutaNoExt) {
+                    }
+                    elseif (Test-Path $rutaNoExt) {
                         $targetFile = $rutaNoExt
                     }
 
@@ -651,7 +883,8 @@ function psSubMenuPortatil {
                                 $targetFile = $rutaHTML
                                 Write-Host "Reporte generado en: $rutaHTML" -ForegroundColor Green
                             }
-                        } catch {
+                        }
+                        catch {
                             Write-Host "No se pudo generar el reporte mediante powercfg." -ForegroundColor Red
                         }
                     }
@@ -733,18 +966,22 @@ function psSubMenuPortatil {
                         Write-Host "Porcentaje de Salud (Vida Util): " -NoNewline
                         if ($porcentajeVida -ge 90) {
                             Write-Host "$porcentajeVida%" -ForegroundColor Green
-                        } elseif ($porcentajeVida -ge 75) {
+                        }
+                        elseif ($porcentajeVida -ge 75) {
                             Write-Host "$porcentajeVida%" -ForegroundColor Yellow
-                        } else {
+                        }
+                        else {
                             Write-Host "$porcentajeVida%" -ForegroundColor Red
                         }
                         
                         Write-Host "Porcentaje de Desgaste:          " -NoNewline
                         if ($porcentajeDesgaste -le 10) {
                             Write-Host "$porcentajeDesgaste%" -ForegroundColor Green
-                        } elseif ($porcentajeDesgaste -le 25) {
+                        }
+                        elseif ($porcentajeDesgaste -le 25) {
                             Write-Host "$porcentajeDesgaste%" -ForegroundColor Yellow
-                        } else {
+                        }
+                        else {
                             Write-Host "$porcentajeDesgaste%" -ForegroundColor Red
                         }
                         
@@ -756,21 +993,24 @@ function psSubMenuPortatil {
                             Write-Host "1. Evite descargar la bateria por completo por debajo del 20%; las descargas profundas estresan las celdas de Ion-Litio."
                             Write-Host "2. No mantenga la laptop cargando permanentemente al 100% en ambientes de alta temperatura (esto acelera el desgaste quimico)."
                             Write-Host "3. Si la marca de su laptop posee herramientas de gestion (Dell Power Manager, HP Support Assistant, Lenovo Vantage), configure un limite de carga al 80% si planea utilizarla conectada a la corriente la mayor parte del tiempo."
-                        } elseif ($porcentajeVida -ge 75) {
+                        }
+                        elseif ($porcentajeVida -ge 75) {
                             Write-Host "ESTADO: BUENO / NORMAL" -ForegroundColor Yellow
                             Write-Host "La bateria presenta un nivel de desgaste normal debido al uso transcurrido. La autonomia es adecuada."
                             Write-Host "`nRECOMENDACIONES DE EXPERTO:" -ForegroundColor Yellow
                             Write-Host "1. Mantenga habitos de carga estables, evitando descargas completas recurrentes."
                             Write-Host "2. Realice una calibracion de bateria cada 3 meses: carguela al 100%, dejela descargar completamente hasta que el equipo se apague solo, y vuelva a cargarla al 100% de manera ininterrumpida con el equipo apagado. Esto recalibra el chip indicador."
                             Write-Host "3. Asegurese de que las rejillas de ventilacion del portatil esten limpias, ya que el calor excesivo es el peor enemigo de la vida util de la bateria."
-                        } elseif ($porcentajeVida -ge 50) {
+                        }
+                        elseif ($porcentajeVida -ge 50) {
                             Write-Host "ESTADO: REGULAR / DESGASTADO" -ForegroundColor Red
                             Write-Host "La bateria tiene un desgaste considerable. La duracion de la carga es menor y el rendimiento movil se vera reducido."
                             Write-Host "`nRECOMENDACIONES DE EXPERTO:" -ForegroundColor Yellow
                             Write-Host "1. Evite ejecutar aplicaciones de alto rendimiento (juegos, edicion de video) operando unicamente con bateria, ya que la alta demanda de corriente incrementa el estres termico."
                             Write-Host "2. Desactive servicios en segundo plano y reduzca el brillo de pantalla para maximizar los periodos de uso portatil."
                             Write-Host "3. Vaya planificando el reemplazo de la bateria si su ritmo de trabajo requiere movilidad constante."
-                        } else {
+                        }
+                        else {
                             Write-Host "ESTADO: CRITICO / REEMPLAZAR" -ForegroundColor Red -BackgroundColor Black
                             Write-Host "La bateria ha cumplido su ciclo de vida util y la retencion de carga es minima o nula."
                             Write-Host "`nRECOMENDACIONES DE EXPERTO:" -ForegroundColor Yellow
@@ -778,7 +1018,8 @@ function psSubMenuPortatil {
                             Write-Host "2. PRECAUCION: Examine visualmente si la bateria se encuentra inflada (esto se nota si el touchpad o el teclado se sienten duros o levantados). Si detecta hinchazon, retire la bateria de inmediato, ya que representa un peligro fisico (riesgo de incendio o explosion)."
                             Write-Host "3. Si utiliza la laptop fija conectada permanentemente, puede optar por remover la bateria (si es extraible) para evitar calor innecesario, o bien limitar estrictamente la carga via software."
                         }
-                    } else {
+                    }
+                    else {
                         Write-Host "--- ESTADO DE LA BATERIA ---" -ForegroundColor Cyan
                         Write-Host "No se detecto una bateria real de portatil en el sistema (posiblemente una PC de escritorio o servidor)." -ForegroundColor Yellow
                         Write-Host ""
@@ -848,18 +1089,22 @@ function psSubMenuPortatil {
                             Write-Host "Porcentaje de Salud (Vida Util): " -NoNewline
                             if ($porcentajeVida -ge 90) {
                                 Write-Host "$porcentajeVida%" -ForegroundColor Green
-                            } elseif ($porcentajeVida -ge 75) {
+                            }
+                            elseif ($porcentajeVida -ge 75) {
                                 Write-Host "$porcentajeVida%" -ForegroundColor Yellow
-                            } else {
+                            }
+                            else {
                                 Write-Host "$porcentajeVida%" -ForegroundColor Red
                             }
                             
                             Write-Host "Porcentaje de Desgaste:          " -NoNewline
                             if ($porcentajeDesgaste -le 10) {
                                 Write-Host "$porcentajeDesgaste%" -ForegroundColor Green
-                            } elseif ($porcentajeDesgaste -le 25) {
+                            }
+                            elseif ($porcentajeDesgaste -le 25) {
                                 Write-Host "$porcentajeDesgaste%" -ForegroundColor Yellow
-                            } else {
+                            }
+                            else {
                                 Write-Host "$porcentajeDesgaste%" -ForegroundColor Red
                             }
                             
@@ -871,21 +1116,24 @@ function psSubMenuPortatil {
                                 Write-Host "1. Evite descargar la bateria por completo por debajo del 20%; las descargas profundas estresan las celdas de Ion-Litio."
                                 Write-Host "2. No mantenga la laptop cargando permanentemente al 100% en ambientes de alta temperatura (esto acelera el desgaste quimico)."
                                 Write-Host "3. Si la marca de su laptop posee herramientas de gestion (Dell Power Manager, HP Support Assistant, Lenovo Vantage), configure un limite de carga al 80% si planea utilizarla conectada a la corriente la mayor parte del tiempo."
-                            } elseif ($porcentajeVida -ge 75) {
+                            }
+                            elseif ($porcentajeVida -ge 75) {
                                 Write-Host "ESTADO: BUENO / NORMAL" -ForegroundColor Yellow
                                 Write-Host "La bateria presenta un nivel de desgaste normal debido al uso transcurrido. La autonomia es adecuada."
                                 Write-Host "`nRECOMENDACIONES DE EXPERTO:" -ForegroundColor Yellow
                                 Write-Host "1. Mantenga habitos de carga estables, evitando descargas completas recurrentes."
                                 Write-Host "2. Realice una calibracion de bateria cada 3 meses: carguela al 100%, dejela descargar completamente hasta que el equipo se apague solo, y vuelva a cargarla al 100% de manera ininterrumpida con el equipo apagado. Esto recalibra el chip indicador."
                                 Write-Host "3. Asegurese de que las rejillas de ventilacion del portatil esten limpias, ya que el calor excesivo es el peor enemigo de la vida util de la bateria."
-                            } elseif ($porcentajeVida -ge 50) {
+                            }
+                            elseif ($porcentajeVida -ge 50) {
                                 Write-Host "ESTADO: REGULAR / DESGASTADO" -ForegroundColor Red
                                 Write-Host "La bateria tiene un desgaste considerable. La duracion de la carga es menor y el rendimiento movil se vera reducido."
                                 Write-Host "`nRECOMENDACIONES DE EXPERTO:" -ForegroundColor Yellow
                                 Write-Host "1. Evite ejecutar aplicaciones de alto rendimiento (juegos, edicion de video) operando unicamente con bateria, ya que la alta demanda de corriente incrementa el estres termico."
                                 Write-Host "2. Desactive servicios en segundo plano y reduzca el brillo de pantalla para maximizar los periodos de uso portatil."
                                 Write-Host "3. Vaya planificando el reemplazo de la bateria si su ritmo de trabajo requiere movilidad constante."
-                            } else {
+                            }
+                            else {
                                 Write-Host "ESTADO: CRITICO / REEMPLAZAR" -ForegroundColor Red -BackgroundColor Black
                                 Write-Host "La bateria ha cumplido su ciclo de vida util y la retencion de carga es minima o nula."
                                 Write-Host "`nRECOMENDACIONES DE EXPERTO:" -ForegroundColor Yellow
@@ -893,7 +1141,8 @@ function psSubMenuPortatil {
                                 Write-Host "2. PRECAUCION: Examine visualmente si la bateria se encuentra inflada (esto se nota si el touchpad o el teclado se sienten duros o levantados). Si detecta hinchazon, retire la bateria de inmediato, ya que representa un peligro fisico (riesgo de incendio o explosion)."
                                 Write-Host "3. Si utiliza la laptop fija conectada permanentemente, puede optar por remover la bateria (si es extraible) para evitar calor innecesario, o bien limitar estrictamente la carga via software."
                             }
-                        } else {
+                        }
+                        else {
                             Write-Host "`nRECOMENDACIONES DE EXPERTO (PC DE ESCRITORIO O SERVIDOR):" -ForegroundColor Yellow
                             Write-Host "1. Al tratarse de un equipo de escritorio, se recomienda encarecidamente el uso de un UPS (No-Break) o Sistema de Alimentacion Ininterrumpida."
                             Write-Host "2. Un UPS protegera su PC contra apagones repentinos (que pueden causar corrupcion de archivos y danos en el sistema operativo o SSD/HDD) y contra sobretensiones electricas."
