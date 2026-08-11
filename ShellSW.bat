@@ -6547,7 +6547,7 @@ function psSubMenu25 {
 #******************************************************** INICIO SUB MENU.26 ******************************************************
 #**********************************************************************************************************************************
 function psSubMenu26 {
-    # Detección y fallback de Active Directory usando ADSI (LDAP nativo sin RSAT)
+    # DetecciÃ³n y fallback de Active Directory usando ADSI (LDAP nativo sin RSAT)
     if (-not (Get-Command Get-ADUser -ErrorAction SilentlyContinue)) {
         Write-Host "[INFO] Modulo ActiveDirectory (RSAT) no detectado. Cargando emulacion LDAP nativa..." -ForegroundColor Yellow
         Start-Sleep -Milliseconds 500
@@ -6555,9 +6555,9 @@ function psSubMenu26 {
         # Declarar funciones de compatibilidad
         function Get-ADUser {
             param(
-                [Parameter(Position=0, Mandatory=$true)]
+                [Parameter(Position = 0, Mandatory = $true)]
                 [string]$Identity,
-                [Parameter(Position=1)]
+                [Parameter(Position = 1)]
                 [string[]]$Properties
             )
             
@@ -6566,7 +6566,7 @@ function psSubMenu26 {
             if ($result) {
                 $entry = $result.GetDirectoryEntry()
                 
-                # Función para traducir fechas de LargeInteger
+                # FunciÃ³n para traducir fechas de LargeInteger
                 filter Get-ADDate {
                     if ($null -eq $_ -or $_.Value -eq 0 -or $_.Value -eq 9223372036854775807) { return $null }
                     try {
@@ -6578,7 +6578,8 @@ function psSubMenu26 {
                         $low = $_.GetType().InvokeMember("LowPart", [System.Reflection.BindingFlags]::GetProperty, $null, $_, $null)
                         $intVal = ([int64]$high * 4294967296) + [uint32]$low
                         return [DateTime]::FromFileTime($intVal)
-                    } catch {}
+                    }
+                    catch {}
                     return $null
                 }
 
@@ -6598,13 +6599,15 @@ function psSubMenu26 {
                 $prop["ObjectClass"] = [string]$entry.SchemaClassName
                 if ($entry.Guid) {
                     $prop["ObjectGUID"] = [Guid]$entry.Guid
-                } else {
+                }
+                else {
                     $prop["ObjectGUID"] = $null
                 }
 
                 if ($entry.Properties["objectSid"].Value) { 
                     $prop["SID"] = (New-Object System.Security.Principal.SecurityIdentifier($entry.Properties["objectSid"].Value, 0)).Value 
-                } else {
+                }
+                else {
                     $prop["SID"] = $null
                 }
 
@@ -6613,7 +6616,8 @@ function psSubMenu26 {
                     $prop["Enabled"] = -not ($uac -band 2)
                     $prop["PasswordExpired"] = [bool]($uac -band 0x800000)
                     $prop["PasswordNeverExpires"] = [bool]($uac -band 0x10000)
-                } else {
+                }
+                else {
                     $prop["Enabled"] = $true
                     $prop["PasswordExpired"] = $false
                     $prop["PasswordNeverExpires"] = $false
@@ -6628,8 +6632,9 @@ function psSubMenu26 {
 
                 $managerDN = $entry.Properties["manager"].Value
                 if ($managerDN) {
-                    $prop["Manager"] = ($managerDN -split ',')[0].Replace('CN=','')
-                } else {
+                    $prop["Manager"] = ($managerDN -split ',')[0].Replace('CN=', '')
+                }
+                else {
                     $prop["Manager"] = $null
                 }
 
@@ -6646,9 +6651,9 @@ function psSubMenu26 {
 
         function Set-ADAccountPassword {
             param(
-                [Parameter(Mandatory=$true)]
+                [Parameter(Mandatory = $true)]
                 [string]$Identity,
-                [Parameter(Mandatory=$true)]
+                [Parameter(Mandatory = $true)]
                 [System.Security.SecureString]$NewPassword,
                 [switch]$Reset
             )
@@ -6662,14 +6667,15 @@ function psSubMenu26 {
                 $entry = $result.GetDirectoryEntry()
                 $entry.Invoke("SetPassword", $PlainPassword)
                 $entry.CommitChanges()
-            } else {
+            }
+            else {
                 throw "No se pudo encontrar al usuario '$Identity' en el dominio."
             }
         }
 
         function Set-ADUser {
             param(
-                [Parameter(Mandatory=$true)]
+                [Parameter(Mandatory = $true)]
                 [string]$Identity,
                 [bool]$ChangePasswordAtLogon
             )
@@ -6680,13 +6686,136 @@ function psSubMenu26 {
                 $entry = $result.GetDirectoryEntry()
                 if ($ChangePasswordAtLogon) {
                     $entry.Properties["pwdLastSet"].Value = 0
-                } else {
+                }
+                else {
                     $entry.Properties["pwdLastSet"].Value = -1
                 }
                 $entry.CommitChanges()
-            } else {
+            }
+            else {
                 throw "No se pudo encontrar al usuario '$Identity' en el dominio."
             }
+        }
+    }
+
+    # ==============================================================================
+    #   FUNCIONES AUXILIARES DE CONEXION Y ANALISIS REMOTO (OPTIMIZACION Y LIMPIEZA)
+    # ==============================================================================
+
+    function Parse-RemoteTarget {
+        param([string]$Target)
+        $Target = $Target.Trim()
+        if ($Target -match '^\d{1,3}$') {
+            return "192.168.176.$Target"
+        }
+        elseif ($Target -match '^\d{1,3}\.\d{1,3}$') {
+            return "192.168.$Target"
+        }
+        return $Target
+    }
+
+    function Get-RemoteConnectionContext {
+        $defTarget = ""
+        if ($global:RemoteTargetIP) {
+            $defTarget = $global:RemoteTargetIP
+        }
+        
+        Write-Host "`n--- Conexion Remota ---" -ForegroundColor Yellow
+        $prompt = "Ingrese IP completa, Hostname o los 2 ultimos octetos"
+        if ($defTarget) {
+            $prompt += " [$defTarget]"
+        }
+        $inputTarget = Read-Host $prompt
+        
+        if ($inputTarget.Trim() -eq "") {
+            if ($defTarget) {
+                $target = $defTarget
+            }
+            else {
+                Write-Host "[ERROR] Debe especificar un destino." -ForegroundColor Red
+                return $null
+            }
+        }
+        else {
+            $target = Parse-RemoteTarget $inputTarget
+        }
+        
+        $cred = $null
+        if ($global:RemoteTargetIP -eq $target -and $global:RemoteTargetCred -ne $null) {
+            $usarExistente = Read-Host "Â¿Usar las credenciales guardadas para $target? (S/N) [S]"
+            if ($usarExistente -eq "" -or $usarExistente.ToUpper() -eq "S") {
+                $cred = $global:RemoteTargetCred
+            }
+        }
+        
+        if ($null -eq $cred) {
+            Write-Host "`nSeleccione el tipo de autenticacion para ${target}:" -ForegroundColor Yellow
+            Write-Host "1. Credenciales de la sesion actual (SSO/Dominio Local)"
+            Write-Host "2. Credenciales de Usuario de Dominio (ej: DOMINIO\Usuario)"
+            Write-Host "3. Credenciales de Usuario Local (ej: .\Administrador)"
+            $tipoCred = Read-Host "Seleccione opcion [1]"
+            
+            if ($tipoCred -eq "2" -or $tipoCred -eq "3") {
+                $promptUser = if ($tipoCred -eq "2") { "Usuario de Dominio" } else { "Usuario Local" }
+                Write-Host "Ingrese las credenciales para ${promptUser}:" -ForegroundColor Yellow
+                $cred = Get-Credential
+            }
+        }
+        
+        Write-Host "Verificando conexion con $target (Ping)..." -ForegroundColor Yellow
+        $ping = Test-Connection -ComputerName $target -Count 1 -Quiet -ErrorAction SilentlyContinue
+        if (-not $ping) {
+            Write-Host "[ERROR] El equipo $target no responde a Ping. Verifique si esta encendido." -ForegroundColor Red
+            $confirmar = Read-Host "Â¿Desea intentar la conexion de todas formas? (S/N) [N]"
+            if ($confirmar.ToUpper() -ne "S") {
+                return $null
+            }
+        }
+        
+        $global:RemoteTargetIP = $target
+        $global:RemoteTargetCred = $cred
+        
+        return New-Object PSObject -Property @{
+            ComputerName = $target
+            Credential   = $cred
+        }
+    }
+
+    function Mount-RemoteCShare {
+        param(
+            [string]$ComputerName,
+            $Credential
+        )
+        $driveName = "RemoteC_Clean"
+        if (Get-PSDrive -Name $driveName -ErrorAction SilentlyContinue) {
+            Remove-PSDrive -Name $driveName -Force -ErrorAction SilentlyContinue
+        }
+        
+        $rootPath = "\\$ComputerName\C$"
+        Write-Host "Conectando al recurso administrativo $rootPath..." -ForegroundColor Yellow
+        
+        try {
+            if ($null -ne $Credential) {
+                New-PSDrive -Name $driveName -PSProvider FileSystem -Root $rootPath -Credential $Credential -Scope Global -ErrorAction Stop | Out-Null
+            }
+            else {
+                New-PSDrive -Name $driveName -PSProvider FileSystem -Root $rootPath -Scope Global -ErrorAction Stop | Out-Null
+            }
+            Write-Host "Conectado exitosamente al recurso compartido C$." -ForegroundColor Green
+            return $driveName
+        }
+        catch {
+            Write-Host "[ERROR] No se pudo mapear la unidad C$ remota." -ForegroundColor Red
+            Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Red
+            return $null
+        }
+    }
+
+    function Dismount-RemoteCShare {
+        param([string]$driveName)
+        if ($driveName -and (Get-PSDrive -Name $driveName -ErrorAction SilentlyContinue)) {
+            Remove-PSDrive -Name $driveName -Force -ErrorAction SilentlyContinue
+            Write-Host "Unidad remota C$ desmontada." -ForegroundColor Gray
         }
     }
 
@@ -6711,6 +6840,14 @@ function psSubMenu26 {
             Write-Host "  3. GESTION DE USUARIO | USUARIO LOCAL |"
             Write-Host "    3.1 Cambiar contrasenia de USUARIO LOCAL en PC REMOTO" -ForegroundColor Cyan            
             Write-Host ""
+            Write-Host "  4. OPTIMIZACION Y LIMPIEZA DE SISTEMA REMOTO:" -ForegroundColor Green
+            Write-Host "    4.1. Eliminar Archivos TEMPORALES CARPETAS Remoto" -ForegroundColor DarkCyan
+            Write-Host "    4.2. Eliminar Archivos Temporales ProgramData Remoto" -ForegroundColor DarkCyan
+            Write-Host "    4.3. Liberar RAM Remoto" -ForegroundColor DarkCyan
+            Write-Host "    4.4. Liberar Procesador Remoto" -ForegroundColor DarkCyan
+            Write-Host "    4.5. Vaciar Papelera de Reciclaje Remoto" -ForegroundColor DarkCyan
+            Write-Host "    4.6. Eliminacion avanzada de temporales (Todos los usuarios) Remoto" -ForegroundColor Yellow
+            Write-Host ""
             Write-Host "  30. REFRESH." -ForegroundColor Red
             Write-Host "  31. REFRESH DESDE GITHUB (ONLINE)." -ForegroundColor Cyan
             Write-Host ""
@@ -6731,13 +6868,13 @@ function psSubMenu26 {
 
                     # 2. Definir las propiedades extendidas que queremos extraer
                     $propiedades = @(
-                        "Description",    # Descripción
+                        "Description",    # DescripciÃ³n
                         "Title",          # Cargo / Puesto
                         "Office",         # Oficina (PhysicalDeliveryOfficeName)
-                        "Department",     # Área / Departamento
+                        "Department",     # Ãrea / Departamento
                         "Manager",        # Dependencia (Jefe Directo)
-                        "OfficePhone",    # Teléfono
-                        "PostalCode",     # Código Postal
+                        "OfficePhone",    # TelÃ©fono
+                        "PostalCode",     # CÃ³digo Postal
                         "SID"             # Identificador de Seguridad
                     )
 
@@ -6775,7 +6912,7 @@ function psSubMenu26 {
                     $usuario = Read-Host "Introduzca el usuario de dominio"
 
                     try {
-                        # 2. Obtener datos básicos y última conexión del AD
+                        # 2. Obtener datos bÃ¡sicos y Ãºltima conexiÃ³n del AD
                         $adUser = Get-ADUser -Identity $usuario -Properties LastLogonDate, Description, Title
 
                         if ($adUser) {
@@ -6792,7 +6929,7 @@ function psSubMenu26 {
                             $eventos = Get-WinEvent -FilterHashtable @{
                                 LogName   = 'Security'; 
                                 ID        = 4624; 
-                                StartTime = $hoy.AddDays(-7) # Últimos 7 días
+                                StartTime = $hoy.AddDays(-7) # Ãšltimos 7 dÃ­as
                             } -ErrorAction SilentlyContinue | Where-Object {
                                 $_.Properties[5].Value -eq $usuario
                             }
@@ -6836,7 +6973,7 @@ function psSubMenu26 {
                     try {
                         $user = Get-ADUser -Identity $dato -Properties $props
 
-                        # 3. Determinar lógica de expiración de cuenta
+                        # 3. Determinar lÃ³gica de expiraciÃ³n de cuenta
                         $estadoExp = if ($null -eq $user.AccountExpirationDate) { "Sin fecha de expiracion" } 
                         else { "Expira el: $($user.AccountExpirationDate)" }
 
@@ -6873,18 +7010,18 @@ function psSubMenu26 {
                     # 1. Solicitar el nombre de usuario (Equivalente a SET /P)
                     $usuarioAD = Read-Host "Introduzca el usuario de dominio"
 
-                    # 2. Solicitar la contraseña de forma segura (Asteriscos)
+                    # 2. Solicitar la contraseÃ±a de forma segura (Asteriscos)
                     # Usamos un bloque try/catch para manejar errores de permisos o de usuario no encontrado
                     try {
                         Write-Host "Preparando cambio de contrasenia para: $usuarioAD" -ForegroundColor Cyan
                         
-                        # Captura la contraseña de forma segura (AsSecureString oculta la entrada)
+                        # Captura la contraseÃ±a de forma segura (AsSecureString oculta la entrada)
                         $NuevaContrasenia = Read-Host "Introduzca la nueva contrasenia para $usuarioAD" -AsSecureString
 
                         # 3. Aplicar el cambio (Equivalente a Reset de Administrador)
                         Set-ADAccountPassword -Identity $usuarioAD -NewPassword $NuevaContrasenia -Reset
                         
-                        # 4. Forzar que el usuario cambie la contraseña en el próximo inicio de sesión (Opcional pero recomendado)
+                        # 4. Forzar que el usuario cambie la contraseÃ±a en el prÃ³ximo inicio de sesiÃ³n (Opcional pero recomendado)
                         Set-ADUser -Identity $usuarioAD -ChangePasswordAtLogon $false
 
                         Write-Host "EXITO: La contrasenia se ha actualizado correctamente." -ForegroundColor Green
@@ -6906,8 +7043,8 @@ function psSubMenu26 {
                     $dato = Read-Host "Introduzca el usuario de dominio"
 
                     try {
-                        # 2. Obtención de datos extendidos
-                        # Agregamos: Enabled (Estado), Office (Oficina) y Description (Descripción)
+                        # 2. ObtenciÃ³n de datos extendidos
+                        # Agregamos: Enabled (Estado), Office (Oficina) y Description (DescripciÃ³n)
                         $user = Get-ADUser -Identity $dato -Properties LastLogonDate, MemberOf, AccountExpirationDate, Title, Department, PasswordLastSet, Enabled, Office, Description
 
                         if ($user) {
@@ -6915,7 +7052,7 @@ function psSubMenu26 {
                             Write-Host "   REPORTE DETALLADO DE SEGURIDAD: $($user.Name)"
                             Write-Host "====================================================" -ForegroundColor Cyan
 
-                            # --- NUEVO APARTADO: DATOS DE FILIACIÓN ---
+                            # --- NUEVO APARTADO: DATOS DE FILIACIÃ“N ---
                             Write-Host "[*] DATOS GENERALES:" -ForegroundColor Yellow
                             $estado = if ($user.Enabled) { "ACTIVO" } else { "DESHABILITADO" }
                             Write-Host "    Estado Usuario: $estado"
@@ -6924,7 +7061,7 @@ function psSubMenu26 {
                             Write-Host "    Cargo:          $($user.Title)"
                             Write-Host "    Area/Depto:     $($user.Department)"
 
-                            # --- APARTADO: ULTIMO CAMBIO DE CONTRASEÑA ---
+                            # --- APARTADO: ULTIMO CAMBIO DE CONTRASEÃ‘A ---
                             Write-Host "`n[*] FECHA ULTIMO CAMBIO DE CONTRASENIA:" -ForegroundColor Yellow
                             if ($user.PasswordLastSet) { 
                                 Write-Host "    $($user.PasswordLastSet)" 
@@ -6933,16 +7070,16 @@ function psSubMenu26 {
                                 Write-Host "    El usuario nunca ha cambiado su contrasenia." 
                             }
                             
-                            # --- APARTADO: CONEXIÓN Y ESTADO ---
+                            # --- APARTADO: CONEXIÃ“N Y ESTADO ---
                             Write-Host "`n[*] ULTIMA CONEXION ESTABLECIDA:" -ForegroundColor Yellow
                             if ($user.LastLogonDate) { 
                                 Write-Host "    $($user.LastLogonDate)" 
                             }
                             else { 
-                                Write-Host "    Nunca ha iniciado sesión o el dato no se ha replicado." 
+                                Write-Host "    Nunca ha iniciado sesiÃ³n o el dato no se ha replicado." 
                             }
 
-                            # --- APARTADO: EXPIRACIÓN DE CUENTA ---
+                            # --- APARTADO: EXPIRACIÃ“N DE CUENTA ---
                             Write-Host "`n[*] ESTADO DE LA CUENTA Y EXPIRACION:" -ForegroundColor Yellow
                             if ($null -eq $user.AccountExpirationDate) {
                                 Write-Host "    La cuenta no tiene fecha de expiracion (Nunca expira)."
@@ -6955,7 +7092,7 @@ function psSubMenu26 {
                                 }
                             }
 
-                            # --- APARTADO: MEMBRESÍA DE GRUPOS ---
+                            # --- APARTADO: MEMBRESÃA DE GRUPOS ---
                             Write-Host "`n[*] GRUPOS A LOS QUE PERTENECE:" -ForegroundColor Yellow
                             if ($user.MemberOf) {
                                 foreach ($grupoDN in $user.MemberOf) {
@@ -6999,10 +7136,10 @@ function psSubMenu26 {
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op26"
 
-                    # 1. Definición del segmento de red base
+                    # 1. DefiniciÃ³n del segmento de red base
                     $baseIP = "192.168.176."
 
-                    # 2. Captura del último OCTETO con validación simple
+                    # 2. Captura del Ãºltimo OCTETO con validaciÃ³n simple
                     $hostID = Read-Host "Ingrese el ultimo OCTETO del segmento 192.168.176.XXX"
 
                     if ($hostID -match '^\d{1,3}$') {
@@ -7010,20 +7147,20 @@ function psSubMenu26 {
                         Write-Host "`n--- Consultando Host: $fullIP ---" -ForegroundColor Cyan
                         
                         try {
-                            # 3. Ejecución optimizada de quser (query user)
-                            # Redirigimos el error 2 al flujo de éxito para procesar el texto de "No hay usuarios"
+                            # 3. EjecuciÃ³n optimizada de quser (query user)
+                            # Redirigimos el error 2 al flujo de Ã©xito para procesar el texto de "No hay usuarios"
                             $resultado = quser /server:$fullIP 2>&1
 
                             # 4. Procesamiento de la respuesta
-                            if ($resultado -like "*No hay ningún usuario*" -or $resultado -like "*No user exists*") {
+                            if ($resultado -like "*No hay ningÃºn usuario*" -or $resultado -like "*No user exists*") {
                                 Write-Host "Estado: Equipo encendido, pero sin sesiones activas." -ForegroundColor Cyan
                             }
                             elseif ($resultado -like "*Error*") {
                                 Write-Host "Error: No se pudo establecer conexion RPC con $fullIP." -ForegroundColor Red
-                                Write-Host "Verifique que el equipo esté en línea y el Firewall permita RPC." -ForegroundColor Gray
+                                Write-Host "Verifique que el equipo estÃ© en lÃ­nea y el Firewall permita RPC." -ForegroundColor Gray
                             }
                             else {
-                                # Limpiamos líneas vacías y mostramos la tabla de quser
+                                # Limpiamos lÃ­neas vacÃ­as y mostramos la tabla de quser
                                 $resultado | Where-Object { $_.Trim() -ne "" }
                             }
                         }
@@ -7111,17 +7248,17 @@ function psSubMenu26 {
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op26"
 
-                    # 1. Configuración del segmento
+                    # 1. ConfiguraciÃ³n del segmento
                     $segmento = "192.168.176."
                     $hostID = Read-Host "Ingrese el ultimo OCTETO del segmento 192.168.176.XXX"
 
-                    # Validar que la entrada sea numérica
+                    # Validar que la entrada sea numÃ©rica
                     if ($hostID -match '^\d{1,3}$') {
                         $targetIP = $segmento + $hostID
                         Write-Host "`n--- Buscando recursos compartidos en: $targetIP ---" -ForegroundColor Yellow
 
                         try {
-                            # 2. Uso de Get-WmiObject para máxima compatibilidad (Win7 en adelante)
+                            # 2. Uso de Get-WmiObject para mÃ¡xima compatibilidad (Win7 en adelante)
                             # Filtramos Type=0 para mostrar solo carpetas compartidas por el usuario
                             # (Type 2147483648 son recursos administrativos ocultos)
                             $shares = Get-WmiObject -Class Win32_Share -ComputerName $targetIP -ErrorAction Stop | 
@@ -7135,7 +7272,7 @@ function psSubMenu26 {
                                 Format-Table -AutoSize
                             }
                             else {
-                                Write-Host "No se encontraron carpetas compartidas (públicas) en este equipo." -ForegroundColor Cyan
+                                Write-Host "No se encontraron carpetas compartidas (pÃºblicas) en este equipo." -ForegroundColor Cyan
                             }
                         }
                         catch {
@@ -7144,7 +7281,7 @@ function psSubMenu26 {
                         }
                     }
                     else {
-                        Write-Host "Entrada invalida. Ingrese solo números." -ForegroundColor Red
+                        Write-Host "Entrada invalida. Ingrese solo nÃºmeros." -ForegroundColor Red
                     }
 
                     Write-Host "`Consulta finalizado..." -ForegroundColor Cyan
@@ -7156,7 +7293,7 @@ function psSubMenu26 {
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op26"
 
                     # ==============================================================================
-                    #   HERRAMIENTA REMOTA DE GESTIÓN DE USUARIOS LOCALES (GMSANTACRUZ)
+                    #   HERRAMIENTA REMOTA DE GESTIÃ“N DE USUARIOS LOCALES (GMSANTACRUZ)
                     #   Compatibilidad: Windows 7 hasta Windows 11
                     # ==============================================================================
 
@@ -7166,11 +7303,11 @@ function psSubMenu26 {
                     Write-Host "==================================================" -ForegroundColor Cyan
 
                     do {
-                        # 1. Construcción de la Dirección IP
+                        # 1. ConstrucciÃ³n de la DirecciÃ³n IP
                         Write-Host "--- Estructura de Red ---\n" -ForegroundColor White
                         $ultimoOcteto = Read-Host "Ingrese el ULTIMO octeto para el segmento 192.168.176.xxx"
                         
-                        # Validación básica de entrada numérica
+                        # ValidaciÃ³n bÃ¡sica de entrada numÃ©rica
                         if ($ultimoOcteto -notmatch '^\d+$' -or [int]$ultimoOcteto -lt 1 -or [int]$ultimoOcteto -gt 254) {
                             Write-Host "[ERROR] El octeto ingresado no es valido." -ForegroundColor Red
                             break
@@ -7180,7 +7317,7 @@ function psSubMenu26 {
                         Write-Host "Conectando a: $ipRemota..." -ForegroundColor Yellow
 
                         # 2. Manejo opcional de credenciales de Dominio
-                        $opcionCred = Read-Host "¿Desea usar credenciales de un usuario de Dominio? (SI/NO)"
+                        $opcionCred = Read-Host "Â¿Desea usar credenciales de un usuario de Dominio? (SI/NO)"
                         $usarCredenciales = $false
                         $credenciales = $null
 
@@ -7194,7 +7331,7 @@ function psSubMenu26 {
                         Write-Host "`nObteniendo listado de cuentas locales de la PC remota..." -ForegroundColor Yellow
                         
                         try {
-                            # Conexión al contenedor de la máquina remota
+                            # ConexiÃ³n al contenedor de la mÃ¡quina remota
                             if ($usarCredenciales) {
                                 # Se utiliza el ensamblador nativo de .NET para pasar las credenciales de forma segura
                                 $username = $credenciales.UserName
@@ -7237,7 +7374,7 @@ function psSubMenu26 {
                             break
                         }
 
-                        # 4. Selección del usuario al que se le cambiará la contraseña
+                        # 4. SelecciÃ³n del usuario al que se le cambiarÃ¡ la contraseÃ±a
                         Write-Host "--------------------------------------------------" -ForegroundColor Cyan
                         $usuarioSeleccionado = Read-Host "Ingrese el NOMBRE del usuario local a modificar"
                         
@@ -7249,7 +7386,7 @@ function psSubMenu26 {
                             break
                         }
 
-                        # 5. Ingreso y cambio de la nueva contraseña
+                        # 5. Ingreso y cambio de la nueva contraseÃ±a
                         $nuevaPassword = Read-Host "Ingrese la NUEVA CONTRASENIA para el usuario ($usuarioSeleccionado)"
                         $confirmarPassword = Read-Host "Confirme la NUEVA CONTRASENIA"
 
@@ -7258,11 +7395,11 @@ function psSubMenu26 {
                             break
                         }
 
-                        # 6. Aplicar el cambio de contraseña de forma remota
+                        # 6. Aplicar el cambio de contraseÃ±a de forma remota
                         try {
                             Write-Host "`nAplicando cambios en el sistema remoto..." -ForegroundColor Yellow
                             
-                            # Obtener el objeto ADSI específico del usuario seleccionado
+                            # Obtener el objeto ADSI especÃ­fico del usuario seleccionado
                             if ($usarCredenciales) {
                                 $username = $credenciales.UserName
                                 $password = $credenciales.GetNetworkCredential().Password
@@ -7272,7 +7409,7 @@ function psSubMenu26 {
                                 $usuarioObj = [ADSI]"WinNT://$ipRemota/$usuarioSeleccionado,user"
                             }
 
-                            # Invocar el método nativo .SetPassword() de la API de Windows
+                            # Invocar el mÃ©todo nativo .SetPassword() de la API de Windows
                             $usuarioObj.SetPassword($nuevaPassword)
                             $usuarioObj.CommitChanges()
 
@@ -7301,6 +7438,543 @@ function psSubMenu26 {
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op26"
    
+                }
+
+                "4.1" {
+                    cabecera
+                    menuOpcion "Se encuentra en: OPTIMIZACION Y LIMPIEZA REMOTA -> Eliminar Archivos TEMPORALES CARPETAS"
+                    
+                    $ctx = Get-RemoteConnectionContext
+                    if ($null -ne $ctx) {
+                        $ipRemota = $ctx.ComputerName
+                        $cred = $ctx.Credential
+                        
+                        $drive = Mount-RemoteCShare -ComputerName $ipRemota -Credential $cred
+                        if ($null -ne $drive) {
+                            Write-Host "Iniciando limpieza de temporales en el equipo remoto $ipRemota..." -ForegroundColor Yellow
+                            
+                            # 1. Limpieza de Windows\Temp
+                            Write-Host " > Limpiando Temp de Windows..." -NoNewline
+                            Remove-Item -Path "${drive}:\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
+                            Write-Host " [OK]" -ForegroundColor Green
+                            
+                            # 2. Limpieza de Windows\Prefetch
+                            Write-Host " > Limpiando Prefetch de Windows..." -NoNewline
+                            Remove-Item -Path "${drive}:\Windows\Prefetch\*" -Recurse -Force -ErrorAction SilentlyContinue
+                            Write-Host " [OK]" -ForegroundColor Green
+                            
+                            # 3. Limpieza de Temp del Usuario con Sesion Activa
+                            Write-Host " > Identificando usuario activo..." -NoNewline
+                            try {
+                                if ($null -ne $cred) {
+                                    $compSystem = Get-WmiObject -Class Win32_ComputerSystem -ComputerName $ipRemota -Credential $cred -ErrorAction Stop
+                                }
+                                else {
+                                    $compSystem = Get-WmiObject -Class Win32_ComputerSystem -ComputerName $ipRemota -ErrorAction Stop
+                                }
+                                $activeUser = $compSystem.UserName
+                                if ($activeUser) {
+                                    $userName = $activeUser.Split('\')[-1]
+                                    Write-Host " [$userName]" -ForegroundColor Cyan
+                                    
+                                    Write-Host " > Limpiando Temp de Usuario ($userName)..." -NoNewline
+                                    $profilePath = "${drive}:\Users\$userName\AppData\Local\Temp"
+                                    if (Test-Path $profilePath) {
+                                        Remove-Item -Path "$profilePath\*" -Recurse -Force -ErrorAction SilentlyContinue
+                                        Write-Host " [OK]" -ForegroundColor Green
+                                    }
+                                    else {
+                                        if ($null -ne $cred) {
+                                            $profiles = Get-WmiObject -Class Win32_UserProfile -ComputerName $ipRemota -Credential $cred -ErrorAction SilentlyContinue
+                                        }
+                                        else {
+                                            $profiles = Get-WmiObject -Class Win32_UserProfile -ComputerName $ipRemota -ErrorAction SilentlyContinue
+                                        }
+                                        $matchProfile = $profiles | Where-Object { $_.LocalPath -like "*\$userName" } | Select-Object -First 1
+                                        if ($matchProfile) {
+                                            $customPath = $matchProfile.LocalPath.Replace("C:\", "${drive}:\")
+                                            $tempPath = Join-Path $customPath "AppData\Local\Temp"
+                                            if (Test-Path $tempPath) {
+                                                Remove-Item -Path "$tempPath\*" -Recurse -Force -ErrorAction SilentlyContinue
+                                                Write-Host " [OK]" -ForegroundColor Green
+                                            }
+                                            else {
+                                                Write-Host " [No Encontrado]" -ForegroundColor Red
+                                            }
+                                        }
+                                        else {
+                                            Write-Host " [No Encontrado]" -ForegroundColor Red
+                                        }
+                                    }
+                                }
+                                else {
+                                    Write-Host " [Ninguno]" -ForegroundColor Gray
+                                }
+                            }
+                            catch {
+                                Write-Host " [Error: $_]" -ForegroundColor Red
+                            }
+                            
+                            Dismount-RemoteCShare -driveName $drive
+                            Write-Host "Limpieza remota completada." -ForegroundColor White -BackgroundColor DarkGreen
+                        }
+                    }
+                    Write-Host ""
+                }
+
+                "4.2" {
+                    cabecera
+                    menuOpcion "Se encuentra en: OPTIMIZACION Y LIMPIEZA REMOTA -> Eliminar Archivos Temporales ProgramData"
+                    
+                    $ctx = Get-RemoteConnectionContext
+                    if ($null -ne $ctx) {
+                        $ipRemota = $ctx.ComputerName
+                        $cred = $ctx.Credential
+                        
+                        $drive = Mount-RemoteCShare -ComputerName $ipRemota -Credential $cred
+                        if ($null -ne $drive) {
+                            Write-Host "Iniciando limpieza de ProgramData remota..." -ForegroundColor Yellow
+                            
+                            $excluir = @("*Microsoft*", "*Package Cache*", "*Antivirus*", "*SoftwareLicensing*", "*NVIDIA*")
+                            
+                            Write-Host " > Escaneando y eliminando temporales obsoletos..." -NoNewline
+                            $targetPath = "${drive}:\ProgramData"
+                            if (Test-Path $targetPath) {
+                                Get-ChildItem -Path $targetPath -Recurse -File -Force -ErrorAction SilentlyContinue | 
+                                Where-Object {
+                                    $itemPath = $_.FullName
+                                    $safe = $true
+                                    foreach ($pattern in $excluir) {
+                                        if ($itemPath -like $pattern) { $safe = $false; break }
+                                    }
+                                    $safe -and 
+                                    ($_.Extension -match "\.(tmp|log|bak|old|chk|temp)$") -and 
+                                    ($_.LastWriteTime -lt (Get-Date).AddDays(-7))
+                                } | Remove-Item -Force -ErrorAction SilentlyContinue
+                                Write-Host " [OK]" -ForegroundColor Green
+                            }
+                            else {
+                                Write-Host " [Error: Ruta no encontrada]" -ForegroundColor Red
+                            }
+                            
+                            Dismount-RemoteCShare -driveName $drive
+                            Write-Host "Limpieza de ProgramData completada." -ForegroundColor White -BackgroundColor DarkGreen
+                        }
+                    }
+                    Write-Host ""
+                }
+
+                "4.3" {
+                    cabecera
+                    menuOpcion "Se encuentra en: OPTIMIZACION Y LIMPIEZA REMOTA -> Liberar RAM Remoto"
+                    
+                    $ctx = Get-RemoteConnectionContext
+                    if ($null -ne $ctx) {
+                        $ipRemota = $ctx.ComputerName
+                        $cred = $ctx.Credential
+                        
+                        $drive = Mount-RemoteCShare -ComputerName $ipRemota -Credential $cred
+                        if ($null -ne $drive) {
+                            Write-Host "Preparando ejecucion remota de optimizacion de RAM..." -ForegroundColor Yellow
+                            
+                            $remoteScriptContent = @'
+$codigoC = "
+    using System;
+    using System.Runtime.InteropServices;
+    public class RamUtil {
+        [DllImport(\"psapi.dll\")]
+        public static extern bool EmptyWorkingSet(IntPtr hProcess);
+    }
+"
+if (-not ([System.Management.Automation.PSTypeName]"RamUtil").Type) {
+    Add-Type -TypeDefinition $codigoC -ErrorAction SilentlyContinue
+}
+$procesos = [System.Diagnostics.Process]::GetProcesses()
+$count = 0
+foreach ($p in $procesos) {
+    if ($p.Id -gt 4) {
+        try {
+            if ([RamUtil]::EmptyWorkingSet($p.Handle)) {
+                $count++
+            }
+        } catch {}
+    }
+    if ($p) { $p.Dispose() }
+}
+Write-Output "Optimizado $count procesos."
+'@
+                            $remoteScriptPath = "${drive}:\Windows\Temp\clean_ram_remote.ps1"
+                            try {
+                                $remoteScriptContent | Out-File -FilePath $remoteScriptPath -Encoding ascii -Force -ErrorAction Stop
+                                Write-Host "Script de limpieza copiado al equipo remoto." -ForegroundColor Green
+                            }
+                            catch {
+                                Write-Host "[ERROR] No se pudo copiar el script de limpieza: $_" -ForegroundColor Red
+                                Dismount-RemoteCShare -driveName $drive
+                                break
+                            }
+                            
+                            Dismount-RemoteCShare -driveName $drive
+                            
+                            $cmd = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\Windows\Temp\clean_ram_remote.ps1"
+                            Write-Host "Ejecutando script de optimizacion en segundo plano..." -ForegroundColor Yellow
+                            
+                            try {
+                                if ($null -ne $cred) {
+                                    $result = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $cmd -ComputerName $ipRemota -Credential $cred
+                                }
+                                else {
+                                    $result = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $cmd -ComputerName $ipRemota
+                                }
+                                
+                                if ($result.ReturnValue -eq 0 -and $result.ProcessId) {
+                                    $remotePid = $result.ProcessId
+                                    Write-Host "Proceso remoto iniciado exitosamente (PID: $remotePid)." -ForegroundColor Green
+                                    Write-Host "Esperando finalizacion..." -ForegroundColor Yellow
+                                    
+                                    $timeout = 20
+                                    $elapsed = 0
+                                    while ($elapsed -lt $timeout) {
+                                        Start-Sleep -Seconds 1
+                                        if ($null -ne $cred) {
+                                            $procCheck = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -Credential $cred -ErrorAction SilentlyContinue
+                                        }
+                                        else {
+                                            $procCheck = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -ErrorAction SilentlyContinue
+                                        }
+                                        if ($null -eq $procCheck) { break }
+                                        $elapsed++
+                                    }
+                                    Write-Host "Optimizacion finalizada en segundo plano." -ForegroundColor Green
+                                    
+                                    $drive = Mount-RemoteCShare -ComputerName $ipRemota -Credential $cred
+                                    if ($null -ne $drive) {
+                                        Remove-Item -Path "${drive}:\Windows\Temp\clean_ram_remote.ps1" -Force -ErrorAction SilentlyContinue
+                                        Dismount-RemoteCShare -driveName $drive
+                                    }
+                                }
+                                else {
+                                    Write-Host "[ERROR] El proceso remoto retorno un error: $($result.ReturnValue)" -ForegroundColor Red
+                                }
+                            }
+                            catch {
+                                Write-Host "[ERROR] Fallo la llamada WMI para crear el proceso: $_" -ForegroundColor Red
+                            }
+                        }
+                    }
+                    Write-Host ""
+                }
+
+                "4.4" {
+                    cabecera
+                    menuOpcion "Se encuentra en: OPTIMIZACION Y LIMPIEZA REMOTA -> Liberar Procesador Remoto"
+                    
+                    $ctx = Get-RemoteConnectionContext
+                    if ($null -ne $ctx) {
+                        $ipRemota = $ctx.ComputerName
+                        $cred = $ctx.Credential
+                        
+                        $drive = Mount-RemoteCShare -ComputerName $ipRemota -Credential $cred
+                        if ($null -ne $drive) {
+                            Write-Host "Preparando ejecucion remota de optimizacion de CPU..." -ForegroundColor Yellow
+                            
+                            $remoteScriptContent = @'
+$procesosPesados = Get-Process | Sort-Object CPU -Descending | Select-Object -First 10
+$count = 0
+foreach ($proc in $procesosPesados) {
+    if ($proc.Name -ne "Idle" -and $proc.Name -ne "powershell") {
+        try {
+            $proc.PriorityClass = "BelowNormal"
+            $count++
+        } catch {}
+    }
+}
+[System.GC]::Collect()
+Write-Output "Ajustada prioridad para $count procesos pesados."
+'@
+                            $remoteScriptPath = "${drive}:\Windows\Temp\clean_cpu_remote.ps1"
+                            try {
+                                $remoteScriptContent | Out-File -FilePath $remoteScriptPath -Encoding ascii -Force -ErrorAction Stop
+                                Write-Host "Script de optimizacion copiado al equipo remoto." -ForegroundColor Green
+                            }
+                            catch {
+                                Write-Host "[ERROR] No se pudo copiar el script: $_" -ForegroundColor Red
+                                Dismount-RemoteCShare -driveName $drive
+                                break
+                            }
+                            
+                            Dismount-RemoteCShare -driveName $drive
+                            
+                            $cmd = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\Windows\Temp\clean_cpu_remote.ps1"
+                            Write-Host "Ejecutando script de optimizacion de CPU en segundo plano..." -ForegroundColor Yellow
+                            
+                            try {
+                                if ($null -ne $cred) {
+                                    $result = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $cmd -ComputerName $ipRemota -Credential $cred
+                                }
+                                else {
+                                    $result = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $cmd -ComputerName $ipRemota
+                                }
+                                
+                                if ($result.ReturnValue -eq 0 -and $result.ProcessId) {
+                                    $remotePid = $result.ProcessId
+                                    Write-Host "Proceso remoto iniciado exitosamente (PID: $remotePid)." -ForegroundColor Green
+                                    Write-Host "Esperando finalizacion..." -ForegroundColor Yellow
+                                    
+                                    $timeout = 20
+                                    $elapsed = 0
+                                    while ($elapsed -lt $timeout) {
+                                        Start-Sleep -Seconds 1
+                                        if ($null -ne $cred) {
+                                            $procCheck = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -Credential $cred -ErrorAction SilentlyContinue
+                                        }
+                                        else {
+                                            $procCheck = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -ErrorAction SilentlyContinue
+                                        }
+                                        if ($null -eq $procCheck) { break }
+                                        $elapsed++
+                                    }
+                                    Write-Host "Optimizacion de CPU finalizada." -ForegroundColor Green
+                                    
+                                    $drive = Mount-RemoteCShare -ComputerName $ipRemota -Credential $cred
+                                    if ($null -ne $drive) {
+                                        Remove-Item -Path "${drive}:\Windows\Temp\clean_cpu_remote.ps1" -Force -ErrorAction SilentlyContinue
+                                        Dismount-RemoteCShare -driveName $drive
+                                    }
+                                }
+                                else {
+                                    Write-Host "[ERROR] El proceso remoto retorno un error: $($result.ReturnValue)" -ForegroundColor Red
+                                }
+                            }
+                            catch {
+                                Write-Host "[ERROR] Fallo la llamada WMI: $_" -ForegroundColor Red
+                            }
+                        }
+                    }
+                    Write-Host ""
+                }
+
+                "4.5" {
+                    cabecera
+                    menuOpcion "Se encuentra en: OPTIMIZACION Y LIMPIEZA REMOTA -> Vaciar Papelera de Reciclaje"
+                    
+                    $ctx = Get-RemoteConnectionContext
+                    if ($null -ne $ctx) {
+                        $ipRemota = $ctx.ComputerName
+                        $cred = $ctx.Credential
+                        
+                        $drive = Mount-RemoteCShare -ComputerName $ipRemota -Credential $cred
+                        if ($null -ne $drive) {
+                            Write-Host "Vaciando Papelera de Reciclaje remota..." -ForegroundColor Yellow
+                            
+                            $recyclePath = "${drive}:\`$Recycle.Bin"
+                            if (Test-Path $recyclePath) {
+                                Write-Host " > Limpiando directorios de la papelera..." -NoNewline
+                                Remove-Item -Path "$recyclePath\*" -Recurse -Force -ErrorAction SilentlyContinue
+                                Write-Host " [OK]" -ForegroundColor Green
+                            }
+                            else {
+                                Write-Host "[AVISO] No se encontro la carpeta de la papelera ($recyclePath)." -ForegroundColor Yellow
+                            }
+                            
+                            Dismount-RemoteCShare -driveName $drive
+                            Write-Host "Papelera remota vaciada correctamente." -ForegroundColor White -BackgroundColor DarkGreen
+                        }
+                    }
+                    Write-Host ""
+                }
+
+                "4.6" {
+                    cabecera
+                    menuOpcion "Se encuentra en: OPTIMIZACION Y LIMPIEZA REMOTA -> Eliminacion Avanzada (Todos los Usuarios)"
+                    
+                    $ctx = Get-RemoteConnectionContext
+                    if ($null -ne $ctx) {
+                        $ipRemota = $ctx.ComputerName
+                        $cred = $ctx.Credential
+                        
+                        $drive = Mount-RemoteCShare -ComputerName $ipRemota -Credential $cred
+                        if ($null -ne $drive) {
+                            Write-Host "Preparando ejecucion remota de limpieza profunda de temporales..." -ForegroundColor Yellow
+                            
+                            $remoteScriptContent = @'
+$profilePaths = @()
+try {
+    # Obtener perfiles de usuario locales y de dominio
+    $profiles = Get-WmiObject -Class Win32_UserProfile -Filter "Special=False" -ErrorAction Stop
+    foreach ($p in $profiles) {
+        if ($p.LocalPath -and (Test-Path $p.LocalPath)) {
+            $profilePaths += $p.LocalPath
+        }
+    }
+}
+catch {
+    # Fallback si WMI falla
+    $fallbackPath = "C:\Users"
+    if (Test-Path $fallbackPath) {
+        $profilePaths = Get-ChildItem -Path $fallbackPath -Directory -ErrorAction SilentlyContinue | 
+                        Where-Object { $_.Name -notin "Default", "Default User", "All Users", "Public", "Publico" } | 
+                        Select-Object -ExpandProperty FullName
+    }
+}
+
+$filesDeleted = 0
+$foldersDeleted = 0
+$bytesFreed = 0
+$errors = 0
+
+function Clear-FolderContents {
+    param([string]$FolderPath)
+    if (-not (Test-Path $FolderPath)) { return }
+    
+    # Eliminar archivos y contar tamaño
+    $items = Get-ChildItem -Path "$FolderPath\*" -Recurse -File -Force -ErrorAction SilentlyContinue
+    foreach ($item in $items) {
+        $len = $item.Length
+        try {
+            Remove-Item -Path $item.FullName -Force -ErrorAction Stop
+            $script:filesDeleted++
+            $script:bytesFreed += $len
+        }
+        catch {
+            $script:errors++
+        }
+    }
+    
+    # Eliminar carpetas recursivamente (de mas profunda a mas superficial)
+    $dirs = Get-ChildItem -Path "$FolderPath\*" -Recurse -Directory -Force -ErrorAction SilentlyContinue |
+            Sort-Object -Property @{Expression={$_.FullName.Length}} -Descending
+    foreach ($dir in $dirs) {
+        try {
+            Remove-Item -Path $dir.FullName -Force -Confirm:$false -ErrorAction Stop
+            $script:foldersDeleted++
+        }
+        catch {
+            $script:errors++
+        }
+    }
+}
+
+# 1. Limpieza de perfiles de usuario (Locales y de Dominio)
+foreach ($path in $profilePaths) {
+    Clear-FolderContents -FolderPath (Join-Path $path "AppData\Local\Temp")
+    Clear-FolderContents -FolderPath (Join-Path $path "AppData\Local\Microsoft\Windows\INetCache")
+    Clear-FolderContents -FolderPath (Join-Path $path "AppData\Local\Microsoft\Windows\Temporary Internet Files")
+    Clear-FolderContents -FolderPath (Join-Path $path "AppData\Local\CrashDumps")
+}
+
+# 2. Limpieza de directorios del sistema
+$systemPaths = @(
+    "C:\Windows\Temp",
+    "C:\Windows\Prefetch",
+    "C:\Windows\SoftwareDistribution\Download"
+)
+foreach ($sysPath in $systemPaths) {
+    Clear-FolderContents -FolderPath $sysPath
+}
+
+# Guardar resultados en un archivo simple
+$outputPath = "C:\Windows\Temp\clean_temp_results.txt"
+$report = @(
+    "FilesDeleted=$filesDeleted",
+    "FoldersDeleted=$foldersDeleted",
+    "BytesFreed=$bytesFreed",
+    "Errors=$errors"
+)
+$report | Out-File -FilePath $outputPath -Encoding ascii -Force
+'@
+                            $remoteScriptPath = "${drive}:\Windows\Temp\clean_temp_remote.ps1"
+                            try {
+                                $remoteScriptContent | Out-File -FilePath $remoteScriptPath -Encoding ascii -Force -ErrorAction Stop
+                                Write-Host "Script de limpieza copiado al equipo remoto." -ForegroundColor Green
+                            }
+                            catch {
+                                Write-Host "[ERROR] No se pudo copiar el script de limpieza al destino: $_" -ForegroundColor Red
+                                Dismount-RemoteCShare -driveName $drive
+                                break
+                            }
+                            
+                            Dismount-RemoteCShare -driveName $drive
+                            
+                            $cmd = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\Windows\Temp\clean_temp_remote.ps1"
+                            Write-Host "Ejecutando script de limpieza profunda en segundo plano..." -ForegroundColor Yellow
+                            
+                            try {
+                                if ($null -ne $cred) {
+                                    $result = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $cmd -ComputerName $ipRemota -Credential $cred
+                                }
+                                else {
+                                    $result = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $cmd -ComputerName $ipRemota
+                                }
+                                
+                                if ($result.ReturnValue -eq 0 -and $result.ProcessId) {
+                                    $remotePid = $result.ProcessId
+                                    Write-Host "Proceso remoto iniciado exitosamente (PID: $remotePid)." -ForegroundColor Green
+                                    Write-Host "Realizando limpieza profunda (esto puede tardar unos momentos)..." -ForegroundColor Yellow
+                                    
+                                    $timeout = 300
+                                    $elapsed = 0
+                                    while ($elapsed -lt $timeout) {
+                                        Start-Sleep -Seconds 2
+                                        if ($null -ne $cred) {
+                                            $procCheck = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -Credential $cred -ErrorAction SilentlyContinue
+                                        }
+                                        else {
+                                            $procCheck = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -ErrorAction SilentlyContinue
+                                        }
+                                        if ($null -eq $procCheck) { break }
+                                        $elapsed += 2
+                                        Write-Host "." -NoNewline
+                                    }
+                                    Write-Host ""
+                                    
+                                    # Volvemos a montar para leer resultados y limpiar archivos temporales creados
+                                    $drive = Mount-RemoteCShare -ComputerName $ipRemota -Credential $cred
+                                    if ($null -ne $drive) {
+                                        $resultsPath = "${drive}:\Windows\Temp\clean_temp_results.txt"
+                                        if (Test-Path $resultsPath) {
+                                            $res = @{}
+                                            Get-Content -Path $resultsPath | ForEach-Object {
+                                                if ($_ -match "^([^=]+)=(.*)$") {
+                                                    $res[$Matches[1]] = $Matches[2]
+                                                }
+                                            }
+                                            
+                                            $filesDeleted = [int]$res["FilesDeleted"]
+                                            $foldersDeleted = [int]$res["FoldersDeleted"]
+                                            $bytesFreed = [int64]$res["BytesFreed"]
+                                            $errorsCount = [int]$res["Errors"]
+                                            
+                                            $totalMBLiberados = [Math]::Round($bytesFreed / 1MB, 2)
+                                            
+                                            Write-Host "-----------------------------------------------------------" -ForegroundColor Gray
+                                            Write-Host "RESUMEN GLOBAL DE LIMPIEZA MULTI-USUARIO REMOTA (AVANZADA):" -ForegroundColor Cyan
+                                            Write-Host "Total archivos eliminados: $filesDeleted" -ForegroundColor White
+                                            Write-Host "Total carpetas eliminadas: $foldersDeleted" -ForegroundColor White
+                                            Write-Host "Total espacio liberado:    $totalMBLiberados MB" -ForegroundColor Green
+                                            Write-Host "Total errores/bloqueados:  $errorsCount" -ForegroundColor Yellow
+                                            Write-Host "-----------------------------------------------------------" -ForegroundColor Gray
+                                        }
+                                        else {
+                                            Write-Host "[ADVERTENCIA] No se pudo obtener el archivo de resultados remotos." -ForegroundColor Yellow
+                                        }
+                                        
+                                        # Eliminar archivos creados
+                                        Remove-Item -Path "${drive}:\Windows\Temp\clean_temp_remote.ps1" -Force -ErrorAction SilentlyContinue
+                                        Remove-Item -Path "${drive}:\Windows\Temp\clean_temp_results.txt" -Force -ErrorAction SilentlyContinue
+                                        Dismount-RemoteCShare -driveName $drive
+                                    }
+                                }
+                                else {
+                                    Write-Host "[ERROR] El proceso remoto retorno un error de inicio: $($result.ReturnValue)" -ForegroundColor Red
+                                }
+                            }
+                            catch {
+                                Write-Host "[ERROR] Fallo al invocar el metodo WMI: $_" -ForegroundColor Red
+                            }
+                        }
+                    }
+                    Write-Host ""
                 }
 
                 "30" { 
@@ -7357,20 +8031,20 @@ function psSubMenu26 {
         
         finally {
             # *************************************************************************************
-            # BLOQUE DE LIMPIEZA Y REFRESCO (Se ejecuta después de cada opción)
+            # BLOQUE DE LIMPIEZA Y REFRESCO (Se ejecuta despuÃ©s de cada opciÃ³n)
             # *************************************************************************************
             
             # 1. Liberar memoria de objetos COM/WMI/CIM colgados
             [System.GC]::Collect()
             [System.GC]::WaitForPendingFinalizers()
 
-            # 2. Eliminar variables temporales de la sesión para evitar errores de "cadena de entrada"
-            # Mantenemos variables críticas del script
+            # 2. Eliminar variables temporales de la sesiÃ³n para evitar errores de "cadena de entrada"
+            # Mantenemos variables crÃ­ticas del script
             Get-Variable | Where-Object { 
                 $_.Name -notmatch 'salirPrincipal|opcion|SCRIPT_PATH|PWD|PS|HOME|Error|PID' 
             } | Remove-Variable -ErrorAction SilentlyContinue
 
-            # 3. Pequeña pausa para estabilizar procesos de red si fuera necesario
+            # 3. PequeÃ±a pausa para estabilizar procesos de red si fuera necesario
             Start-Sleep -Milliseconds 200
         }
     } while (-not $salirSub)
