@@ -2423,7 +2423,212 @@ function psSubMenu25 {
                     Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://raw.githubusercontent.com/spwil/shellWil/main/ShellSW.bat | iex"
                     exit
                 }
-                
+
+                "100" {
+                    $salirSub100 = $false
+                    do {
+                        try {
+                            cabecera
+                            Write-Header " 100. CAPTURA DE PANTALLA REMOTA (SCREENSHOT) "
+                            Write-Host "  1. Tomar captura usando PsExec (Recomendado)." -ForegroundColor Green
+                            Write-Host "  2. Tomar captura usando Tarea Programada (Alternativa)." -ForegroundColor Yellow
+                            Write-Host "  --------------------------------------------------"
+                            Write-Host "  0. V O L V E R   A L   M E N U   A N T E R I O R"
+                            Write-Header "==============================================================="
+                            
+                            $op100 = Read-Host "Seleccione la tarea a realizar"
+                            
+                            switch ($op100) {
+                                "1" {
+                                    cabecera
+                                    menuOpcion "Se encuentra en el SUB_MENU: 100 ;;; Opcion: $op100"
+                                    
+                                    Write-Host "`n--- CAPTURA DE PANTALLA REMOTA CON PSEXEC ---" -ForegroundColor Cyan
+                                    
+                                    $usu = Read-Host "Introduzca Usuario dominio (gmsantacruz\usuario)"
+                                    $cla = Read-Host "Introduzca clave de usuario" -AsSecureString
+                                    
+                                    $ipInput = Read-Host "Introduzca los 2 ultimos segmentos IP (ej. 176.80) o la IP completa"
+                                    if ($ipInput -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$') {
+                                        $IPFinal = $ipInput
+                                    } else {
+                                        $IPFinal = "192.168.$ipInput"
+                                    }
+                                    
+                                    $claTexto = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($cla))
+                                    $psexecPath = "C:\PSTools\PsExec.exe"
+                                    
+                                    if (-not (Test-Path $psexecPath)) {
+                                        Write-Host "[-] ERROR: PsExec.exe no detectado en $psexecPath" -ForegroundColor Red
+                                        Write-Host "Coloque PsExec.exe en C:\PSTools\ para habilitar esta funcion." -ForegroundColor Gray
+                                        Read-Host "Presione ENTER para continuar..."
+                                        break
+                                    }
+                                    
+                                    # Resolución de Hostname para soporte Kerberos en Dominio
+                                    $computerTarget = $IPFinal
+                                    Write-Host "[*] Resolviendo Hostname de $IPFinal..." -ForegroundColor Gray
+                                    try {
+                                        $entry = [System.Net.Dns]::GetHostEntry($IPFinal)
+                                        $computerTarget = $entry.HostName.Split('.')[0]
+                                        Write-Host "[+] Hostname resuelto: $computerTarget (Kerberos habilitado)" -ForegroundColor Green
+                                    }
+                                    catch {
+                                        Write-Host "[-] No se pudo resolver Hostname. Usando IP directamente: $IPFinal" -ForegroundColor Yellow
+                                    }
+                                    
+                                    # 1. Detectar ID de sesión activa del usuario (con reintento de habilitación de administración remota)
+                                    Write-Host "[*] Detectando sesion de usuario activa..." -ForegroundColor Gray
+                                    $sessionId = $null
+                                    $intentosMax = 2
+                                    $intento = 0
+                                    
+                                    while ($null -eq $sessionId -and $intento -lt $intentosMax) {
+                                        $intento++
+                                        try {
+                                            # Obtener ID de la sesión donde corre explorer.exe
+                                            $sessionId = (Get-CimInstance -ClassName Win32_Process -Filter "Name = 'explorer.exe'" -ComputerName $computerTarget).SessionId | Select-Object -First 1
+                                        }
+                                        catch {
+                                            Write-Host "[-] No se pudo consultar la sesion via WMI (Intento $intento de $intentosMax)." -ForegroundColor Yellow
+                                        }
+                                        
+                                        # Fallback a qwinsta si falla WMI
+                                        if ($null -eq $sessionId) {
+                                            $qwinstaOut = qwinsta /server:$computerTarget
+                                            foreach ($line in $qwinstaOut) {
+                                                if ($line -like "*Active*") {
+                                                    $parts = $line -split '\s+'
+                                                    if ($parts[2] -match '^\d+$') { $sessionId = $parts[2] }
+                                                    elseif ($parts[3] -match '^\d+$') { $sessionId = $parts[3] }
+                                                }
+                                            }
+                                        }
+                                        
+                                        # Si falla la detección en el primer intento, ejecutamos el script de habilitación remota reutilizando la función
+                                        if ($null -eq $sessionId -and $intento -lt $intentosMax) {
+                                            Write-Host "`n[!] No se pudo conectar a $computerTarget. Intentando habilitar WMI/RPC/WinRM con las credenciales proporcionadas..." -ForegroundColor Magenta
+                                            psHabilitarAdministracionRemota -targetInput $computerTarget -username $usu -passwordText $claTexto
+                                            Write-Host "[*] Reintentando conexion..." -ForegroundColor Cyan
+                                            Start-Sleep -Seconds 3
+                                        }
+                                    }
+                                    
+                                    if ($null -eq $sessionId) {
+                                        Write-Host "[-] ERROR: No se pudo identificar una sesion de usuario activa en $computerTarget." -ForegroundColor Red
+                                        Write-Host "Es posible que la PC este bloqueada, sin usuarios activos o inaccesible por completo." -ForegroundColor Gray
+                                        Read-Host "Presione ENTER para continuar..."
+                                        break
+                                    }
+                                    
+                                    Write-Host "[+] Sesion activa detectada: ID $sessionId" -ForegroundColor Green
+                                    
+                                    # 2. Generar el script de captura temporal y el wrapper VBS para ejecución silenciosa
+                                    $localTempScript = Join-Path $env:TEMP "cap_temp.ps1"
+                                    $localTempVBS = Join-Path $env:TEMP "run_temp.vbs"
+                                    $remoteTempDir = "\\$computerTarget\c$\Windows\Temp"
+                                    $remoteTempScript = "$remoteTempDir\cap.ps1"
+                                    $remoteTempVBS = "$remoteTempDir\run.vbs"
+                                    
+                                    $scriptCode = @"
+[System.Reflection.Assembly]::LoadWithPartialName('System.Drawing') | Out-Null
+[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null
+try {
+    `$bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    `$bmp = New-Object System.Drawing.Bitmap `$bounds.Width, `$bounds.Height
+    `$graphics = [System.Drawing.Graphics]::FromImage(`$bmp)
+    `$graphics.CopyFromScreen(`$bounds.Location, [System.Drawing.Point]::Empty, `$bounds.Size)
+    `$graphics.Dispose()
+    `$bmp.Save('C:\Windows\Temp\screen.png', [System.Drawing.Imaging.ImageFormat]::Png)
+    `$bmp.Dispose()
+    Write-Output "Captura de pantalla realizada con exito."
+} catch {
+    Write-Error `$_.Exception.Message
+}
+"@
+
+                                    # El parámetro 0 oculta la ventana por completo. True hace que wscript espere a que termine PowerShell.
+                                    $vbsCode = @"
+Set objShell = CreateObject("WScript.Shell")
+objShell.Run "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\Windows\Temp\cap.ps1", 0, True
+"@
+                                    
+                                    try {
+                                        # Escribir archivos temporales locales
+                                        $scriptCode | Out-File -FilePath $localTempScript -Encoding utf8 -Force
+                                        $vbsCode | Out-File -FilePath $localTempVBS -Encoding ascii -Force
+                                        
+                                        # Copiar archivos al host remoto
+                                        if (Test-Path $remoteTempDir) {
+                                            Copy-Item -Path $localTempScript -Destination $remoteTempScript -Force | Out-Null
+                                            Copy-Item -Path $localTempVBS -Destination $remoteTempVBS -Force | Out-Null
+                                        } else {
+                                            throw "No se puede acceder al recurso compartido administrativo en $remoteTempDir"
+                                        }
+                                    }
+                                    catch {
+                                        Write-Host "[-] ERROR: Fallo al copiar los scripts de ejecucion al host remoto: $_" -ForegroundColor Red
+                                        Read-Host "Presione ENTER para continuar..."
+                                        break
+                                    }
+                                    
+                                    # 3. Ejecutar de forma silenciosa mediante wscript.exe en la sesión interactiva del usuario
+                                    Write-Host "[*] Ejecutando captura de pantalla de forma silenciosa..." -ForegroundColor Yellow
+                                    $argumentos = "\\$computerTarget -u gmsantacruz\$usu -p $claTexto -s -i $sessionId -accepteula wscript.exe C:\Windows\Temp\run.vbs"
+                                    
+                                    $proc = Start-Process -FilePath $psexecPath -ArgumentList $argumentos -NoNewWindow -PassThru -Wait
+                                    
+                                    # 4. Recuperar la imagen, guardarla en C:\spscreen y abrirla
+                                    $remoteImage = "\\$computerTarget\c$\Windows\Temp\screen.png"
+                                    $localDestFolder = "C:\spscreen"
+                                    
+                                    if (-not (Test-Path $localDestFolder)) {
+                                        New-Item -ItemType Directory -Path $localDestFolder -Force | Out-Null
+                                        Write-Host "[*] Creado directorio local $localDestFolder" -ForegroundColor Gray
+                                    }
+                                    
+                                    $localImageName = "Captura_${computerTarget}_$(Get-Date -Format 'yyyyMMdd_HHmmss').png"
+                                    $localImageFullPath = Join-Path $localDestFolder $localImageName
+                                    
+                                    if (Test-Path $remoteImage) {
+                                        Move-Item -Path $remoteImage -Destination $localImageFullPath -Force
+                                        Write-Host "[+] EXITO: Captura guardada en $localImageFullPath" -ForegroundColor Green
+                                        # Abrir la imagen en el visor predeterminado
+                                        Start-Process $localImageFullPath
+                                    } else {
+                                        Write-Host "[-] ERROR: No se genero la captura. Verifique los permisos de administrador en la maquina destino." -ForegroundColor Red
+                                    }
+                                    
+                                    # 5. Limpieza local y remota de rastros
+                                    if (Test-Path $remoteTempScript) { Remove-Item -Path $remoteTempScript -Force | Out-Null }
+                                    if (Test-Path $remoteTempVBS) { Remove-Item -Path $remoteTempVBS -Force | Out-Null }
+                                    if (Test-Path $localTempScript) { Remove-Item -Path $localTempScript -Force | Out-Null }
+                                    if (Test-Path $localTempVBS) { Remove-Item -Path $localTempVBS -Force | Out-Null }
+                                    
+                                    Read-Host "`nPresione ENTER para continuar..."
+                                }
+                                
+                                "2" {
+                                    cabecera
+                                    menuOpcion "Se encuentra en el SUB_MENU: 100 ;;; Opcion: $op100"
+                                    Write-Host "`n--- CAPTURA DE PANTALLA REMOTA CON TAREA PROGRAMADA ---" -ForegroundColor Cyan
+                                    Write-Host "[INFO] Esta funcionalidad esta en fase de planificacion y diseño." -ForegroundColor Yellow
+                                    Write-Host "En proximas versiones podra ejecutarse sin requerir PsExec." -ForegroundColor Gray
+                                    Read-Host "`nPresione ENTER para continuar..."
+                                }
+                                
+                                "0" {
+                                    $salirSub100 = $true
+                                }
+                            }
+                        }
+                        catch {
+                            Write-Host "[-] ERROR: Ocurrio un fallo en el submenu de captura: $_" -ForegroundColor Red
+                            Read-Host "Presione ENTER para continuar..."
+                        }
+                    } while (-not $salirSub100)
+                }
+
                 "0" { 
                     # $salirSub = $true 
                     menuPrincipal

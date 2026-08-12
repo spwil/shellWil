@@ -1247,108 +1247,262 @@ Write-Output "Ajustada prioridad para $count procesos pesados."
                         
                         $drive = Mount-RemoteCShare -ComputerName $ipRemota -Credential $cred
                         if ($null -ne $drive) {
-                            Write-Host "Preparando ejecucion remota de limpieza profunda de temporales..." -ForegroundColor Yellow
+                            Write-Host "Preparando ejecucion remota de limpieza profunda de temporales con desglose de usuarios..." -ForegroundColor Yellow
                             
                             $remoteScriptContent = @'
 $profilePaths = @()
 try {
-    # Obtener perfiles de usuario locales y de dominio
-    $profiles = Get-WmiObject -Class Win32_UserProfile -Filter "Special=False" -ErrorAction Stop
-    foreach ($p in $profiles) {
-        if ($p.LocalPath -and (Test-Path $p.LocalPath)) {
-            $profilePaths += $p.LocalPath
+    # 1. Obtener perfiles de usuario locales y de dominio desde el Registro de Windows
+    $profileKeys = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\*" -ErrorAction Stop
+    foreach ($pk in $profileKeys) {
+        $path = $pk.ProfileImagePath
+        if ($path -and (Test-Path -LiteralPath $path)) {
+            if ($path -notmatch "System32" -and $path -notmatch "ServiceProfiles") {
+                if ($path -notin $profilePaths) {
+                    $profilePaths += $path
+                }
+            }
         }
     }
 }
 catch {
-    # Fallback si WMI falla
-    $fallbackPath = "C:\Users"
-    if (Test-Path $fallbackPath) {
-        $profilePaths = Get-ChildItem -Path $fallbackPath -Directory -ErrorAction SilentlyContinue | 
-                        Where-Object { $_.Name -notin "Default", "Default User", "All Users", "Public", "Publico" } | 
-                        Select-Object -ExpandProperty FullName
+    # Fallback 1: WMI si el registro falla
+    try {
+        $profiles = Get-WmiObject -Class Win32_UserProfile -Filter "Special=False" -ErrorAction Stop
+        foreach ($p in $profiles) {
+            if ($p.LocalPath -and (Test-Path -LiteralPath $p.LocalPath)) {
+                if ($p.LocalPath -notin $profilePaths) {
+                    $profilePaths += $p.LocalPath
+                }
+            }
+        }
+    }
+    catch {
+        # Fallback 2: Listar directorio C:\Users
+        $fallbackPath = "C:\Users"
+        if (Test-Path -LiteralPath $fallbackPath) {
+            $folders = Get-ChildItem -LiteralPath $fallbackPath -Directory -ErrorAction SilentlyContinue
+            foreach ($f in $folders) {
+                if ($f.Name -notin "Default", "Default User", "All Users", "Public", "Publico") {
+                    $profilePaths += $f.FullName
+                }
+            }
+        }
     }
 }
 
-$filesDeleted = 0
-$foldersDeleted = 0
-$bytesFreed = 0
-$errors = 0
+$report = @()
 
+# Datos globales de progreso remoto
+$global:progressData = @{}
+$global:lastUpdate = [DateTime]::MinValue
+$UserTimeoutSeconds = 30
+
+function Write-ProgressFile {
+    param(
+        [string]$currentUser,
+        [string]$status
+    )
+    # Tasa limite: Solo escribir si ha pasado 1 segundo desde la ultima escritura,
+    # a menos que el estado sea "Done", "Error" o "Timeout".
+    $now = Get-Date
+    if (($now - $global:lastUpdate).TotalSeconds -lt 1 -and $status -ne "Done" -and $status -ne "Error" -and $status -notmatch "Timeout") {
+        return
+    }
+    $global:lastUpdate = $now
+    
+    $lines = @()
+    foreach ($u in $global:progressData.Keys) {
+        $data = $global:progressData[$u]
+        $lines += "User:$u|Path:$($data.Path)|Files:$($data.Files)|Folders:$($data.Folders)|Bytes:$($data.Bytes)|Status:$($data.Status)"
+    }
+    try {
+        $lines | Out-File -FilePath "C:\Windows\Temp\clean_temp_progress.txt" -Encoding UTF8 -Force
+    }
+    catch {}
+}
+
+# Funcion optimizada para vaciar contenidos en un flujo pipeline directo con deteccion de timeout
 function Clear-FolderContents {
-    param([string]$FolderPath)
-    if (-not (Test-Path $FolderPath)) { return }
+    param(
+        [string]$FolderPath,
+        [string]$userName,
+        [ref]$errs,
+        [DateTime]$userStartTime,
+        [int]$timeoutSecs
+    )
+    if (-not (Test-Path -LiteralPath $FolderPath)) { return }
     
-    # Eliminar archivos y contar tamaño
-    $items = Get-ChildItem -Path "$FolderPath\*" -Recurse -File -Force -ErrorAction SilentlyContinue
-    foreach ($item in $items) {
-        $len = $item.Length
+    $dirs = @()
+    
+    try {
+        # Procesar recursivamente mediante canalización (pipeline) para iniciar eliminación y reportar progreso inmediato
+        Get-ChildItem -LiteralPath $FolderPath -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
+            # Evitar auto-eliminación de nuestros archivos de control y comunicación remota
+            if ($_.Name -like "clean_temp_*") {
+                return
+            }
+            
+            # Verificar si se excedio el limite de tiempo de 30 segundos
+            if (((Get-Date) - $userStartTime).TotalSeconds -gt $timeoutSecs) {
+                throw "UserFolderTimeout"
+            }
+            
+            $item = $_
+            if ($item.PSIsContainer) {
+                $dirs += $item
+            }
+            else {
+                $len = $item.Length
+                try {
+                    Remove-Item -LiteralPath $item.FullName -Force -ErrorAction Stop
+                    $global:progressData[$userName].Files++
+                    $global:progressData[$userName].Bytes += $len
+                    Write-ProgressFile -currentUser $userName -status "In Progress"
+                }
+                catch {
+                    $errs.Value++
+                }
+            }
+        }
+    }
+    catch {
+        if ($_.ToString() -match "UserFolderTimeout" -or $_.Exception.Message -match "UserFolderTimeout") {
+            throw "UserFolderTimeout"
+        }
+        $errs.Value++
+    }
+    
+    # 2. Eliminar carpetas recursivamente (de mas profunda a mas superficial)
+    if ($dirs.Count -gt 0) {
+        $sortedDirs = $dirs | Sort-Object -Property @{Expression={$_.FullName.Length}} -Descending
+        foreach ($dir in $sortedDirs) {
+            # Verificar timeout antes de borrar carpetas
+            if (((Get-Date) - $userStartTime).TotalSeconds -gt $timeoutSecs) {
+                throw "UserFolderTimeout"
+            }
+            try {
+                Remove-Item -LiteralPath $dir.FullName -Force -Confirm:$false -ErrorAction Stop
+                $global:progressData[$userName].Folders++
+                Write-ProgressFile -currentUser $userName -status "In Progress"
+            }
+            catch {
+                $errs.Value++
+            }
+        }
+    }
+}
+
+try {
+    # Inicializar estado en el archivo de progreso para todos los perfiles de usuario
+    foreach ($path in $profilePaths) {
+        $uName = Split-Path $path -Leaf
+        $global:progressData[$uName] = @{
+            Path    = $path
+            Files   = 0
+            Folders = 0
+            Bytes   = [int64]0
+            Status  = "Pending"
+        }
+    }
+    # Inicializar sistema
+    $global:progressData["_SYSTEM_"] = @{
+        Path    = "Sistema (Temp/Prefetch/Update/ServiceProfiles)"
+        Files   = 0
+        Folders = 0
+        Bytes   = [int64]0
+        Status  = "Pending"
+    }
+    Write-ProgressFile -currentUser "System" -status "Init"
+
+    # 1. Limpieza de perfiles de usuario (Locales y de Dominio)
+    foreach ($path in $profilePaths) {
+        $userName = Split-Path $path -Leaf
+        $global:progressData[$userName].Status = "In Progress"
+        Write-ProgressFile -currentUser $userName -status "In Progress"
+        
+        $uErrors = 0
+        $userStartTime = Get-Date
+        
         try {
-            Remove-Item -Path $item.FullName -Force -ErrorAction Stop
-            $script:filesDeleted++
-            $script:bytesFreed += $len
+            Clear-FolderContents -FolderPath (Join-Path $path "AppData\Local\Temp") -userName $userName -errs ([ref]$uErrors) -userStartTime $userStartTime -timeoutSecs $UserTimeoutSeconds
+            Clear-FolderContents -FolderPath (Join-Path $path "AppData\LocalLow\Temp") -userName $userName -errs ([ref]$uErrors) -userStartTime $userStartTime -timeoutSecs $UserTimeoutSeconds
+            Clear-FolderContents -FolderPath (Join-Path $path "AppData\Local\Microsoft\Windows\INetCache") -userName $userName -errs ([ref]$uErrors) -userStartTime $userStartTime -timeoutSecs $UserTimeoutSeconds
+            Clear-FolderContents -FolderPath (Join-Path $path "AppData\Local\Microsoft\Windows\Temporary Internet Files") -userName $userName -errs ([ref]$uErrors) -userStartTime $userStartTime -timeoutSecs $UserTimeoutSeconds
+            Clear-FolderContents -FolderPath (Join-Path $path "AppData\Local\CrashDumps") -userName $userName -errs ([ref]$uErrors) -userStartTime $userStartTime -timeoutSecs $UserTimeoutSeconds
+            
+            $global:progressData[$userName].Status = "Done"
+            Write-ProgressFile -currentUser $userName -status "Done"
         }
         catch {
-            $script:errors++
+            if ($_.ToString() -match "UserFolderTimeout" -or $_.Exception.Message -match "UserFolderTimeout") {
+                $global:progressData[$userName].Status = "Timeout"
+                Write-ProgressFile -currentUser $userName -status "Timeout"
+            }
+            else {
+                $global:progressData[$userName].Status = "Error"
+                Write-ProgressFile -currentUser $userName -status "Error"
+            }
+        }
+        
+        $uData = $global:progressData[$userName]
+        $report += "User:$userName|Path:$path|Files:$($uData.Files)|Folders:$($uData.Folders)|Bytes:$($uData.Bytes)|Errors:$uErrors|Status:$($uData.Status)"
+    }
+    
+    # 2. Limpieza de directorios del sistema (incluye perfiles de sistema y servicios)
+    $userName = "_SYSTEM_"
+    $global:progressData[$userName].Status = "In Progress"
+    Write-ProgressFile -currentUser $userName -status "In Progress"
+    
+    $sysErrors = 0
+    $sysStartTime = Get-Date
+    
+    try {
+        $systemPaths = @(
+            "C:\Windows\Temp",
+            "C:\Windows\Prefetch",
+            "C:\Windows\SoftwareDistribution\Download",
+            "C:\Windows\System32\config\systemprofile\AppData\Local\Temp",
+            "C:\Windows\ServiceProfiles\LocalService\AppData\Local\Temp",
+            "C:\Windows\ServiceProfiles\NetworkService\AppData\Local\Temp"
+        )
+        foreach ($sysPath in $systemPaths) {
+            Clear-FolderContents -FolderPath $sysPath -userName $userName -errs ([ref]$sysErrors) -userStartTime $sysStartTime -timeoutSecs $UserTimeoutSeconds
+        }
+        
+        $global:progressData[$userName].Status = "Done"
+        Write-ProgressFile -currentUser $userName -status "Done"
+    }
+    catch {
+        if ($_.ToString() -match "UserFolderTimeout" -or $_.Exception.Message -match "UserFolderTimeout") {
+            $global:progressData[$userName].Status = "Timeout"
+            Write-ProgressFile -currentUser $userName -status "Timeout"
+        }
+        else {
+            $global:progressData[$userName].Status = "Error"
+            Write-ProgressFile -currentUser $userName -status "Error"
         }
     }
     
-    # Eliminar carpetas recursivamente (de mas profunda a mas superficial)
-    $dirs = Get-ChildItem -Path "$FolderPath\*" -Recurse -Directory -Force -ErrorAction SilentlyContinue |
-            Sort-Object -Property @{Expression={$_.FullName.Length}} -Descending
-    foreach ($dir in $dirs) {
-        try {
-            Remove-Item -Path $dir.FullName -Force -Confirm:$false -ErrorAction Stop
-            $script:foldersDeleted++
-        }
-        catch {
-            $script:errors++
-        }
-    }
+    $sysData = $global:progressData[$userName]
+    $report += "User:$userName|Path:$($sysData.Path)|Files:$($sysData.Files)|Folders:$($sysData.Folders)|Bytes:$($sysData.Bytes)|Errors:$sysErrors|Status:$($sysData.Status)"
+    
+    # Guardar resultados finales
+    $outputPath = "C:\Windows\Temp\clean_temp_results.txt"
+    $report | Out-File -FilePath $outputPath -Encoding UTF8 -Force
 }
-
-# 1. Limpieza de perfiles de usuario (Locales y de Dominio)
-foreach ($path in $profilePaths) {
-    Clear-FolderContents -FolderPath (Join-Path $path "AppData\Local\Temp")
-    Clear-FolderContents -FolderPath (Join-Path $path "AppData\Local\Microsoft\Windows\INetCache")
-    Clear-FolderContents -FolderPath (Join-Path $path "AppData\Local\Microsoft\Windows\Temporary Internet Files")
-    Clear-FolderContents -FolderPath (Join-Path $path "AppData\Local\CrashDumps")
+catch {
+    $errPath = "C:\Windows\Temp\clean_temp_errors.txt"
+    $_ | Out-File -FilePath $errPath -Encoding UTF8 -Force
 }
-
-# 2. Limpieza de directorios del sistema
-$systemPaths = @(
-    "C:\Windows\Temp",
-    "C:\Windows\Prefetch",
-    "C:\Windows\SoftwareDistribution\Download"
-)
-foreach ($sysPath in $systemPaths) {
-    Clear-FolderContents -FolderPath $sysPath
-}
-
-# Guardar resultados en un archivo simple
-$outputPath = "C:\Windows\Temp\clean_temp_results.txt"
-$report = @(
-    "FilesDeleted=$filesDeleted",
-    "FoldersDeleted=$foldersDeleted",
-    "BytesFreed=$bytesFreed",
-    "Errors=$errors"
-)
-$report | Out-File -FilePath $outputPath -Encoding ascii -Force
 '@
-                            $remoteScriptPath = "${drive}:\Windows\Temp\clean_temp_remote.ps1"
-                            try {
-                                $remoteScriptContent | Out-File -FilePath $remoteScriptPath -Encoding ascii -Force -ErrorAction Stop
-                                Write-Host "Script de limpieza copiado al equipo remoto." -ForegroundColor Green
-                            }
-                            catch {
-                                Write-Host "[ERROR] No se pudo copiar el script de limpieza al destino: $_" -ForegroundColor Red
-                                Dismount-RemoteCShare -driveName $drive
-                                break
-                            }
+                            # Codificamos el script remoto en Base64 para ejecutarlo directamente en memoria.
+                            # Esto evita bloqueos de ejecución por directivas locales de seguridad (ej. AppLocker o Execution Policy) en C:\Windows\Temp
+                            $scriptBytes = [System.Text.Encoding]::Unicode.GetBytes($remoteScriptContent)
+                            $scriptBase64 = [Convert]::ToBase64String($scriptBytes)
                             
-                            Dismount-RemoteCShare -driveName $drive
-                            
-                            $cmd = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\Windows\Temp\clean_temp_remote.ps1"
+                            # Mantenemos el recurso compartido montado durante la ejecucion para leer el progreso
+                            $cmd = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand $scriptBase64"
                             Write-Host "Ejecutando script de limpieza profunda en segundo plano..." -ForegroundColor Yellow
                             
                             try {
@@ -1362,67 +1516,211 @@ $report | Out-File -FilePath $outputPath -Encoding ascii -Force
                                 if ($result.ReturnValue -eq 0 -and $result.ProcessId) {
                                     $remotePid = $result.ProcessId
                                     Write-Host "Proceso remoto iniciado exitosamente (PID: $remotePid)." -ForegroundColor Green
-                                    Write-Host "Realizando limpieza profunda (esto puede tardar unos momentos)..." -ForegroundColor Yellow
+                                    Write-Host "Realizando limpieza profunda en tiempo real (monitoreando progreso)...`n" -ForegroundColor Yellow
                                     
                                     $timeout = 300
                                     $elapsed = 0
+                                    
+                                    # Registro del progreso reportado para evitar duplicar mensajes
+                                    $lastReport = @{}
+                                    $progressFilePath = "${drive}:\Windows\Temp\clean_temp_progress.txt"
+                                    
                                     while ($elapsed -lt $timeout) {
                                         Start-Sleep -Seconds 2
-                                        if ($null -ne $cred) {
-                                            $procCheck = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -Credential $cred -ErrorAction SilentlyContinue
+                                        
+                                        # 1. Verificar si el proceso sigue ejecutandose (Protegido con try/catch ante caidas de red)
+                                        $procCheck = $null
+                                        try {
+                                            if ($null -ne $cred) {
+                                                $procCheck = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -Credential $cred -ErrorAction Stop
+                                            }
+                                            else {
+                                                $procCheck = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -ErrorAction Stop
+                                            }
                                         }
-                                        else {
-                                            $procCheck = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -ErrorAction SilentlyContinue
+                                        catch {
+                                            # En caso de fallo de WMI (ej. timeout de red), asumimos que el proceso sigue activo
+                                            # para evitar romper el monitoreo en tiempo real prematuramente
+                                            $procCheck = "SimulatedActive"
                                         }
+                                        
+                                        # 2. Leer archivo de progreso y mostrar diferencias
+                                        if (Test-Path -LiteralPath $progressFilePath) {
+                                            try {
+                                                $progressContent = Get-Content -LiteralPath $progressFilePath -Encoding UTF8 -ErrorAction Stop
+                                                if ($progressContent) {
+                                                    foreach ($line in $progressContent) {
+                                                        $parts = $line -split '\|'
+                                                        $stats = @{}
+                                                        foreach ($part in $parts) {
+                                                            if ($part -match "^([^:]+):(.*)$") {
+                                                                $stats[$Matches[1]] = $Matches[2]
+                                                            }
+                                                        }
+                                                        $uName = $stats["User"]
+                                                        $uPath = $stats["Path"]
+                                                        if (-not $uName) { continue }
+                                                        
+                                                        $uFiles = [int]$stats["Files"]
+                                                        $uFolders = [int]$stats["Folders"]
+                                                        $uBytes = [int64]$stats["Bytes"]
+                                                        $uStatus = $stats["Status"]
+                                                        
+                                                        $prev = $lastReport[$uName]
+                                                        
+                                                        # Mostrar actualizacion si no existe estado previo, si cambiaron numeros, o si cambio el estado
+                                                        if ($null -eq $prev -or 
+                                                            $prev.Files -ne $uFiles -or 
+                                                            $prev.Folders -ne $uFolders -or 
+                                                            $prev.Status -ne $uStatus) {
+                                                            
+                                                            $mbUser = [Math]::Round($uBytes / 1MB, 2)
+                                                            
+                                                            # Determinar contexto visual
+                                                            if ($uName -eq "_SYSTEM_") {
+                                                                $displayContext = "Sistema (Temp/Prefetch/Update/ServiceProfiles)"
+                                                            }
+                                                            else {
+                                                                $displayContext = "Carpeta: $uPath (Usuario: $uName)"
+                                                            }
+                                                            
+                                                            if ($uStatus -eq "Done") {
+                                                                Write-Host " -> [COMPLETADO] $displayContext | Archivos: $uFiles | Carpetas: $uFolders | Liberado: $mbUser MB" -ForegroundColor Green
+                                                            }
+                                                            elseif ($uStatus -eq "Timeout") {
+                                                                Write-Host " -> [OMITIDO (TIMEOUT)] $displayContext | Archivos: $uFiles | Carpetas: $uFolders | Excedio limite 30s" -ForegroundColor Yellow
+                                                            }
+                                                            elseif ($uStatus -eq "Error") {
+                                                                Write-Host " -> [ERROR] $displayContext | Limpieza interrumpida" -ForegroundColor Red
+                                                            }
+                                                            elseif ($uStatus -eq "In Progress") {
+                                                                Write-Host " -> [PROGRESO] $displayContext | Archivos: $uFiles | Carpetas: $uFolders | Liberado: $mbUser MB..." -ForegroundColor Yellow
+                                                            }
+                                                            
+                                                            # Guardar estado actual reportado
+                                                            $lastReport[$uName] = @{
+                                                                Files   = $uFiles
+                                                                Folders = $uFolders
+                                                                Status  = $uStatus
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            catch {
+                                                # Ignorar errores de acceso concurrente/lectura del archivo de progreso
+                                            }
+                                        }
+                                        
                                         if ($null -eq $procCheck) { break }
                                         $elapsed += 2
-                                        Write-Host "." -NoNewline
                                     }
                                     Write-Host ""
                                     
-                                    # Volvemos a montar para leer resultados y limpiar archivos temporales creados
-                                    $drive = Mount-RemoteCShare -ComputerName $ipRemota -Credential $cred
-                                    if ($null -ne $drive) {
-                                        $resultsPath = "${drive}:\Windows\Temp\clean_temp_results.txt"
-                                        if (Test-Path $resultsPath) {
-                                            $res = @{}
-                                            Get-Content -Path $resultsPath | ForEach-Object {
-                                                if ($_ -match "^([^=]+)=(.*)$") {
-                                                    $res[$Matches[1]] = $Matches[2]
+                                    # Leer resultados finales y realizar limpieza de archivos de comunicacion remota
+                                    # Implementamos un bucle de reintentos para mitigar la latencia de metadatos de red (caché SMB)
+                                    $resultsPath = "${drive}:\Windows\Temp\clean_temp_results.txt"
+                                    $errorsPath = "${drive}:\Windows\Temp\clean_temp_errors.txt"
+                                    
+                                    $hasResults = $false
+                                    $hasErrors = $false
+                                    for ($i = 0; $i -lt 6; $i++) {
+                                        if (Test-Path -LiteralPath $resultsPath) {
+                                            $hasResults = $true
+                                            break
+                                        }
+                                        if (Test-Path -LiteralPath $errorsPath) {
+                                            $hasErrors = $true
+                                            break
+                                        }
+                                        Start-Sleep -Milliseconds 500
+                                    }
+                                    
+                                    if ($hasResults) {
+                                        Write-Host "`n--- DETALLE FINAL DE LIMPIEZA POR USUARIO ---" -ForegroundColor Cyan
+                                        
+                                        $totalFiles = 0
+                                        $totalFolders = 0
+                                        $totalBytes = 0
+                                        $totalErrors = 0
+                                        
+                                        Get-Content -Path $resultsPath | ForEach-Object {
+                                            $parts = $_ -split '\|'
+                                            $userStats = @{}
+                                            foreach ($part in $parts) {
+                                                if ($part -match "^([^:]+):(.*)$") {
+                                                    $userStats[$Matches[1]] = $Matches[2]
                                                 }
                                             }
                                             
-                                            $filesDeleted = [int]$res["FilesDeleted"]
-                                            $foldersDeleted = [int]$res["FoldersDeleted"]
-                                            $bytesFreed = [int64]$res["BytesFreed"]
-                                            $errorsCount = [int]$res["Errors"]
+                                            $uName = $userStats["User"]
+                                            $uPath = $userStats["Path"]
+                                            $uFiles = [int]$userStats["Files"]
+                                            $uFolders = [int]$userStats["Folders"]
+                                            $uBytes = [int64]$userStats["Bytes"]
+                                            $uErrors = [int]$userStats["Errors"]
+                                            $uStatus = $userStats["Status"]
                                             
-                                            $totalMBLiberados = [Math]::Round($bytesFreed / 1MB, 2)
+                                            $totalFiles += $uFiles
+                                            $totalFolders += $uFolders
+                                            $totalBytes += $uBytes
+                                            $totalErrors += $uErrors
                                             
-                                            Write-Host "-----------------------------------------------------------" -ForegroundColor Gray
-                                            Write-Host "RESUMEN GLOBAL DE LIMPIEZA MULTI-USUARIO REMOTA (AVANZADA):" -ForegroundColor Cyan
-                                            Write-Host "Total archivos eliminados: $filesDeleted" -ForegroundColor White
-                                            Write-Host "Total carpetas eliminadas: $foldersDeleted" -ForegroundColor White
-                                            Write-Host "Total espacio liberado:    $totalMBLiberados MB" -ForegroundColor Green
-                                            Write-Host "Total errores/bloqueados:  $errorsCount" -ForegroundColor Yellow
-                                            Write-Host "-----------------------------------------------------------" -ForegroundColor Gray
-                                        }
-                                        else {
-                                            Write-Host "[ADVERTENCIA] No se pudo obtener el archivo de resultados remotos." -ForegroundColor Yellow
+                                            $mbUser = [Math]::Round($uBytes / 1MB, 2)
+                                            
+                                            if ($uName -eq "_SYSTEM_") {
+                                                $displayContext = "Sistema (Temp/Prefetch/Update/ServiceProfiles)"
+                                            }
+                                            else {
+                                                $displayContext = "Carpeta: $uPath (Usuario: $uName)"
+                                            }
+                                            
+                                            $statusLabel = ""
+                                            $color = "White"
+                                            if ($uStatus -eq "Timeout") {
+                                                $statusLabel = " [OMITIDO POR TIMEOUT]"
+                                                $color = "Yellow"
+                                            }
+                                            
+                                            Write-Host "[$displayContext]$statusLabel" -ForegroundColor $color
+                                            Write-Host "  -> Archivos eliminados: $uFiles" -ForegroundColor Green
+                                            Write-Host "  -> Carpetas eliminadas: $uFolders" -ForegroundColor Green
+                                            Write-Host "  -> Espacio liberado   : $mbUser MB" -ForegroundColor Green
+                                            Write-Host "  -> Errores/Bloqueados : $uErrors" -ForegroundColor Yellow
+                                            Write-Host ""
                                         }
                                         
-                                        # Eliminar archivos creados
-                                        Remove-Item -Path "${drive}:\Windows\Temp\clean_temp_remote.ps1" -Force -ErrorAction SilentlyContinue
-                                        Remove-Item -Path "${drive}:\Windows\Temp\clean_temp_results.txt" -Force -ErrorAction SilentlyContinue
-                                        Dismount-RemoteCShare -driveName $drive
+                                        $totalMBLiberados = [Math]::Round($totalBytes / 1MB, 2)
+                                        Write-Host "-----------------------------------------------------------" -ForegroundColor Gray
+                                        Write-Host "RESUMEN GLOBAL DE LIMPIEZA MULTI-USUARIO REMOTA (AVANZADA):" -ForegroundColor Cyan
+                                        Write-Host "Total archivos eliminados: $totalFiles" -ForegroundColor White
+                                        Write-Host "Total carpetas eliminadas: $totalFolders" -ForegroundColor White
+                                        Write-Host "Total espacio liberado:    $totalMBLiberados MB" -ForegroundColor Green
+                                        Write-Host "Total errores/bloqueados:  $totalErrors" -ForegroundColor Yellow
+                                        Write-Host "-----------------------------------------------------------" -ForegroundColor Gray
                                     }
+                                    elseif ($hasErrors) {
+                                        Write-Host "`n[ERROR DETECTADO EN EJECUCION REMOTA]" -ForegroundColor Red
+                                        Get-Content -Path $errorsPath | Write-Host -ForegroundColor White
+                                    }
+                                    else {
+                                        Write-Host "[ADVERTENCIA] No se pudo obtener el archivo de resultados remotos." -ForegroundColor Yellow
+                                    }
+                                    
+                                    # Eliminar archivos de resultados creados durante el proceso
+                                    Remove-Item -Path "${drive}:\Windows\Temp\clean_temp_results.txt" -Force -ErrorAction SilentlyContinue
+                                    Remove-Item -Path "${drive}:\Windows\Temp\clean_temp_progress.txt" -Force -ErrorAction SilentlyContinue
+                                    Remove-Item -Path "${drive}:\Windows\Temp\clean_temp_errors.txt" -Force -ErrorAction SilentlyContinue
+                                    Dismount-RemoteCShare -driveName $drive
                                 }
                                 else {
-                                    Write-Host "[ERROR] El proceso remoto retorno un error de inicio: $($result.ReturnValue)" -ForegroundColor Red
+                                    Write-Host "[ERROR] El proceso remoto retorno un error: $($result.ReturnValue)" -ForegroundColor Red
+                                    Dismount-RemoteCShare -driveName $drive
                                 }
                             }
                             catch {
-                                Write-Host "[ERROR] Fallo al invocar el metodo WMI: $_" -ForegroundColor Red
+                                Write-Host "[ERROR] Fallo la llamada WMI: $_" -ForegroundColor Red
+                                Dismount-RemoteCShare -driveName $drive
                             }
                         }
                     }
