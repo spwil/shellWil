@@ -645,7 +645,7 @@ function menuPrincipal {
                             if ([string]::IsNullOrEmpty($gitStatus)) {
                                 Write-Host "No hay cambios pendientes de confirmacion en el repositorio." -ForegroundColor Green
                                 Pop-Location
-                                return
+                                break
                             }
                             Write-Host $gitStatus -ForegroundColor Gray
                             Write-Host ""
@@ -655,7 +655,7 @@ function menuPrincipal {
                             if ([string]::IsNullOrEmpty($desc)) {
                                 Write-Host "`n[!] Operacion cancelada: El mensaje de commit no puede estar vacio." -ForegroundColor Red
                                 Pop-Location
-                                return
+                                break
                             }
 
                             # 6. Confirmación de seguridad
@@ -663,7 +663,7 @@ function menuPrincipal {
                             if ($confirmar -notmatch "^[sS]$") {
                                 Write-Host "`n[!] Operacion cancelada por el usuario." -ForegroundColor Yellow
                                 Pop-Location
-                                return
+                                break
                             }
 
                             # 7. Ejecución de Git
