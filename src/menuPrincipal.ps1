@@ -60,20 +60,88 @@ function menuPrincipal {
                     cabecera
                     menuOpcion "Haz elegido la opcion: $opcion (Hostname e IP)"
 
-                    # 1. Obtener Hostname
+                    # --- OBTENER ESPECIFICACIONES DEL EQUIPO ---
+                    # 1. Hostname
                     $hostname = [System.Net.Dns]::GetHostName()
-                    
-                    # 2. Obtener adaptadores de red activos
-                    $interfaces = [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()
-                    
+
+                    # 2. Marca y Modelo
+                    $sys = Get-WmiObject Win32_ComputerSystem
+                    $marca = if ($sys.Manufacturer) { $sys.Manufacturer.Trim() } else { "Desconocido" }
+                    $modelo = if ($sys.Model) { $sys.Model.Trim() } else { "Desconocido" }
+
+                    # 3. Dominio / Grupo de trabajo
+                    $redGrupo = ""
+                    if ($sys.PartOfDomain) {
+                        $redGrupo = "Dominio: $($sys.Domain)"
+                    } else {
+                        $redGrupo = "Grupo de Trabajo: $($sys.Domain)"
+                    }
+
+                    # 4. Sistema Operativo
+                    $os = Get-WmiObject Win32_OperatingSystem
+                    $osName = if ($os.Caption) { $os.Caption.Trim() } else { "Windows (Desconocido)" }
+                    $osVer = if ($os.Version) { $os.Version.Trim() } else { "" }
+                    $osArch = if ($os.OSArchitecture) { $os.OSArchitecture.Trim() } else { "" }
+                    $osDisplay = $osName
+                    if ($osVer) { $osDisplay += " ($osVer)" }
+                    if ($osArch) { $osDisplay += " $osArch" }
+
+                    # 5. Microprocesador (CPU)
+                    $cpu = Get-WmiObject Win32_Processor | Select-Object -First 1
+                    $cpuName = if ($cpu -and $cpu.Name) { $cpu.Name.Trim() } else { "Desconocido" }
+
+                    # 6. Memoria RAM
+                    $ramSum = (Get-WmiObject Win32_PhysicalMemory | Measure-Object -Property Capacity -Sum).Sum
+                    if (-not $ramSum) {
+                        $ramSum = $sys.TotalPhysicalMemory
+                    }
+                    $ramGB = if ($ramSum) { [Math]::Round($ramSum / 1GB, 2) } else { 0 }
+
+                    # 7. Almacenamiento Total (Discos Físicos)
+                    $disks = Get-WmiObject Win32_DiskDrive
+                    $totalStorageBytes = 0
+                    $diskDetails = @()
+                    foreach ($disk in $disks) {
+                        if ($disk.Size) {
+                            $totalStorageBytes += $disk.Size
+                            $sizeGB = [Math]::Round($disk.Size / 1GB, 2)
+                            $diskDetails += "      - $($disk.Model): $sizeGB GB"
+                        }
+                    }
+                    $totalStorageGB = [Math]::Round($totalStorageBytes / 1GB, 2)
+
+                    # --- MOSTRAR INFORMACIÓN DEL EQUIPO ---
                     Write-Host "===========================================================" -ForegroundColor Cyan
-                    Write-Host "                  INFORMACION DE RED                       " -ForegroundColor Cyan
+                    Write-Host "            CARACTERISTICAS Y ESPECIFICACIONES             " -ForegroundColor Cyan
                     Write-Host "===========================================================" -ForegroundColor Cyan
                     Write-Host ""
                     Write-Host "  Nombre del Equipo (Hostname): " -NoNewline
                     Write-Host "$hostname" -ForegroundColor Green
+                    Write-Host "  Red / Grupo:                  " -NoNewline
+                    Write-Host "$redGrupo" -ForegroundColor Green
+                    Write-Host "  Marca y Modelo:               " -NoNewline
+                    Write-Host "$marca / $modelo" -ForegroundColor Yellow
+                    Write-Host "  Sistema Operativo:            " -NoNewline
+                    Write-Host "$osDisplay" -ForegroundColor Yellow
+                    Write-Host "  Microprocesador:              " -NoNewline
+                    Write-Host "$cpuName" -ForegroundColor Yellow
+                    Write-Host "  Memoria RAM Instalada:        " -NoNewline
+                    Write-Host "$ramGB GB" -ForegroundColor Yellow
+                    Write-Host "  Almacenamiento Total:         " -NoNewline
+                    Write-Host "$totalStorageGB GB" -ForegroundColor Yellow
+                    foreach ($detail in $diskDetails) {
+                        Write-Host $detail -ForegroundColor Gray
+                    }
                     Write-Host ""
-                    Write-Host "  --- Adaptadores de Red Detectados ---" -ForegroundColor Yellow
+
+                    # --- OBTENER ADAPTADORES DE RED ---
+                    $interfaces = [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()
+
+                    Write-Host "===========================================================" -ForegroundColor Cyan
+                    Write-Host "             CONFIGURACION DE RED Y CONECTIVIDAD           " -ForegroundColor Cyan
+                    Write-Host "===========================================================" -ForegroundColor Cyan
+                    Write-Host ""
+                    Write-Host "  --- Adaptadores de Red Activos ---" -ForegroundColor Yellow
                     Write-Host ""
 
                     $hayAdaptadorActivo = $false
@@ -93,13 +161,35 @@ function menuPrincipal {
 
                             if ($ips.Count -gt 0) {
                                 $hayAdaptadorActivo = $true
-                                Write-Host "  [+] Adaptador: " -NoNewline
+                                
+                                # Tipo de Conectividad (Wired Ethernet vs Wi-Fi)
+                                $tipoConectividad = switch ($adapter.NetworkInterfaceType) {
+                                    "Wireless80211" { "Wi-Fi (Inalambrico)" }
+                                    "Ethernet"      { "Ethernet (Cableado)" }
+                                    Default         { $adapter.NetworkInterfaceType.ToString() }
+                                }
+
+                                # DHCP o IP Fija
+                                $adapterGuid = $adapter.Id.Trim("{}").ToLower()
+                                $wmiConfig = Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.SettingID.Trim("{}").ToLower() -eq $adapterGuid }
+                                $dhcpStatus = "Desconocido"
+                                if ($wmiConfig) {
+                                    if ($wmiConfig.DHCPEnabled) {
+                                        $dhcpStatus = "DHCP"
+                                    } else {
+                                        $dhcpStatus = "IP Fija (Estatica)"
+                                    }
+                                }
+
+                                Write-Host "  [+] Adaptador:  " -NoNewline
                                 Write-Host $adapter.Description -ForegroundColor Cyan
-                                Write-Host "      Estado:    " -NoNewline
+                                Write-Host "      Estado:     " -NoNewline
                                 Write-Host "Conectado / Activo" -ForegroundColor Green
-                                Write-Host "      Tipo:      " -NoNewline
-                                Write-Host $adapter.NetworkInterfaceType
-                                Write-Host "      IP(s):     " -NoNewline
+                                Write-Host "      Conexion:   " -NoNewline
+                                Write-Host $tipoConectividad -ForegroundColor Gray
+                                Write-Host "      Asignacion: " -NoNewline
+                                Write-Host $dhcpStatus -ForegroundColor Gray
+                                Write-Host "      IP(s):      " -NoNewline
                                 Write-Host ($ips -join ", ") -ForegroundColor Yellow
 
                                 # Obtener Puerta de Enlace (Gateway)
@@ -108,7 +198,7 @@ function menuPrincipal {
                                     $gateways += $gateway.Address.ToString()
                                 }
                                 if ($gateways.Count -gt 0) {
-                                    Write-Host "      Gateway:   " -NoNewline
+                                    Write-Host "      Gateway:    " -NoNewline
                                     Write-Host ($gateways -join ", ") -ForegroundColor Gray
                                 }
 
@@ -120,11 +210,11 @@ function menuPrincipal {
                                     }
                                 }
                                 if ($dnsServers.Count -gt 0) {
-                                    Write-Host "      DNS:       " -NoNewline
+                                    Write-Host "      DNS:        " -NoNewline
                                     Write-Host ($dnsServers -join ", ") -ForegroundColor Green
                                 }
                                 else {
-                                    Write-Host "      DNS:       " -NoNewline
+                                    Write-Host "      DNS:        " -NoNewline
                                     Write-Host "No configurados" -ForegroundColor DarkGray
                                 }
                                 Write-Host ""
