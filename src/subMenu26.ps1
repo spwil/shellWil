@@ -271,6 +271,188 @@ function psSubMenu26 {
         }
     }
 
+    function Ejecutar-DefragRemoto {
+        param(
+            [string]$ipRemota,
+            $cred,
+            [string]$driveLetter
+        )
+
+        $drive = Mount-RemoteCShare -ComputerName $ipRemota -Credential $cred
+        if ($null -eq $drive) {
+            return
+        }
+
+        # 1. Crear el script de desfragmentación remota
+        $remoteScriptContent = @'
+param(
+    [string]$DriveLetter = "C"
+)
+$DriveLetter = $DriveLetter.Replace(":", "").Trim().ToUpper()
+
+# Deteccion de tipo de disco (HDD vs SSD)
+$mediaType = "HDD"
+try {
+    $partition = Get-WmiObject -Class Win32_LogicalDiskToPartition | Where-Object { $_.Dependent -match "${DriveLetter}:" }
+    $partDeviceID = $partition.Antecedent.Split('=')[1].Trim('"')
+    
+    if ($partDeviceID -match "Disk #(\d+)") {
+        $diskIndex = [int]$Matches[1]
+        
+        $diskDrive = Get-WmiObject -Class Win32_DiskDrive | Where-Object { $_.Index -eq $diskIndex }
+        
+        # Intentar MSFT_PhysicalDisk para MediaType preciso
+        try {
+            $physDisk = Get-CimInstance -Namespace Root\Microsoft\Windows\Storage -ClassName MSFT_PhysicalDisk -Filter "DeviceId = '$diskIndex'" -ErrorAction Stop
+            if ($physDisk.MediaType -eq 4) {
+                $mediaType = "SSD"
+            } elseif ($physDisk.MediaType -eq 3) {
+                $mediaType = "HDD"
+            }
+        }
+        catch {
+            # Fallback en base al modelo del disco
+            if ($diskDrive.Model -match "SSD|NVME|Solid State|Flash") {
+                $mediaType = "SSD"
+            }
+        }
+    }
+}
+catch {}
+
+Write-Output "Tipo de Soporte Detectado para unidad ${DriveLetter}:: $mediaType"
+
+if ($mediaType -eq "SSD") {
+    Write-Output "Iniciando optimizacion SSD (Trim/ReTrim) en unidad ${DriveLetter}:..."
+    if (Get-Command Optimize-Volume -ErrorAction SilentlyContinue) {
+        Optimize-Volume -DriveLetter $DriveLetter -ReTrim -Verbose
+    } else {
+        defrag.exe ${DriveLetter}: /O /U /V /H
+    }
+} else {
+    Write-Output "Iniciando desfragmentacion HDD en unidad ${DriveLetter}:..."
+    defrag.exe ${DriveLetter}: /U /V /H
+}
+Write-Output "Proceso de optimizacion completado con exito."
+'@
+
+        $remoteScriptPath = "${drive}:\Windows\Temp\defrag_remote.ps1"
+        $logPath = "${drive}:\Windows\Temp\defrag_remote.log"
+        
+        # Eliminar log anterior si existe
+        if (Test-Path $logPath) {
+            Remove-Item -Path $logPath -Force -ErrorAction SilentlyContinue
+        }
+
+        try {
+            $remoteScriptContent | Out-File -FilePath $remoteScriptPath -Encoding ascii -Force -ErrorAction Stop
+            Write-Host "Script de desfragmentacion copiado al equipo remoto." -ForegroundColor Green
+        }
+        catch {
+            Write-Host "[ERROR] No se pudo copiar el script de desfragmentacion: $_" -ForegroundColor Red
+            Dismount-RemoteCShare -driveName $drive
+            return
+        }
+
+        # 2. Iniciar el proceso remoto en segundo plano usando cmd.exe para redirigir la salida
+        $cmd = "cmd.exe /c `"powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\Windows\Temp\defrag_remote.ps1 -DriveLetter $driveLetter > C:\Windows\Temp\defrag_remote.log 2>&1`""
+        Write-Host "Iniciando desfragmentacion/optimizacion en el equipo remoto..." -ForegroundColor Yellow
+
+        try {
+            if ($null -ne $cred) {
+                $result = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $cmd -ComputerName $ipRemota -Credential $cred
+            }
+            else {
+                $result = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $cmd -ComputerName $ipRemota
+            }
+
+            if ($result.ReturnValue -eq 0 -and $result.ProcessId) {
+                $remotePid = $result.ProcessId
+                Write-Host "Proceso remoto iniciado exitosamente (PID: $remotePid)." -ForegroundColor Green
+                Write-Host "----------------------------------------------------------------------" -ForegroundColor Gray
+                Write-Host "Monitoreando progreso en tiempo real..." -ForegroundColor Cyan
+                Write-Host "Presione la tecla 'Q' en cualquier momento para enviarlo a segundo plano." -ForegroundColor Yellow
+                Write-Host "----------------------------------------------------------------------" -ForegroundColor Gray
+
+                $elapsed = 0
+                $finished = $false
+                $aborted = $false
+                $lastLineCount = 0
+                $maxTimeout = 3600  # 1 hora maximo de seguridad
+
+                while ($elapsed -lt $maxTimeout) {
+                    Start-Sleep -Milliseconds 1500
+                    $elapsed += 1.5
+
+                    # Verificar estado del proceso
+                    if ($null -ne $cred) {
+                        $procCheck = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -Credential $cred -ErrorAction SilentlyContinue
+                    }
+                    else {
+                        $procCheck = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -ErrorAction SilentlyContinue
+                    }
+
+                    # Leer y emitir contenido nuevo del log
+                    if (Test-Path $logPath) {
+                        try {
+                            $lines = Get-Content -Path $logPath -ErrorAction SilentlyContinue
+                            if ($lines -and $lines.Count -gt $lastLineCount) {
+                                for ($i = $lastLineCount; $i -lt $lines.Count; $i++) {
+                                    Write-Host $lines[$i] -ForegroundColor Gray
+                                }
+                                $lastLineCount = $lines.Count
+                            }
+                        } catch {}
+                    }
+
+                    # Finalizar si el proceso ya no existe
+                    if ($null -eq $procCheck) {
+                        $finished = $true
+                        break
+                    }
+
+                    # Detectar si el usuario pulso la tecla Q
+                    if ($Host.UI.RawUI.KeyAvailable) {
+                        $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyUp,IncludeKeyDown")
+                        if ($key.Character -eq 'q' -or $key.Character -eq 'Q') {
+                            $aborted = $true
+                            break
+                        }
+                    }
+                }
+
+                if ($finished) {
+                    Write-Host "----------------------------------------------------------------------" -ForegroundColor Gray
+                    Write-Host "[OK] Optimizacion remota finalizada exitosamente." -ForegroundColor Green
+                    
+                    # Limpiar archivos temporales
+                    Remove-Item -Path $logPath -Force -ErrorAction SilentlyContinue
+                    Remove-Item -Path $remoteScriptPath -Force -ErrorAction SilentlyContinue
+                }
+                elseif ($aborted) {
+                    Write-Host "----------------------------------------------------------------------" -ForegroundColor Gray
+                    Write-Host "[!] Monitoreo cancelado por el usuario." -ForegroundColor Yellow
+                    Write-Host "El proceso continuara ejecutandose de forma silenciosa en segundo plano (PID: $remotePid)." -ForegroundColor Green
+                    Write-Host "Los archivos de registro se conservaran en C:\Windows\Temp\" -ForegroundColor Gray
+                }
+                else {
+                    Write-Host "----------------------------------------------------------------------" -ForegroundColor Gray
+                    Write-Host "[!] Se alcanzo el tiempo limite de monitoreo local." -ForegroundColor Yellow
+                    Write-Host "El proceso sigue ejecutandose en el equipo remoto (PID: $remotePid)." -ForegroundColor Green
+                }
+            }
+            else {
+                Write-Host "[ERROR] El proceso remoto retorno un error: $($result.ReturnValue)" -ForegroundColor Red
+            }
+        }
+        catch {
+            Write-Host "[ERROR] Fallo la llamada WMI para crear el proceso: $_" -ForegroundColor Red
+        }
+        finally {
+            Dismount-RemoteCShare -driveName $drive
+        }
+    }
+
     $salirSub = $false
     do {
         try {
@@ -283,15 +465,12 @@ function psSubMenu26 {
             Write-Host "    1.3 Mostrar Datos de Usuario de Dominio, fecha cambio clave." -ForegroundColor Green
             Write-Host "    1.4. Cambiar Clave de Usuario de Dominio." -ForegroundColor Red
             Write-Host "    1.5 Reporte detallado de Usuario de Dominio."
-            Write-Host ""
             Write-Host "  2. GESTION DE USUARIO REMOTO RECURSOS COMPARTIDOS"
             Write-Host "    2.1 Mostrar usuario PC Remota." -ForegroundColor Cyan
             Write-Host "    2.2 Mostrar usuarios activos y no activos del Dominio - PC Remota." -ForegroundColor Cyan
             Write-Host "    2.5 Mostrar Carpetas Compartidas en PC Remota."
-            Write-Host ""
             Write-Host "  3. GESTION DE USUARIO | USUARIO LOCAL |"
             Write-Host "    3.1 Cambiar contrasenia de USUARIO LOCAL en PC REMOTO" -ForegroundColor Cyan            
-            Write-Host ""
             Write-Host "  4. OPTIMIZACION Y LIMPIEZA DE SISTEMA REMOTO:" -ForegroundColor Green
             Write-Host "    4.1. Eliminar Archivos TEMPORALES CARPETAS Remoto" -ForegroundColor DarkCyan
             Write-Host "    4.2. Eliminar Archivos Temporales ProgramData Remoto" -ForegroundColor DarkCyan
@@ -299,7 +478,9 @@ function psSubMenu26 {
             Write-Host "    4.4. Liberar Procesador Remoto" -ForegroundColor DarkCyan
             Write-Host "    4.5. Vaciar Papelera de Reciclaje Remoto" -ForegroundColor DarkCyan
             Write-Host "    4.6. Eliminacion avanzada de temporales (Todos los usuarios) Remoto" -ForegroundColor Yellow
-            Write-Host ""
+            Write-Host "  5. defragmentacion PC Remoto" -ForegroundColor Cyan
+            Write-Host "    5.1 Desfragmentar Unidad C: (Principal)" -ForegroundColor DarkCyan
+            Write-Host "    5.2 Desfragmentar Otras Unidades" -ForegroundColor DarkCyan
             Write-Host "  30. REFRESH." -ForegroundColor Red
             Write-Host "  31. REFRESH DESDE GITHUB (ONLINE)." -ForegroundColor Cyan
             Write-Host ""
@@ -1722,6 +1903,71 @@ catch {
                                 Write-Host "[ERROR] Fallo la llamada WMI: $_" -ForegroundColor Red
                                 Dismount-RemoteCShare -driveName $drive
                             }
+                        }
+                    }
+                    Write-Host ""
+                }
+
+                "5.1" {
+                    cabecera
+                    menuOpcion "Se encuentra en: DEFRAGMENTACION REMOTA -> Unidad C: (Principal)"
+                    
+                    $ctx = Get-RemoteConnectionContext
+                    if ($null -ne $ctx) {
+                        $ipRemota = $ctx.ComputerName
+                        $cred = $ctx.Credential
+                        
+                        Ejecutar-DefragRemoto -ipRemota $ipRemota -cred $cred -driveLetter "C"
+                    }
+                    Write-Host ""
+                }
+
+                "5.2" {
+                    cabecera
+                    menuOpcion "Se encuentra en: DEFRAGMENTACION REMOTA -> Otras Unidades"
+                    
+                    $ctx = Get-RemoteConnectionContext
+                    if ($null -ne $ctx) {
+                        $ipRemota = $ctx.ComputerName
+                        $cred = $ctx.Credential
+                        
+                        Write-Host "Obteniendo listado de unidades logicas en el equipo remoto..." -ForegroundColor Yellow
+                        try {
+                            if ($null -ne $cred) {
+                                $disks = Get-WmiObject -Class Win32_LogicalDisk -Filter "DriveType = 3" -ComputerName $ipRemota -Credential $cred -ErrorAction Stop
+                            } else {
+                                $disks = Get-WmiObject -Class Win32_LogicalDisk -Filter "DriveType = 3" -ComputerName $ipRemota -ErrorAction Stop
+                            }
+
+                            if ($disks) {
+                                Write-Host "`n=== UNIDADES LOGICAS DETECTADAS EN EL EQUIPO REMOTO ===" -ForegroundColor Cyan
+                                Write-Host "------------------------------------------------------------------" -ForegroundColor Gray
+                                Write-Host ("{0,-10} {1,-25} {2,-14} {3,-14}" -f "Unidad", "Etiqueta", "Tamano (GB)", "Libre (GB)") -ForegroundColor White
+                                foreach ($d in $disks) {
+                                    $sizeGB = [Math]::Round($d.Size / 1GB, 2)
+                                    $freeGB = [Math]::Round($d.FreeSpace / 1GB, 2)
+                                    $label = if ($d.VolumeName) { $d.VolumeName } else { "[Sin Etiqueta]" }
+                                    Write-Host ("{0,-10} {1,-25} {2,-14} {3,-14}" -f $d.DeviceID, $label, $sizeGB, $freeGB) -ForegroundColor White
+                                }
+                                Write-Host "------------------------------------------------------------------`n" -ForegroundColor Gray
+
+                                $letra = Read-Host "Ingrese la letra de la unidad a desfragmentar (ej. D)"
+                                $letra = $letra.Replace(":", "").Trim().ToUpper()
+
+                                $validLetters = $disks | ForEach-Object { $_.DeviceID.Replace(":", "").Trim().ToUpper() }
+                                if ($letra -and $validLetters -contains $letra) {
+                                    Ejecutar-DefragRemoto -ipRemota $ipRemota -cred $cred -driveLetter $letra
+                                }
+                                else {
+                                    Write-Host "[ERROR] La unidad seleccionada no existe o no es valida." -ForegroundColor Red
+                                }
+                            }
+                            else {
+                                Write-Host "[ADVERTENCIA] No se detectaron unidades de disco local en el equipo remoto." -ForegroundColor Yellow
+                            }
+                        }
+                        catch {
+                            Write-Host "[ERROR] No se pudo obtener el listado de unidades: $_" -ForegroundColor Red
                         }
                     }
                     Write-Host ""
