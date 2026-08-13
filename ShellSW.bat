@@ -4187,9 +4187,26 @@ function psSubMenu25 {
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
 
                     # 1. Entrada de datos
-                    $baseIP = "192.168.176."
-                    $ultimoOcteto = Read-Host "Ingrese el ultimo octeto de la IP (192.168.176.XXX)"
-                    $ipRemota = $baseIP + $ultimoOcteto
+                    $entrada = Read-Host "Ingrese IP completa, los 2 ultimos octetos (ej. 13.15), el ultimo octeto (ej. 15) o el Hostname"
+                    $entrada = $entrada.Trim()
+
+                    $ipRemota = ""
+                    if ($entrada -match "^[a-zA-Z]") {
+                        # Es un Hostname
+                        $ipRemota = $entrada
+                    }
+                    elseif ($entrada -split "\." -and ($entrada -split "\.").Count -eq 2) {
+                        # Si ingreso exactamente 2 octetos (ej: 13.15)
+                        $ipRemota = "192.168." + $entrada
+                    }
+                    elseif ($entrada -split "\." -and ($entrada -split "\.").Count -eq 1 -and $entrada -match "^\d+$") {
+                        # Si ingreso exactamente 1 octeto (ej: 15)
+                        $ipRemota = "192.168.176." + $entrada
+                    }
+                    else {
+                        # IP Completa u otros formatos
+                        $ipRemota = $entrada
+                    }
 
                     Write-Host "`n--- Consultando informacion de red... ---" -ForegroundColor Yellow
 
@@ -4219,42 +4236,170 @@ function psSubMenu25 {
 
                     try {
                         # 2. Consultas WMI Optimizadas usando el Hostname (o IP fallback)
-                        $sysInfo = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $computerTarget -ErrorAction Stop
-                        
-                        # Obtenemos la configuracion de red filtrando solo adaptadores físicos activos
-                        $nic = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -ComputerName $computerTarget `
-                            -Filter "IPEnabled = TRUE" -ErrorAction Stop | 
-                        Where-Object { $_.Description -notmatch "Virtual|Pseudo|Bluetooth|VPN" } | 
-                        Select-Object -First 1
+                        $sys = Get-WmiObject -Class Win32_ComputerSystem -ComputerName $computerTarget -ErrorAction Stop
+                        $marca = if ($sys.Manufacturer) { $sys.Manufacturer.Trim() } else { "Desconocido" }
+                        $modelo = if ($sys.Model) { $sys.Model.Trim() } else { "Desconocido" }
 
-                        if ($nic) {
-                            # 3. Formateo de la salida
-                            $dnsActuales = "N/A"
-                            if ($nic.DNSServerSearchOrder) {
-                                $dnsActuales = $nic.DNSServerSearchOrder -join ", "
-                            }
-                            $tipoIP = "ESTATICA (MANUAL)"
-                            if ($nic.DHCPEnabled) {
-                                $tipoIP = "DINAMICA (DHCP)"
-                            }
-
-                            Write-Host "`n================================================" -ForegroundColor White
-                            Write-Host " INFORMACION DETALLADA DEL EQUIPO" -ForegroundColor Green
-                            Write-Host "================================================" -ForegroundColor White
-                            
-                            Write-Host " HOST NAME:       $($sysInfo.CSName)" -ForegroundColor Cyan
-                            Write-Host " DIRECCION MAC:   $($nic.MACAddress)" -ForegroundColor Yellow
-                            Write-Host " TIPO DE IP:      $tipoIP"
-                            Write-Host "------------------------------------------------"
-                            Write-Host " DIRECCION IP:    $($nic.IPAddress[0])"
-                            Write-Host " MASCARA:         $($nic.IPSubnet[0])"
-                            Write-Host " GATEWAY:         $($nic.DefaultIPGateway -join ', ')"
-                            Write-Host " DNS:             $dnsActuales"
-                            Write-Host "================================================`n"
-                        } 
-                        else {
-                            Write-Host "No se encontro un adaptador de red activo en $ipRemota." -ForegroundColor Red
+                        # Dominio / Grupo de trabajo
+                        $redGrupo = ""
+                        if ($sys.PartOfDomain) {
+                            $redGrupo = "Dominio: $($sys.Domain)"
+                        } else {
+                            $redGrupo = "Grupo de Trabajo: $($sys.Domain)"
                         }
+
+                        $os = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $computerTarget -ErrorAction Stop
+                        $osName = if ($os.Caption) { $os.Caption.Trim() } else { "Windows (Desconocido)" }
+                        $osVer = if ($os.Version) { $os.Version.Trim() } else { "" }
+                        $osArch = if ($os.OSArchitecture) { $os.OSArchitecture.Trim() } else { "" }
+                        $osDisplay = $osName
+                        if ($osVer) { $osDisplay += " ($osVer)" }
+                        if ($osArch) { $osDisplay += " $osArch" }
+
+                        # Microprocesador (CPU)
+                        $cpu = Get-WmiObject -Class Win32_Processor -ComputerName $computerTarget | Select-Object -First 1
+                        $cpuName = if ($cpu -and $cpu.Name) { $cpu.Name.Trim() } else { "Desconocido" }
+
+                        # Memoria RAM
+                        $ramSum = (Get-WmiObject -Class Win32_PhysicalMemory -ComputerName $computerTarget | Measure-Object -Property Capacity -Sum).Sum
+                        if (-not $ramSum) {
+                            $ramSum = $sys.TotalPhysicalMemory
+                        }
+                        $ramGB = if ($ramSum) { [Math]::Round($ramSum / 1GB, 2) } else { 0 }
+
+                        # Almacenamiento Total (Discos Físicos)
+                        $disks = Get-WmiObject -Class Win32_DiskDrive -ComputerName $computerTarget
+                        $totalStorageBytes = 0
+                        $diskDetails = @()
+                        foreach ($disk in $disks) {
+                            if ($disk.Size) {
+                                $totalStorageBytes += $disk.Size
+                                $sizeGB = [Math]::Round($disk.Size / 1GB, 2)
+                                $diskDetails += "      - $($disk.Model): $sizeGB GB"
+                            }
+                        }
+                        $totalStorageGB = [Math]::Round($totalStorageBytes / 1GB, 2)
+
+                        # --- MOSTRAR INFORMACIÓN DEL EQUIPO ---
+                        Write-Host "===========================================================" -ForegroundColor Cyan
+                        Write-Host "            CARACTERISTICAS Y ESPECIFICACIONES             " -ForegroundColor Cyan
+                        Write-Host "===========================================================" -ForegroundColor Cyan
+                        Write-Host ""
+                        Write-Host "  Nombre del Equipo (Hostname): " -NoNewline
+                        Write-Host "$($sys.Name)" -ForegroundColor Green
+                        Write-Host "  Red / Grupo:                  " -NoNewline
+                        Write-Host "$redGrupo" -ForegroundColor Green
+                        Write-Host "  Marca y Modelo:               " -NoNewline
+                        Write-Host "$marca / $modelo" -ForegroundColor Yellow
+                        Write-Host "  Sistema Operativo:            " -NoNewline
+                        Write-Host "$osDisplay" -ForegroundColor Yellow
+                        Write-Host "  Microprocesador:              " -NoNewline
+                        Write-Host "$cpuName" -ForegroundColor Yellow
+                        Write-Host "  Memoria RAM Instalada:        " -NoNewline
+                        Write-Host "$ramGB GB" -ForegroundColor Yellow
+                        Write-Host "  Almacenamiento Total:         " -NoNewline
+                        Write-Host "$totalStorageGB GB" -ForegroundColor Yellow
+                        foreach ($detail in $diskDetails) {
+                            Write-Host $detail -ForegroundColor Gray
+                        }
+                        Write-Host ""
+
+                        # --- OBTENER ADAPTADORES DE RED REMOTOS ---
+                        $nicConfigs = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -ComputerName $computerTarget -Filter "IPEnabled = TRUE"
+                        
+                        Write-Host "===========================================================" -ForegroundColor Cyan
+                        Write-Host "             CONFIGURACION DE RED Y CONECTIVIDAD           " -ForegroundColor Cyan
+                        Write-Host "===========================================================" -ForegroundColor Cyan
+                        Write-Host ""
+                        Write-Host "  --- Adaptadores de Red Activos ---" -ForegroundColor Yellow
+                        Write-Host ""
+
+                        $hayAdaptadorActivo = $false
+
+                        foreach ($config in $nicConfigs) {
+                            $ips = @()
+                            if ($config.IPAddress) {
+                                foreach ($ip in $config.IPAddress) {
+                                    if ($ip -match "^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$") {
+                                        $ips += $ip
+                                    }
+                                }
+                            }
+                            if ($ips.Count -eq 0) { continue }
+
+                            $hayAdaptadorActivo = $true
+                            $adapterInfo = Get-WmiObject -Class Win32_NetworkAdapter -ComputerName $computerTarget -Filter "Index = $($config.Index)"
+                            
+                            $tipoConectividad = "Ethernet (Cableado)"
+                            if ($adapterInfo) {
+                                $netConnectionId = $adapterInfo.NetConnectionID
+                                $adapterTypeId = $adapterInfo.AdapterTypeId
+                                if (($netConnectionId -match "Wi-Fi|Wireless|WLAN|Inalámbrica|Inalambrica") -or 
+                                    ($config.Description -match "Wi-Fi|Wireless|WLAN|802\.11") -or 
+                                    ($adapterTypeId -eq 9)) {
+                                    $tipoConectividad = "Wi-Fi (Inalambrico)"
+                                }
+                            } else {
+                                if ($config.Description -match "Wi-Fi|Wireless|WLAN|802\.11") {
+                                    $tipoConectividad = "Wi-Fi (Inalambrico)"
+                                }
+                            }
+
+                            $dhcpStatus = if ($config.DHCPEnabled) { "DHCP" } else { "IP Fija (Estatica)" }
+                            $mac = if ($config.MACAddress) { $config.MACAddress.Trim() } else { "No disponible" }
+
+                            # Gateways
+                            $gateways = @()
+                            if ($config.DefaultIPGateway) {
+                                foreach ($gw in $config.DefaultIPGateway) {
+                                    if ($gw -match "^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$") {
+                                        $gateways += $gw
+                                    }
+                                }
+                            }
+
+                            # DNS
+                            $dnsServers = @()
+                            if ($config.DNSServerSearchOrder) {
+                                foreach ($dns in $config.DNSServerSearchOrder) {
+                                    if ($dns -match "^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$") {
+                                        $dnsServers += $dns
+                                    }
+                                }
+                            }
+
+                            Write-Host "  [+] Adaptador:  " -NoNewline
+                            Write-Host $config.Description -ForegroundColor Cyan
+                            Write-Host "      Estado:     " -NoNewline
+                            Write-Host "Conectado / Activo" -ForegroundColor Green
+                            Write-Host "      Conexion:   " -NoNewline
+                            Write-Host $tipoConectividad -ForegroundColor Gray
+                            Write-Host "      Asignacion: " -NoNewline
+                            Write-Host $dhcpStatus -ForegroundColor Gray
+                            Write-Host "      Direccion MAC: " -NoNewline
+                            Write-Host $mac -ForegroundColor Yellow
+                            Write-Host "      IP(s):      " -NoNewline
+                            Write-Host ($ips -join ", ") -ForegroundColor Yellow
+                            if ($gateways.Count -gt 0) {
+                                Write-Host "      Gateway:    " -NoNewline
+                                Write-Host ($gateways -join ", ") -ForegroundColor Gray
+                            }
+                            if ($dnsServers.Count -gt 0) {
+                                Write-Host "      DNS:        " -NoNewline
+                                Write-Host ($dnsServers -join ", ") -ForegroundColor Green
+                            } else {
+                                Write-Host "      DNS:        " -NoNewline
+                                Write-Host "No configurados" -ForegroundColor DarkGray
+                            }
+                            Write-Host ""
+                        }
+
+                        if (-not $hayAdaptadorActivo) {
+                            Write-Host "  No se detectaron adaptadores de red activos con IPv4 configurada en el equipo remoto." -ForegroundColor Red
+                        }
+
+                        Write-Host "===========================================================" -ForegroundColor Cyan
+                        Write-Host ""
                     }
                     catch {
                         Write-Host "ERROR: No se pudo establecer conexion con $ipRemota ($computerTarget)." -ForegroundColor Red
@@ -9288,6 +9433,10 @@ function menuPrincipal {
                                     }
                                 }
 
+                                # Direccion MAC
+                                $macRaw = $adapter.GetPhysicalAddress().ToString()
+                                $mac = if ($macRaw) { ($macRaw -split '(?<=\G.{2})' | Where-Object { $_ }) -join ":" } else { "No disponible" }
+
                                 Write-Host "  [+] Adaptador:  " -NoNewline
                                 Write-Host $adapter.Description -ForegroundColor Cyan
                                 Write-Host "      Estado:     " -NoNewline
@@ -9296,6 +9445,8 @@ function menuPrincipal {
                                 Write-Host $tipoConectividad -ForegroundColor Gray
                                 Write-Host "      Asignacion: " -NoNewline
                                 Write-Host $dhcpStatus -ForegroundColor Gray
+                                Write-Host "      Direccion MAC: " -NoNewline
+                                Write-Host $mac -ForegroundColor Yellow
                                 Write-Host "      IP(s):      " -NoNewline
                                 Write-Host ($ips -join ", ") -ForegroundColor Yellow
 

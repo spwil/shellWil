@@ -181,6 +181,10 @@ function menuPrincipal {
                                     }
                                 }
 
+                                # Direccion MAC
+                                $macRaw = $adapter.GetPhysicalAddress().ToString()
+                                $mac = if ($macRaw) { ($macRaw -split '(?<=\G.{2})' | Where-Object { $_ }) -join ":" } else { "No disponible" }
+
                                 Write-Host "  [+] Adaptador:  " -NoNewline
                                 Write-Host $adapter.Description -ForegroundColor Cyan
                                 Write-Host "      Estado:     " -NoNewline
@@ -189,6 +193,8 @@ function menuPrincipal {
                                 Write-Host $tipoConectividad -ForegroundColor Gray
                                 Write-Host "      Asignacion: " -NoNewline
                                 Write-Host $dhcpStatus -ForegroundColor Gray
+                                Write-Host "      Direccion MAC: " -NoNewline
+                                Write-Host $mac -ForegroundColor Yellow
                                 Write-Host "      IP(s):      " -NoNewline
                                 Write-Host ($ips -join ", ") -ForegroundColor Yellow
 
