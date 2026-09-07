@@ -4123,6 +4123,7 @@ function psSubMenu25 {
             Write-Host "    1.9 || HABILITAR || WMI, RPC y PSRemoting - en PC REMOTO." -ForegroundColor Green
             Write-Host "  2. Red Grupo de Trabajo y/o Dominio"
             Write-Host "    2.1 Listar Equipos de un Dominio (todo el segmento)"
+            Write-Host "    2.2 Auditoria y Deteccion de Equipos en Red (Nueva Ventana)" -ForegroundColor Cyan
             Write-Host "  3. Reinciar PC remotamente." -ForegroundColor Green
             Write-Host "  4. Apagar PC Remotamente." -ForegroundColor Yellow
             Write-Host "  5. Escritorio Publico PC Remoto." -ForegroundColor Cyan
@@ -4301,6 +4302,151 @@ function psSubMenu25 {
                         Write-Host "$totalStorageGB GB" -ForegroundColor Yellow
                         foreach ($detail in $diskDetails) {
                             Write-Host $detail -ForegroundColor Gray
+                        }
+                        Write-Host ""
+
+                        # --- DETECTAR INFORMACIÓN DEL USUARIO ACTIVO ---
+                        $usuariosActivos = @()
+
+                        # 1. Intentar detectar usuarios interactivos a través de procesos explorer.exe
+                        try {
+                            $procesosExplorer = Get-WmiObject -Class Win32_Process -ComputerName $computerTarget -Filter "Name='explorer.exe'" -ErrorAction SilentlyContinue
+                            if ($procesosExplorer) {
+                                foreach ($proc in $procesosExplorer) {
+                                    $propietario = $proc.GetOwner()
+                                    if ($propietario.ReturnValue -eq 0 -and -not [string]::IsNullOrEmpty($propietario.User)) {
+                                        $fechaInicio = ""
+                                        try {
+                                            if ($proc.CreationDate) {
+                                                $fechaInicio = [Management.ManagementDateTimeConverter]::ToDateTime($proc.CreationDate).ToString("dd/MM/yyyy HH:mm:ss")
+                                            }
+                                        } catch {}
+
+                                        $usuariosActivos += [PSCustomObject]@{
+                                            Domain      = $propietario.Domain
+                                            User        = $propietario.User
+                                            AccountName = "$($propietario.Domain)\$($propietario.User)"
+                                            LogonTime   = $fechaInicio
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        catch {}
+
+                        # 2. Fallback a $sys.UserName en caso de que explorer.exe no arroje resultados
+                        if ($usuariosActivos.Count -eq 0 -and -not [string]::IsNullOrEmpty($sys.UserName)) {
+                            $partes = $sys.UserName.Split('\')
+                            $dom = if ($partes.Count -gt 1) { $partes[0] } else { "" }
+                            $usr = if ($partes.Count -gt 1) { $partes[1] } else { $partes[0] }
+                            $usuariosActivos += [PSCustomObject]@{
+                                Domain      = $dom
+                                User        = $usr
+                                AccountName = $sys.UserName
+                                LogonTime   = "No disponible"
+                            }
+                        }
+
+                        # Filtrar usuarios únicos por cuenta
+                        if ($usuariosActivos.Count -gt 0) {
+                            $usuariosUnicos = @()
+                            $vistos = @{}
+                            foreach ($u in $usuariosActivos) {
+                                $clave = $u.AccountName.ToUpper()
+                                if (-not $vistos.ContainsKey($clave)) {
+                                    $vistos[$clave] = $true
+                                    $usuariosUnicos += $u
+                                }
+                            }
+                            $usuariosActivos = $usuariosUnicos
+                        }
+
+                        # --- MOSTRAR APARTADO DE INFORMACIÓN DEL USUARIO ACTIVO ---
+                        Write-Host "===========================================================" -ForegroundColor Cyan
+                        Write-Host "               INFORMACION DEL USUARIO ACTIVO              " -ForegroundColor Cyan
+                        Write-Host "===========================================================" -ForegroundColor Cyan
+                        Write-Host ""
+
+                        if ($usuariosActivos.Count -eq 0) {
+                            Write-Host "  Estado de Sesion:             " -NoNewline
+                            Write-Host "Sin sesion activa (Ningun usuario conectado)" -ForegroundColor Yellow
+                        }
+                        else {
+                            # Consultar perfiles de usuario de forma segura
+                            $perfilesRemotos = try {
+                                Get-WmiObject -Class Win32_UserProfile -ComputerName $computerTarget -ErrorAction SilentlyContinue
+                            } catch { $null }
+
+                            foreach ($u in $usuariosActivos) {
+                                # Determinar si es usuario de Dominio o Local
+                                $esLocal = ($u.Domain.ToUpper() -eq $sys.Name.ToUpper()) -or ($u.Domain -eq ".") -or (-not $sys.PartOfDomain)
+                                $tipoCuenta = ""
+                                if ($esLocal) {
+                                    $tipoCuenta = "Usuario Local"
+                                }
+                                else {
+                                    $nombreDominio = if ($sys.Domain) { $sys.Domain } else { $u.Domain }
+                                    $tipoCuenta = "Usuario de Dominio ($nombreDominio)"
+                                }
+
+                                # Intentar obtener Nombre Completo / DisplayName
+                                $nombreCompleto = ""
+                                if ($esLocal) {
+                                    try {
+                                        $acc = Get-WmiObject -Class Win32_UserAccount -ComputerName $computerTarget -Filter "Name='$($u.User)' and LocalAccount=True" -ErrorAction SilentlyContinue
+                                        if ($acc -and $acc.FullName) { $nombreCompleto = $acc.FullName.Trim() }
+                                    } catch {}
+                                }
+                                else {
+                                    try {
+                                        $searcher = [adsisearcher]"(sAMAccountName=$($u.User))"
+                                        $adUser = $searcher.FindOne()
+                                        if ($adUser -and $adUser.Properties["displayname"]) {
+                                            $nombreCompleto = $adUser.Properties["displayname"][0].ToString().Trim()
+                                        }
+                                    } catch {}
+                                }
+                                if ([string]::IsNullOrEmpty($nombreCompleto)) {
+                                    $nombreCompleto = "No especificado / No disponible"
+                                }
+
+                                # Obtener Ruta del Perfil
+                                $rutaPerfil = ""
+                                if ($perfilesRemotos) {
+                                    $perfil = $perfilesRemotos | Where-Object { 
+                                        ($_.LocalPath -like "*\$($u.User)") -or 
+                                        ($_.Loaded -eq $true -and -not $_.Special) 
+                                    } | Select-Object -First 1
+                                    if ($perfil -and $perfil.LocalPath) {
+                                        $rutaPerfil = $perfil.LocalPath
+                                    }
+                                }
+                                if ([string]::IsNullOrEmpty($rutaPerfil)) {
+                                    $rutaPerfil = "C:\Users\$($u.User)"
+                                }
+
+                                $fechaLogon = if (-not [string]::IsNullOrEmpty($u.LogonTime) -and $u.LogonTime -ne "No disponible") { $u.LogonTime } else { "Sesion activa (Hora no disponible)" }
+
+                                Write-Host "  Usuario con Sesion:           " -NoNewline
+                                Write-Host "$($u.AccountName)" -ForegroundColor Green
+                                Write-Host "  Nombre Completo:              " -NoNewline
+                                Write-Host "$nombreCompleto" -ForegroundColor Yellow
+                                Write-Host "  Tipo de Cuenta:               " -NoNewline
+                                if ($esLocal) {
+                                    Write-Host "$tipoCuenta" -ForegroundColor Yellow
+                                } else {
+                                    Write-Host "$tipoCuenta" -ForegroundColor Green
+                                }
+                                Write-Host "  Ruta de Perfil:               " -NoNewline
+                                Write-Host "$rutaPerfil" -ForegroundColor Yellow
+                                Write-Host "  Inicio de Sesion:             " -NoNewline
+                                Write-Host "$fechaLogon" -ForegroundColor Gray
+                                Write-Host "  Estado de Sesion:             " -NoNewline
+                                Write-Host "Activa (Conectado)" -ForegroundColor Green
+                                if ($usuariosActivos.Count -gt 1) {
+                                    Write-Host "  ---------------------------------------------------------" -ForegroundColor Gray
+                                }
+                            }
                         }
                         Write-Host ""
 
@@ -5092,6 +5238,452 @@ function psSubMenu25 {
                     Write-Host "`nEl Proceso ha finalizado..."        
 
                     Read-Host "Presione ENTER para continuar..."
+                }
+
+                "2.2" { 
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
+
+                    Write-Host "==========================================================================" -ForegroundColor Cyan
+                    Write-Host "     AUDITORIA Y DETECCION AVANZADA DE EQUIPOS EN RED (NUEVA VENTANA)     " -ForegroundColor Cyan
+                    Write-Host "==========================================================================" -ForegroundColor Cyan
+                    Write-Host ""
+
+                    # 1. Extracción de IP del equipo solicitante y propuesta de segmento CIDR
+                    $solicitanteIP = "127.0.0.1"
+                    $redSugerida = "192.168.176.0/24"
+                    try {
+                        $ad = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | 
+                            Where-Object { 
+                                $_.IPAddress -notlike "127.*" -and 
+                                $_.IPAddress -notlike "169.254*" -and 
+                                $_.InterfaceAlias -notmatch "VPN|Radmin|Hamachi|vEthernet|Virtual|Pseudo|Loopback" 
+                            } | 
+                            Sort-Object { 
+                                if ($_.IPAddress -like "192.168.*") { 1 } 
+                                elseif ($_.IPAddress -like "10.*" -or $_.IPAddress -like "172.*") { 2 } 
+                                else { 3 } 
+                            } | Select-Object -First 1
+
+                        if ($ad) {
+                            $solicitanteIP = $ad.IPAddress
+                            $octetos = $solicitanteIP.Split('.')
+                            if ($octetos.Count -eq 4) {
+                                $redSugerida = "$($octetos[0]).$($octetos[1]).$($octetos[2]).0/24"
+                            }
+                        }
+                    } catch {}
+
+                    Write-Host "  [+] IP del Equipo Solicitante:  " -NoNewline -ForegroundColor White
+                    Write-Host "$solicitanteIP" -ForegroundColor Green
+                    Write-Host "  [+] Segmento de Red Detectado:  " -NoNewline -ForegroundColor White
+                    Write-Host "$redSugerida" -ForegroundColor Yellow
+                    Write-Host ""
+                    Write-Host "  Ingrese la direccion de red a escanear (ej. 192.168.176.0/24, 192.168.176. o 176)" -ForegroundColor Cyan
+                    $entradaRed = Read-Host "  [Presione ENTER para usar $redSugerida]"
+                    $entradaRed = $entradaRed.Trim()
+
+                    $segmentoElegido = $redSugerida
+                    if (-not [string]::IsNullOrWhiteSpace($entradaRed)) {
+                        if ($entradaRed -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.0/\d{1,2}$') {
+                            $segmentoElegido = $entradaRed
+                        }
+                        elseif ($entradaRed -match '^(\d{1,3}\.\d{1,3}\.\d{1,3})\.?$') {
+                            $segmentoElegido = "$($Matches[1]).0/24"
+                        }
+                        elseif ($entradaRed -match '^\d{1,3}$') {
+                            $segmentoElegido = "192.168.$entradaRed.0/24"
+                        }
+                        else {
+                            $segmentoElegido = $entradaRed
+                        }
+                    }
+
+                    Write-Host "`n[*] Preparando ejecucion en una NUEVA VENTANA..." -ForegroundColor Yellow
+
+                    # 2. Generación del código del script auditor autónomo
+                    $scannerCode = @'
+param(
+    [string]$NetworkCIDR = "192.168.176.0/24",
+    [string]$RequestingIP = "127.0.0.1"
+)
+
+# Configuración visual de la ventana de auditoría
+$Host.UI.RawUI.WindowTitle = "AUDITORIA DE RED: $NetworkCIDR | Solicitante: $RequestingIP | shellWil"
+try {
+    if ($Host.UI.RawUI.BufferSize.Width -lt 125) {
+        $Host.UI.RawUI.BufferSize = New-Object Management.Automation.Host.Size(130, 3500)
+        $Host.UI.RawUI.WindowSize = New-Object Management.Automation.Host.Size(130, 45)
+    }
+} catch {}
+
+Clear-Host
+Write-Host "==========================================================================================================" -ForegroundColor Cyan
+Write-Host "                    AUDITORIA AVANZADA: ESCANEO Y DETECCION DE EQUIPOS EN RED                             " -ForegroundColor Cyan
+Write-Host "==========================================================================================================" -ForegroundColor Cyan
+Write-Host "  IP Solicitante : " -NoNewline -ForegroundColor White
+Write-Host "$RequestingIP" -ForegroundColor Green
+Write-Host "  Segmento de Red: " -NoNewline -ForegroundColor White
+Write-Host "$NetworkCIDR" -ForegroundColor Yellow
+Write-Host "  Fecha y Hora   : $(Get-Date -Format 'dd/MM/yyyy HH:mm:ss')" -ForegroundColor Gray
+Write-Host "==========================================================================================================" -ForegroundColor Cyan
+
+# Extracción de base IP para el segmento
+$baseIP = "192.168.176."
+if ($NetworkCIDR -match '^(\d{1,3}\.\d{1,3}\.\d{1,3})\.') {
+    $baseIP = "$($Matches[1])."
+}
+$rangoInicio = 1
+$rangoFin = 254
+
+# Detección del Gateway por defecto
+$defaultGW = ""
+try {
+    $cfgGW = Get-CimInstance Win32_NetworkAdapterConfiguration -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -contains $RequestingIP } | Select-Object -First 1
+    if ($cfgGW -and $cfgGW.DefaultIPGateway) {
+        $defaultGW = $cfgGW.DefaultIPGateway[0]
+    }
+} catch {}
+if ([string]::IsNullOrEmpty($defaultGW)) {
+    $defaultGW = "${baseIP}1"
+}
+
+# Diccionario OUI para clasificación por hardware (MAC)
+$ouiDB = @{
+    # Relojes Biométricos
+    '00:17:61' = 'Reloj biometrico'; '6C:DF:FB' = 'Reloj biometrico'; 'E0:69:95' = 'Reloj biometrico'
+    'C4:2F:90' = 'Reloj biometrico'; '00:0B:82' = 'Reloj biometrico'; '2C:26:17' = 'Reloj biometrico'
+    '50:13:95' = 'Reloj biometrico'
+    # Fotocopiadoras / Multifuncionales corporativas
+    '00:26:73' = 'Fotocopiadora'; '00:00:85' = 'Fotocopiadora'; '00:20:6B' = 'Fotocopiadora'
+    '00:04:F2' = 'Fotocopiadora'; '00:17:C8' = 'Fotocopiadora'; '00:C0:EE' = 'Fotocopiadora'
+    '00:00:AA' = 'Fotocopiadora'; '00:80:77' = 'Fotocopiadora'; '00:1B:A9' = 'Fotocopiadora'
+    '78:8C:77' = 'Fotocopiadora'; '00:00:07' = 'Fotocopiadora'
+    # Impresoras de red estándar
+    '00:1E:0B' = 'Impresora de red'; '00:25:B3' = 'Impresora de red'; '3C:D9:2B' = 'Impresora de red'
+    '70:5A:0F' = 'Impresora de red'; 'A4:5D:36' = 'Impresora de red'; '00:00:48' = 'Impresora de red'
+    '00:26:AB' = 'Impresora de red'; '00:01:E6' = 'Impresora de red'
+    # Cámaras CCTV / Vigilancia IP
+    '58:38:79' = 'Camara CCTV'; '44:19:B6' = 'Camara CCTV'; 'C0:56:E3' = 'Camara CCTV'
+    'B4:A3:82' = 'Camara CCTV'; '28:57:BE' = 'Camara CCTV'; '54:C4:15' = 'Camara CCTV'
+    'E0:50:8B' = 'Camara CCTV'; '38:AF:29' = 'Camara CCTV'; 'B0:C5:54' = 'Camara CCTV'
+    '00:40:8C' = 'Camara CCTV'; '48:EA:63' = 'Camara CCTV'
+    # Switches de datos
+    '00:00:0C' = 'Switch de datos'; '00:01:42' = 'Switch de datos'; '00:1C:7F' = 'Switch de datos'
+    '00:1A:A1' = 'Switch de datos'; '48:8F:5A' = 'Switch de datos'; '6C:3B:6B' = 'Switch de datos'
+    'CC:2D:E0' = 'Switch de datos'; 'D4:CA:6D' = 'Switch de datos'; 'D4:F5:EF' = 'Switch de datos'
+    'C0:06:C3' = 'Switch de datos'
+    # Routers Inalámbricos / Access Points
+    '24:A4:3C' = 'Router inalambrico'; 'F0:9F:C2' = 'Router inalambrico'
+    '50:C7:BF' = 'Router inalambrico'; 'E8:48:B8' = 'Router inalambrico'
+    # Computadoras / Laptops / Servidores
+    'F8:BC:12' = 'Computadora'; '7C:57:58' = 'Computadora'; '00:14:22' = 'Computadora'
+    '18:66:DA' = 'Computadora'; 'B8:CA:3A' = 'Computadora'; 'AC:16:2D' = 'Computadora'
+    'B0:4F:13' = 'Computadora'; 'A0:B3:CC' = 'Computadora'; 'E4:54:E8' = 'Computadora'
+    '00:59:07' = 'Computadora'
+}
+
+# Función auxiliar de sondeo ultrarrápido de puerto TCP (timeout en ms)
+$fnTestPort = {
+    param([string]$ip, [int]$port, [int]$timeoutMs = 120)
+    try {
+        $tcpClient = New-Object System.Net.Sockets.TcpClient
+        $asyncRes = $tcpClient.BeginConnect($ip, $port, $null, $null)
+        if ($asyncRes.AsyncWaitHandle.WaitOne($timeoutMs, $false) -and $tcpClient.Connected) {
+            $tcpClient.Close()
+            return $true
+        }
+        $tcpClient.Close()
+        return $false
+    } catch { return $false }
+}
+
+# --- FASE 1: ESCANEO ASÍNCRONO MULTIHILO (PING PARALELO) ---
+Write-Host "`n[*] Enviando sondeo ICMP (Ping) en paralelo a ${baseIP}${rangoInicio} al ${rangoFin}..." -ForegroundColor Yellow
+$pingTasks = @()
+$pingObjects = @()
+foreach ($i in $rangoInicio..$rangoFin) {
+    $target = "$baseIP$i"
+    $p = New-Object System.Net.NetworkInformation.Ping
+    $pingObjects += $p
+    $pingTasks += $p.SendPingAsync($target, 300)
+}
+[System.Threading.Tasks.Task]::WaitAll($pingTasks)
+
+$pingActiveMap = @{}
+for ($idx = 0; $idx -lt $pingTasks.Count; $idx++) {
+    if ($pingTasks[$idx].Result.Status -eq [System.Net.NetworkInformation.IPStatus]::Success) {
+        $pingActiveMap[$pingTasks[$idx].Result.Address.ToString()] = $true
+    }
+}
+foreach ($p in $pingObjects) { try { $p.Dispose() } catch {} }
+
+# --- FASE 2: CARGA DE TABLA ARP PARA CAPTURA DE MACS ---
+$arpCache = @{}
+try {
+    Get-NetNeighbor -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object {
+        if ($_.IPAddress -and $_.LinkLayerAddress -and $_.LinkLayerAddress -ne "00-00-00-00-00-00") {
+            $arpCache[$_.IPAddress] = $_.LinkLayerAddress.ToUpper().Replace("-", ":")
+        }
+    }
+} catch {}
+try {
+    $arpLines = arp -a
+    foreach ($line in $arpLines) {
+        if ($line -match '^\s*(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s+([0-9a-fA-F\-]{17})\s+(\S+)') {
+            $ipEntry = $Matches[1]
+            $macEntry = $Matches[2].ToUpper().Replace("-", ":")
+            if (-not $arpCache.ContainsKey($ipEntry)) {
+                $arpCache[$ipEntry] = $macEntry
+            }
+        }
+    }
+} catch {}
+
+# --- FASE 3: EVALUACIÓN Y CLASIFICACIÓN DETALLADA DE CADA DIRECCIÓN IP ---
+Write-Host "[+] Sondeo inicial completado. Clasificando equipos e identificando IPs libres...`n" -ForegroundColor Gray
+Write-Host ("  {0,-5} {1,-16} | {2,-24} | {3,-16} | {4,-22} | {5}" -f "EST", "DIRECCION IP", "TIPO DE EQUIPO", "ASIGNACION IP", "NOMBRE DE EQUIPO", "MAC ADDRESS") -ForegroundColor White
+Write-Host ("  " + ("-" * 110)) -ForegroundColor Gray
+
+$resultados = @()
+$ipsSinAsignar = @()
+
+foreach ($i in $rangoInicio..$rangoFin) {
+    $ipActual = "$baseIP$i"
+    $isAlivePing = $pingActiveMap.ContainsKey($ipActual)
+    $hasArp = $arpCache.ContainsKey($ipActual)
+
+    # Si NO responde a Ping y NO existe en ARP -> IP LIBRE / SIN ASIGNAR
+    if (-not $isAlivePing -and -not $hasArp) {
+        $ipsSinAsignar += $ipActual
+        Write-Host "  [-] " -NoNewline -ForegroundColor DarkGray
+        Write-Host ("{0,-16}" -f $ipActual) -NoNewline -ForegroundColor DarkGray
+        Write-Host " | " -NoNewline -ForegroundColor DarkGray
+        Write-Host ("{0,-24}" -f "SIN ASIGNAR") -NoNewline -ForegroundColor DarkGray
+        Write-Host " | " -NoNewline -ForegroundColor DarkGray
+        Write-Host ("{0,-16}" -f "LIBRE") -NoNewline -ForegroundColor DarkGray
+        Write-Host " | " -NoNewline -ForegroundColor DarkGray
+        Write-Host ("{0,-22}" -f "SIN ASIGNAR") -NoNewline -ForegroundColor DarkGray
+        Write-Host " | " -NoNewline -ForegroundColor DarkGray
+        Write-Host "(No Asignada)" -ForegroundColor DarkGray
+        continue
+    }
+
+    # IP ACTIVA: A. Obtención precisa de MAC
+    $mac = if ($arpCache.ContainsKey($ipActual)) { $arpCache[$ipActual] } else { "" }
+    if ([string]::IsNullOrEmpty($mac)) {
+        try {
+            $n = Get-NetNeighbor -IPAddress $ipActual -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($n -and $n.LinkLayerAddress) { $mac = $n.LinkLayerAddress.ToUpper().Replace("-", ":") }
+        } catch {}
+    }
+    if ([string]::IsNullOrEmpty($mac) -and ($ipActual -eq $RequestingIP)) {
+        try {
+            $localNic = Get-CimInstance Win32_NetworkAdapterConfiguration | Where-Object { $_.IPAddress -contains $ipActual } | Select-Object -First 1
+            if ($localNic -and $localNic.MACAddress) { $mac = $localNic.MACAddress.ToUpper().Replace("-", ":") }
+        } catch {}
+    }
+    if ([string]::IsNullOrEmpty($mac)) { $mac = "No disponible" }
+
+    # B. Resolución de Hostname (DNS Asíncrono no bloqueante + Fallback NetBIOS)
+    $hostName = ""
+    try {
+        $asyncDns = [System.Net.Dns]::BeginGetHostEntry($ipActual, $null, $null)
+        if ($asyncDns.AsyncWaitHandle.WaitOne(100, $false)) {
+            $entry = [System.Net.Dns]::EndGetHostEntry($asyncDns)
+            if ($entry -and $entry.HostName) { $hostName = $entry.HostName.Split('.')[0] }
+        }
+    } catch {}
+
+    if ([string]::IsNullOrEmpty($hostName)) {
+        try {
+            $nbt = nbtstat -a $ipActual 2>$null
+            $linea = $nbt | Where-Object { $_ -match "<\x00>.*UNIQUE" } | Select-Object -First 1
+            if ($linea -and $linea -match "^\s*([A-Za-z0-9\-]+)") {
+                $hostName = $Matches[1].Trim()
+            }
+        } catch {}
+    }
+
+    # C. Verificación precisa de Asignación de IP (FIJA / ESTATICA vs DINAMICA / DHCP)
+    # Se elimina la relación errónea con el comando 'arp -a'. Se verifica por adaptador real y perfiles.
+    $estadoIP = "FIJA (ESTATICA)"
+    if ($ipActual -eq $RequestingIP) {
+        try {
+            $cfgLocal = Get-CimInstance Win32_NetworkAdapterConfiguration -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -contains $ipActual } | Select-Object -First 1
+            if ($cfgLocal -and $cfgLocal.DHCPEnabled) { $estadoIP = "DINAMICA (DHCP)" } else { $estadoIP = "FIJA (ESTATICA)" }
+        } catch {}
+    } elseif (& $fnTestPort $ipActual 135 70) {
+        try {
+            $nicRem = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -ComputerName $ipActual -Filter "IPEnabled = TRUE" -ErrorAction Stop |
+                Where-Object { $_.Description -notmatch "Virtual|VPN|Pseudo|Bluetooth" } | Select-Object -First 1
+            if ($nicRem) {
+                if ($nicRem.DHCPEnabled) { $estadoIP = "DINAMICA (DHCP)" } else { $estadoIP = "FIJA (ESTATICA)" }
+                if ($mac -eq "No disponible" -and $nicRem.MACAddress) { $mac = $nicRem.MACAddress.ToUpper().Replace("-", ":") }
+            }
+            $sysRem = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $ipActual -ErrorAction SilentlyContinue
+            if ($sysRem -and $sysRem.CSName) { $hostName = $sysRem.CSName }
+        } catch {}
+    }
+
+    # D. Clasificación del Tipo de Dispositivo (9 Categorías Específicas)
+    $tipoEquipo = ""
+
+    # 1. Reloj Biométrico (Puertos 4370 ZK/Anviz, 5005 Suprema o firmas de host)
+    if ((& $fnTestPort $ipActual 4370) -or (& $fnTestPort $ipActual 5005) -or ($hostName -match "ZK|BIO|RELOJ|ANVIZ|TIMESTATION|CONTROL-ASISTENCIA")) {
+        $tipoEquipo = "Reloj biometrico"
+    }
+    # 2. Fotocopiadora (Multifuncionales corporativas de alto rendimiento)
+    elseif (($hostName -match "RICOH|AFICIO|KONICA|BIZHUB|KYOCERA|TASKALFA|XEROX|WORKCENTRE|ALTALINK|VERSALINK|TOSHIBA|ESTUDIO|SHARP|MX-|DEVELOP|IMAGERUNNER|IR-ADV|COPIADORA|FOTOCOPIADORA") -or
+            ((& $fnTestPort $ipActual 9100) -and ((& $fnTestPort $ipActual 21) -or (& $fnTestPort $ipActual 80) -or (& $fnTestPort $ipActual 443)) -and ($mac.StartsWith("00:26:73") -or $mac.StartsWith("00:00:85") -or $mac.StartsWith("00:20:6B") -or $mac.StartsWith("00:04:F2") -or $mac.StartsWith("00:17:C8") -or $mac.StartsWith("00:C0:EE") -or $mac.StartsWith("00:00:AA") -or $mac.StartsWith("00:80:77") -or $mac.StartsWith("00:1B:A9") -or $mac.StartsWith("78:8C:77")))) {
+        $tipoEquipo = "Fotocopiadora"
+    }
+    # 3. Impresora de red (Impresoras láser o inyección estándar)
+    elseif ((& $fnTestPort $ipActual 9100) -or (& $fnTestPort $ipActual 515) -or (& $fnTestPort $ipActual 631) -or ($hostName -match "PRN|PRINT|EPSON|BROTHER|HP-PRINT|LASERJET|DESKJET|PAGEWIDE|ZEBRA|SATO|IMPRESORA")) {
+        $tipoEquipo = "Impresora de red"
+    }
+    # 4. DVR (Grabadores de Video Digital / NVR / XVR de seguridad)
+    elseif (($hostName -match "DVR|NVR|XVR|HIK-NVR|DAHUA-NVR|GRABADOR|HIKVISION-NVR") -or 
+            (((& $fnTestPort $ipActual 8000) -or (& $fnTestPort $ipActual 37777) -or (& $fnTestPort $ipActual 34567)) -and ($hostName -notmatch "CAM|IPC") -and (& $fnTestPort $ipActual 554))) {
+        $tipoEquipo = "DVR"
+    }
+    # 5. Cámara CCTV (Cámaras IP, domos o tubos de videovigilancia)
+    elseif ((& $fnTestPort $ipActual 554) -or (& $fnTestPort $ipActual 8899) -or ($hostName -match "CAM|IPC|CAMERA|DOMO|TUBO|BULLET|CCTV|HIK-CAM|DAHUA-CAM")) {
+        $tipoEquipo = "Camara CCTV"
+    }
+    # 6. Router (Gateway de red, puertos de enrutamiento o router de borde)
+    elseif (($ipActual -eq $defaultGW) -or (& $fnTestPort $ipActual 8291) -or ($hostName -match "ROUTER|GW|GATEWAY|MIKROTIK|FORTINET|CISCO-ROUTER|PFSENSE|OPNSENSE|EDGEROUTER|FIREWALL")) {
+        $tipoEquipo = "Router"
+    }
+    # 7. Router Inalámbrico (Access Point / AP / WiFi Router)
+    elseif ((& $fnTestPort $ipActual 8080) -or ($hostName -match "WIFI|AP-|AP_|WIRELESS|ACCESSPOINT|UNIFI|UAP|AIRMAX|TENDA|MERCUSYS")) {
+        $tipoEquipo = "Router inalambrico"
+    }
+    # 8. Computadora (Estaciones de trabajo, PC, laptops o servidores Windows)
+    elseif ((& $fnTestPort $ipActual 445) -or (& $fnTestPort $ipActual 135) -or (& $fnTestPort $ipActual 3389) -or ($hostName -match "DESKTOP|LAPTOP|PC|WIN|SRV|SERVER|WS-|HMP")) {
+        $tipoEquipo = "Computadora"
+    }
+    # 9. Switch de datos (Switches administrables o infraestructura de distribución)
+    elseif ((& $fnTestPort $ipActual 22) -or (& $fnTestPort $ipActual 23) -or (& $fnTestPort $ipActual 161) -or ($hostName -match "SW|SWITCH|SW-|CATALYST|PROCURVE|ARUBA|EDGESWITCH")) {
+        $tipoEquipo = "Switch de datos"
+    }
+    else {
+        # Búsqueda complementaria por OUI en la base de datos de fabricantes
+        if ($mac.Length -ge 8) {
+            $prefix = $mac.Substring(0, 8).ToUpper()
+            if ($ouiDB.ContainsKey($prefix)) {
+                $tipoEquipo = $ouiDB[$prefix]
+            }
+        }
+        if ([string]::IsNullOrEmpty($tipoEquipo)) {
+            $tipoEquipo = "Dispositivo de Red"
+        }
+    }
+
+    if ([string]::IsNullOrEmpty($hostName)) { $hostName = "(Sin Hostname)" }
+
+    # Guardar en resultados
+    $obj = [PSCustomObject]@{
+        IP         = $ipActual
+        HostName   = $hostName
+        Tipo       = $tipoEquipo
+        Estado     = $estadoIP
+        MACAddress = $mac
+    }
+    $resultados += $obj
+
+    # Asignar color según el tipo de equipo
+    $colorTipo = switch ($tipoEquipo) {
+        "Computadora"         { "Green" }
+        "Impresora de red"    { "Cyan" }
+        "Fotocopiadora"       { "DarkCyan" }
+        "Switch de datos"     { "White" }
+        "Router"              { "Yellow" }
+        "Router inalambrico"  { "DarkYellow" }
+        "Reloj biometrico"    { "Magenta" }
+        "DVR"                 { "DarkRed" }
+        "Camara CCTV"         { "Yellow" }
+        Default               { "Gray" }
+    }
+
+    Write-Host "  [+] " -NoNewline -ForegroundColor Green
+    Write-Host ("{0,-16}" -f $ipActual) -NoNewline -ForegroundColor Yellow
+    Write-Host " | " -NoNewline -ForegroundColor Gray
+    Write-Host ("{0,-24}" -f $tipoEquipo) -NoNewline -ForegroundColor $colorTipo
+    Write-Host " | " -NoNewline -ForegroundColor Gray
+    Write-Host ("{0,-16}" -f $estadoIP) -NoNewline -ForegroundColor White
+    Write-Host " | " -NoNewline -ForegroundColor Gray
+    Write-Host ("{0,-22}" -f $hostName) -NoNewline -ForegroundColor Cyan
+    Write-Host " | " -NoNewline -ForegroundColor Gray
+    Write-Host "$mac" -ForegroundColor Gray
+}
+
+# --- FASE 4: REPORTE FINAL TABULADO Y RESUMEN ESTADÍSTICO ---
+Write-Host "`n" + ("=" * 110) -ForegroundColor White
+Write-Host "                    REPORTE DE AUDITORIA: EQUIPOS DETECTADOS EN EL SEGMENTO                      " -ForegroundColor Green
+Write-Host ("=" * 110) -ForegroundColor White
+
+if ($resultados.Count -gt 0) {
+    $resultados | Sort-Object { [version]$_.IP } | Format-Table -Property @{Label="IP"; Expression={$_.IP}; Width=16}, @{Label="HostName"; Expression={$_.HostName}; Width=22}, @{Label="Tipo de Dispositivo"; Expression={$_.Tipo}; Width=24}, @{Label="Asignacion"; Expression={$_.Estado}; Width=16}, @{Label="MAC Address"; Expression={$_.MACAddress}; Width=19} -AutoSize
+} else {
+    Write-Host "`n[!] No se detectaron equipos activos en el segmento." -ForegroundColor Red
+}
+
+Write-Host ("-" * 80) -ForegroundColor Gray
+Write-Host "RESUMEN DE EQUIPOS DETECTADOS:" -ForegroundColor Yellow
+Write-Host ("-" * 80) -ForegroundColor Gray
+
+$cPC     = ($resultados | Where-Object { $_.Tipo -eq "Computadora" }).Count
+$cImp    = ($resultados | Where-Object { $_.Tipo -eq "Impresora de red" }).Count
+$cFoto   = ($resultados | Where-Object { $_.Tipo -eq "Fotocopiadora" }).Count
+$cSwitch = ($resultados | Where-Object { $_.Tipo -eq "Switch de datos" }).Count
+$cRouter = ($resultados | Where-Object { $_.Tipo -eq "Router" }).Count
+$cWiFi   = ($resultados | Where-Object { $_.Tipo -eq "Router inalambrico" }).Count
+$cBio    = ($resultados | Where-Object { $_.Tipo -eq "Reloj biometrico" }).Count
+$cDVR    = ($resultados | Where-Object { $_.Tipo -eq "DVR" }).Count
+$cCam    = ($resultados | Where-Object { $_.Tipo -eq "Camara CCTV" }).Count
+$cOtros  = ($resultados | Where-Object { $_.Tipo -eq "Dispositivo de Red" }).Count
+
+Write-Host "  - Computadoras (PCs / Servidores):     $cPC" -ForegroundColor Green
+Write-Host "  - Impresoras de Red:                   $cImp" -ForegroundColor Cyan
+Write-Host "  - Fotocopiadoras / Multifuncionales:   $cFoto" -ForegroundColor DarkCyan
+Write-Host "  - Switches de Datos:                   $cSwitch" -ForegroundColor White
+Write-Host "  - Routers / Gateways:                  $cRouter" -ForegroundColor Yellow
+Write-Host "  - Routers Inalambricos (AP / WiFi):    $cWiFi" -ForegroundColor DarkYellow
+Write-Host "  - Relojes Biometricos:                 $cBio" -ForegroundColor Magenta
+Write-Host "  - Grabadores DVR / NVR:                $cDVR" -ForegroundColor DarkRed
+Write-Host "  - Camaras de Seguridad CCTV:           $cCam" -ForegroundColor Yellow
+if ($cOtros -gt 0) {
+    Write-Host "  - Otros Dispositivos de Red:           $cOtros" -ForegroundColor Gray
+}
+Write-Host ("-" * 80) -ForegroundColor Gray
+Write-Host "  Total de Equipos Activos:              $($resultados.Count)" -ForegroundColor Green
+Write-Host "  Total de IPs Libres (SIN ASIGNAR):     $($ipsSinAsignar.Count)" -ForegroundColor DarkGray
+Write-Host "  Total de Direcciones Auditadas:        $($resultados.Count + $ipsSinAsignar.Count)" -ForegroundColor Cyan
+Write-Host ("=" * 80) -ForegroundColor Gray
+
+Write-Host "`n[+] Auditoria completada. Esta ventana permanece abierta para su consulta." -ForegroundColor Green
+Write-Host "Presione cualquier tecla para cerrar esta ventana..." -ForegroundColor Gray
+try {
+    [void][System.Console]::ReadKey($true)
+} catch {}
+'@
+
+                    # 3. Guardar el ejecutable de escaneo en la carpeta temporal del usuario
+                    $scannerFile = Join-Path $env:TEMP "shellWil_ScanRed.ps1"
+                    [System.IO.File]::WriteAllText($scannerFile, $scannerCode, [System.Text.Encoding]::UTF8)
+
+                    # 4. Lanzamiento del proceso en NUEVA VENTANA de PowerShell independiente
+                    Write-Host "  [+] Lanzando auditoria en una NUEVA VENTANA..." -ForegroundColor Green
+                    Start-Process powershell.exe -ArgumentList "-NoExit", "-ExecutionPolicy", "Bypass", "-File", "`"$scannerFile`"", "-NetworkCIDR", "`"$segmentoElegido`"", "-RequestingIP", "`"$solicitanteIP`""
+
+                    Write-Host "`n==========================================================================" -ForegroundColor Cyan
+                    Write-Host "  [OK] El escaneo ha sido iniciado en una ventana independiente." -ForegroundColor Green
+                    Write-Host "       Puede revisar el progreso y resultados en dicha ventana mientras" -ForegroundColor Gray
+                    Write-Host "       este menu principal continua disponible para otras tareas." -ForegroundColor Gray
+                    Write-Host "==========================================================================" -ForegroundColor Cyan
+                    Write-Host ""
+                    Read-Host "Presione ENTER para volver al menu principal..."
                 }
 
                 "3" { 

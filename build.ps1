@@ -55,6 +55,11 @@ $content += "`r`n# Ejecutar el MENU PRINCIPAL`r`nmenuPrincipal`r`n"
 # 5. Escribir el archivo compilado en formato UTF-8 sin BOM (evita error '´╗┐' en CMD)
 # Resolvemos la ruta de destino absoluta
 $absoluteTarget = [System.IO.Path]::GetFullPath($targetFile)
+if (Test-Path -LiteralPath $absoluteTarget) {
+    try {
+        (Get-Item -LiteralPath $absoluteTarget -Force).Attributes = 'Archive'
+    } catch {}
+}
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($absoluteTarget, $content, $utf8NoBom)
 
