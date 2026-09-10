@@ -3,14 +3,46 @@ function psSubMenu25 {
     #   FUNCIONES AUXILIARES DE CONEXION Y ANALISIS REMOTO (OPTIMIZACION Y LIMPIEZA)
     # ==============================================================================
 
+    function Get-StandardIPPrompt {
+        param(
+            [string]$Mensaje = "Ingrese la IP completa (ej: 192.168.176.50) o los 2 ultimos octetos (ej: 176.50)"
+        )
+        $inputRaw = Read-Host $Mensaje
+        if ([string]::IsNullOrWhiteSpace($inputRaw)) {
+            return ""
+        }
+        $inputRaw = $inputRaw.Trim()
+
+        # Modalidad 1: IP Completa (formato X.X.X.X)
+        if ($inputRaw -match '^(\d{1,3}\.){3}\d{1,3}$') {
+            return $inputRaw
+        }
+        # Modalidad 2: 2 ultimos octetos (ej: 176.50 o 13.15) -> Asume prefijo 192.168.
+        elseif ($inputRaw -match '^\d{1,3}\.\d{1,3}$') {
+            return "192.168.$inputRaw"
+        }
+        # Tolerancia: 1 octeto (ej: 50) -> Asume prefijo 192.168.176.
+        elseif ($inputRaw -match '^\d{1,3}$') {
+            return "192.168.176.$inputRaw"
+        }
+        # Nombre de equipo (Hostname) o formato extendido
+        return $inputRaw
+    }
+
     function Parse-RemoteTarget {
         param([string]$Target)
+        if ([string]::IsNullOrWhiteSpace($Target)) {
+            return ""
+        }
         $Target = $Target.Trim()
-        if ($Target -match '^\d{1,3}$') {
-            return "192.168.176.$Target"
+        if ($Target -match '^(\d{1,3}\.){3}\d{1,3}$') {
+            return $Target
         }
         elseif ($Target -match '^\d{1,3}\.\d{1,3}$') {
             return "192.168.$Target"
+        }
+        elseif ($Target -match '^\d{1,3}$') {
+            return "192.168.176.$Target"
         }
         return $Target
     }
@@ -22,7 +54,7 @@ function psSubMenu25 {
         }
         
         Write-Host "`n--- Conexion Remota ---" -ForegroundColor Yellow
-        $prompt = "Ingrese IP completa, Hostname o los 2 ultimos octetos"
+        $prompt = "Ingrese la IP completa (ej: 192.168.176.50) o los 2 ultimos octetos (ej: 176.50)"
         if ($defTarget) {
             $prompt += " [$defTarget]"
         }
@@ -40,12 +72,47 @@ function psSubMenu25 {
         else {
             $target = Parse-RemoteTarget $inputTarget
         }
-        
+
+        # 1. Comprobación rápida de conectividad (.NET Ping con timeout 1000ms)
+        Write-Host "Verificando conexion con $target (Ping rapido)..." -ForegroundColor Yellow
+        $pingExitoso = $false
+        try {
+            $pingObj = New-Object System.Net.NetworkInformation.Ping
+            $reply = $pingObj.Send($target, 1000)
+            if ($reply.Status -eq [System.Net.NetworkInformation.IPStatus]::Success) {
+                $pingExitoso = $true
+            }
+        }
+        catch {
+            $pingExitoso = Test-Connection -ComputerName $target -Count 1 -Quiet -ErrorAction SilentlyContinue
+        }
+
+        if (-not $pingExitoso) {
+            Write-Host "[AVISO] El equipo $target no respondio al ping en 1s. Verifique si esta encendido o tiene firewall." -ForegroundColor Yellow
+            $confirmar = Read-Host "¿Desea intentar la conexion de todas formas? (S/N) [N]"
+            if ($confirmar.ToUpper() -ne "S") {
+                return $null
+            }
+        }
+
+        # 2. Resolución rápida de Hostname para soporte Kerberos / Dominio
+        $targetHost = $target
+        try {
+            $dnsTask = [System.Net.Dns]::GetHostEntry($target)
+            if ($dnsTask -and $dnsTask.HostName) {
+                $targetHost = $dnsTask.HostName.Split('.')[0]
+            }
+        }
+        catch {}
+
+        # 3. Selección y configuración de credenciales (3 tipos solicitados)
         $cred = $null
+        $tipoCred = "1"
         if ($global:RemoteTargetIP -eq $target -and $global:RemoteTargetCred -ne $null) {
-            $usarExistente = Read-Host "Â¿Usar las credenciales guardadas para $target? (S/N) [S]"
+            $usarExistente = Read-Host "¿Usar las credenciales guardadas para $target? (S/N) [S]"
             if ($usarExistente -eq "" -or $usarExistente.ToUpper() -eq "S") {
                 $cred = $global:RemoteTargetCred
+                $tipoCred = if ($global:RemoteAuthType) { $global:RemoteAuthType } else { "1" }
             }
         }
         
@@ -53,32 +120,40 @@ function psSubMenu25 {
             Write-Host "`nSeleccione el tipo de autenticacion para ${target}:" -ForegroundColor Yellow
             Write-Host "1. Credenciales de la sesion actual (SSO/Dominio Local)"
             Write-Host "2. Credenciales de Usuario de Dominio (ej: DOMINIO\Usuario)"
-            Write-Host "3. Credenciales de Usuario Local (ej: .\Administrador)"
+            Write-Host "3. Credenciales de Usuario Local (ej: .\Administrador o $target\Administrador)"
             $tipoCred = Read-Host "Seleccione opcion [1]"
+            if ([string]::IsNullOrWhiteSpace($tipoCred)) { $tipoCred = "1" }
             
             if ($tipoCred -eq "2" -or $tipoCred -eq "3") {
-                $promptUser = if ($tipoCred -eq "2") { "Usuario de Dominio" } else { "Usuario Local" }
+                $promptUser = if ($tipoCred -eq "2") { "Usuario de Dominio (ej: DOMINIO\Usuario)" } else { "Usuario Local (ej: .\Administrador)" }
                 Write-Host "Ingrese las credenciales para ${promptUser}:" -ForegroundColor Yellow
-                $cred = Get-Credential
-            }
-        }
-        
-        Write-Host "Verificando conexion con $target (Ping)..." -ForegroundColor Yellow
-        $ping = Test-Connection -ComputerName $target -Count 1 -Quiet -ErrorAction SilentlyContinue
-        if (-not $ping) {
-            Write-Host "[ERROR] El equipo $target no responde a Ping. Verifique si esta encendido." -ForegroundColor Red
-            $confirmar = Read-Host "Â¿Desea intentar la conexion de todas formas? (S/N) [N]"
-            if ($confirmar.ToUpper() -ne "S") {
-                return $null
+                $rawCred = Get-Credential
+                
+                if ($rawCred) {
+                    $uName = $rawCred.UserName
+                    # Saneamiento para Tipo 3 (Usuario Local): Si no tiene '\' ni '@', anteponer '.\'
+                    # para evitar que Windows intente resolver en el Controlador de Dominio causando demoras de 30s
+                    if ($tipoCred -eq "3" -and $uName -notmatch '\\' -and $uName -notmatch '@') {
+                        $fixedUser = ".\$uName"
+                        $cred = New-Object System.Management.Automation.PSCredential($fixedUser, $rawCred.Password)
+                    }
+                    else {
+                        $cred = $rawCred
+                    }
+                }
             }
         }
         
         $global:RemoteTargetIP = $target
+        $global:RemoteTargetHostName = $targetHost
         $global:RemoteTargetCred = $cred
+        $global:RemoteAuthType = $tipoCred
         
         return New-Object PSObject -Property @{
             ComputerName = $target
+            HostName     = $targetHost
             Credential   = $cred
+            AuthType     = $tipoCred
         }
     }
 
@@ -106,6 +181,21 @@ function psSubMenu25 {
             return $driveName
         }
         catch {
+            # Si hay error 1219 (conexiones múltiples con credenciales distintas), intentar limpiar la sesión previa
+            if ($_.Exception.Message -match "1219" -or $_.Exception.Message -match "multiple connections") {
+                try {
+                    cmd.exe /c "net use `"$rootPath`" /delete /y" 2>&1 | Out-Null
+                    Start-Sleep -Milliseconds 300
+                    if ($null -ne $Credential) {
+                        New-PSDrive -Name $driveName -PSProvider FileSystem -Root $rootPath -Credential $Credential -Scope Global -ErrorAction Stop | Out-Null
+                    }
+                    else {
+                        New-PSDrive -Name $driveName -PSProvider FileSystem -Root $rootPath -Scope Global -ErrorAction Stop | Out-Null
+                    }
+                    Write-Host "Conectado exitosamente al recurso compartido C$ tras restablecer sesion." -ForegroundColor Green
+                    return $driveName
+                } catch {}
+            }
             Write-Host "[ERROR] No se pudo mapear la unidad C$ remota." -ForegroundColor Red
             Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Red
             return $null
@@ -118,6 +208,880 @@ function psSubMenu25 {
             Remove-PSDrive -Name $driveName -Force -ErrorAction SilentlyContinue
             Write-Host "Unidad remota C$ desmontada." -ForegroundColor Gray
         }
+    }
+
+    function Invoke-RemotePowerShellEncoded {
+        param(
+            [string]$ComputerName,
+            $Credential,
+            [string]$ScriptContent
+        )
+        $scriptBytes = [System.Text.Encoding]::Unicode.GetBytes($ScriptContent)
+        $scriptBase64 = [Convert]::ToBase64String($scriptBytes)
+        $cmd = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand $scriptBase64"
+        
+        try {
+            if ($null -ne $Credential) {
+                $res = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $cmd -ComputerName $ComputerName -Credential $Credential -ErrorAction Stop
+            }
+            else {
+                $res = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $cmd -ComputerName $ComputerName -ErrorAction Stop
+            }
+            return $res
+        }
+        catch {
+            Write-Host "[ERROR] Fallo al invocar proceso WMI en $ComputerName : $_" -ForegroundColor Red
+            return $null
+        }
+    }
+
+    # ==============================================================================
+    #   MODULOS INDEPENDIENTES DEL GRUPO 13: OPTIMIZACION Y LIMPIEZA REMOTA
+    # ==============================================================================
+
+    function Invoke-RemoteCleanTempFolders {
+        param(
+            [Parameter(Mandatory=$true)]$ctx,
+            [switch]$Silent
+        )
+        $ipRemota = $ctx.ComputerName
+        $cred = $ctx.Credential
+        
+        if (-not $Silent) {
+            Write-Host "Iniciando limpieza ultrarrapida de temporales en el equipo remoto $ipRemota..." -ForegroundColor Yellow
+        }
+        
+        $remoteScript = @'
+$delFiles = 0
+$delDirs = 0
+$delBytes = [int64]0
+
+function Clean-TargetFolder {
+    param([string]$targetDir)
+    if (-not (Test-Path -LiteralPath $targetDir)) { return }
+    $items = Get-ChildItem -LiteralPath $targetDir -Recurse -Force -ErrorAction SilentlyContinue
+    if ($items) {
+        foreach ($f in ($items | Where-Object { -not $_.PSIsContainer })) {
+            try {
+                $len = $f.Length
+                Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop
+                $script:delFiles++
+                $script:delBytes += $len
+            } catch {}
+        }
+        $dirs = $items | Where-Object { $_.PSIsContainer } | Sort-Object -Property @{Expression={$_.FullName.Length}} -Descending
+        foreach ($d in $dirs) {
+            try {
+                Remove-Item -LiteralPath $d.FullName -Force -Confirm:$false -ErrorAction Stop
+                $script:delDirs++
+            } catch {}
+        }
+    }
+}
+
+# 1. Limpieza de Windows Temp y Prefetch
+Clean-TargetFolder "C:\Windows\Temp"
+Clean-TargetFolder "C:\Windows\Prefetch"
+
+# 2. Limpieza de Temp de usuario activo
+try {
+    $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
+    if (-not $cs) { $cs = Get-WmiObject Win32_ComputerSystem -ErrorAction SilentlyContinue }
+    if ($cs -and $cs.UserName) {
+        $uName = $cs.UserName.Split('\')[-1]
+        Clean-TargetFolder "C:\Users\$uName\AppData\Local\Temp"
+    }
+} catch {}
+
+$mb = [Math]::Round($script:delBytes / 1MB, 2)
+"Files:$script:delFiles|Dirs:$script:delDirs|MB:$mb" | Out-File -FilePath "C:\Windows\Temp\clean_temp_quick_res.txt" -Encoding UTF8 -Force
+'@
+        $res = Invoke-RemotePowerShellEncoded -ComputerName $ipRemota -Credential $cred -ScriptContent $remoteScript
+        $returnObj = [PSCustomObject]@{ Files = 0; Dirs = 0; MB = 0.0; Success = $false }
+
+        if ($res -and $res.ReturnValue -eq 0 -and $res.ProcessId) {
+            $remotePid = $res.ProcessId
+            $timeout = 25
+            $elapsed = 0
+            while ($elapsed -lt $timeout) {
+                Start-Sleep -Seconds 1
+                try {
+                    if ($null -ne $cred) {
+                        $proc = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -Credential $cred -ErrorAction SilentlyContinue
+                    } else {
+                        $proc = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -ErrorAction SilentlyContinue
+                    }
+                } catch { $proc = $null }
+                if ($null -eq $proc) { break }
+                $elapsed++
+            }
+
+            $drive = Mount-RemoteCShare -ComputerName $ipRemota -Credential $cred
+            if ($null -ne $drive) {
+                $resPath = "${drive}:\Windows\Temp\clean_temp_quick_res.txt"
+                if (Test-Path -LiteralPath $resPath) {
+                    $rawRes = Get-Content -LiteralPath $resPath -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+                    if ($rawRes) {
+                        $stats = @{}
+                        $rawRes.Trim() -split '\|' | ForEach-Object {
+                            $kv = $_ -split ':'
+                            if ($kv.Length -eq 2) { $stats[$kv[0]] = $kv[1] }
+                        }
+                        $returnObj.Files = [int]$stats['Files']
+                        $returnObj.Dirs = [int]$stats['Dirs']
+                        $returnObj.MB = [double]$stats['MB']
+                        $returnObj.Success = $true
+                    }
+                    Remove-Item -Path $resPath -Force -ErrorAction SilentlyContinue
+                }
+                Dismount-RemoteCShare -driveName $drive
+            }
+        }
+
+        if (-not $Silent) {
+            if ($returnObj.Success) {
+                Write-Host "`n[OK] Limpieza remota de temporales finalizada exitosamente:" -ForegroundColor Green
+                Write-Host "  -> Archivos eliminados : $($returnObj.Files)" -ForegroundColor White
+                Write-Host "  -> Carpetas eliminadas : $($returnObj.Dirs)" -ForegroundColor White
+                Write-Host "  -> Espacio liberado    : $($returnObj.MB) MB" -ForegroundColor Green
+            } else {
+                Write-Host "[ERROR] No se pudo completar la limpieza de temporales remota." -ForegroundColor Red
+            }
+        }
+        return $returnObj
+    }
+
+    function Invoke-RemoteCleanProgramData {
+        param(
+            [Parameter(Mandatory=$true)]$ctx,
+            [switch]$Silent
+        )
+        $ipRemota = $ctx.ComputerName
+        $cred = $ctx.Credential
+        
+        if (-not $Silent) {
+            Write-Host "Iniciando mantenimiento de ProgramData optimizado en $ipRemota..." -ForegroundColor Yellow
+            Write-Host " > Modo acelerado: Poda selectiva de carpetas (evita traversing innecesario de Package Cache/Microsoft)..." -ForegroundColor Cyan
+        }
+        
+        $remoteProgDataScript = @'
+$excluirCarpetas = @("Microsoft", "Package Cache", "SoftwareLicensing", "Antivirus", "Windows Defender", "NVIDIA", "Docker", "Apple", "OEM", "Intel", "AMD")
+$progData = "C:\ProgramData"
+$dias = (Get-Date).AddDays(-7)
+$exts = @(".tmp", ".log", ".bak", ".old", ".chk", ".temp")
+
+$totalEliminados = 0
+$totalBytes = [int64]0
+$carpetasEscaneadas = 0
+
+if (Test-Path -LiteralPath $progData) {
+    # 1. Archivos en la raiz directa de ProgramData
+    $rootFiles = Get-ChildItem -LiteralPath $progData -File -Force -ErrorAction SilentlyContinue
+    foreach ($rf in $rootFiles) {
+        if ($exts -contains $rf.Extension.ToLower() -and $rf.LastWriteTime -lt $dias) {
+            try {
+                $len = $rf.Length
+                Remove-Item -LiteralPath $rf.FullName -Force -ErrorAction Stop
+                $totalEliminados++
+                $totalBytes += $len
+            } catch {}
+        }
+    }
+
+    # 2. Subdirectorios podando las exclusiones antes de entrar recursivamente
+    $subDirs = Get-ChildItem -LiteralPath $progData -Directory -Force -ErrorAction SilentlyContinue
+    foreach ($dir in $subDirs) {
+        $omitir = $false
+        foreach ($exc in $excluirCarpetas) {
+            if ($dir.Name -like "*$exc*") { $omitir = $true; break }
+        }
+        if ($omitir) { continue }
+
+        $carpetasEscaneadas++
+        try {
+            $files = Get-ChildItem -LiteralPath $dir.FullName -Recurse -File -Force -ErrorAction SilentlyContinue
+            foreach ($f in $files) {
+                if ($exts -contains $f.Extension.ToLower() -and $f.LastWriteTime -lt $dias) {
+                    try {
+                        $len = $f.Length
+                        Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop
+                        $totalEliminados++
+                        $totalBytes += $len
+                    } catch {}
+                }
+            }
+        } catch {}
+    }
+}
+$mb = [Math]::Round($totalBytes / 1MB, 2)
+"Scanned:$carpetasEscaneadas|Deleted:$totalEliminados|MB:$mb" | Out-File -FilePath "C:\Windows\Temp\clean_progdata_res.txt" -Encoding UTF8 -Force
+'@
+        $res = Invoke-RemotePowerShellEncoded -ComputerName $ipRemota -Credential $cred -ScriptContent $remoteProgDataScript
+        $returnObj = [PSCustomObject]@{ Scanned = 0; Deleted = 0; MB = 0.0; Success = $false }
+
+        if ($res -and $res.ReturnValue -eq 0 -and $res.ProcessId) {
+            $remotePid = $res.ProcessId
+            $timeout = 30
+            $elapsed = 0
+            while ($elapsed -lt $timeout) {
+                Start-Sleep -Seconds 1
+                try {
+                    if ($null -ne $cred) {
+                        $proc = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -Credential $cred -ErrorAction SilentlyContinue
+                    } else {
+                        $proc = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -ErrorAction SilentlyContinue
+                    }
+                } catch { $proc = $null }
+                if ($null -eq $proc) { break }
+                $elapsed++
+            }
+
+            $drive = Mount-RemoteCShare -ComputerName $ipRemota -Credential $cred
+            if ($null -ne $drive) {
+                $resPath = "${drive}:\Windows\Temp\clean_progdata_res.txt"
+                if (Test-Path -LiteralPath $resPath) {
+                    $rawRes = Get-Content -LiteralPath $resPath -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+                    if ($rawRes) {
+                        $stats = @{}
+                        $rawRes.Trim() -split '\|' | ForEach-Object {
+                            $kv = $_ -split ':'
+                            if ($kv.Length -eq 2) { $stats[$kv[0]] = $kv[1] }
+                        }
+                        $returnObj.Scanned = [int]$stats['Scanned']
+                        $returnObj.Deleted = [int]$stats['Deleted']
+                        $returnObj.MB = [double]$stats['MB']
+                        $returnObj.Success = $true
+                    }
+                    Remove-Item -Path $resPath -Force -ErrorAction SilentlyContinue
+                }
+                Dismount-RemoteCShare -driveName $drive
+            }
+        }
+
+        if (-not $Silent) {
+            if ($returnObj.Success) {
+                Write-Host "`n[OK] Mantenimiento de ProgramData completado exitosamente:" -ForegroundColor Green
+                Write-Host "  -> Carpetas analizadas : $($returnObj.Scanned)" -ForegroundColor White
+                Write-Host "  -> Archivos obsoletos  : $($returnObj.Deleted)" -ForegroundColor White
+                Write-Host "  -> Espacio liberado    : $($returnObj.MB) MB" -ForegroundColor Green
+            } else {
+                Write-Host "[ERROR] No se pudo completar el mantenimiento de ProgramData." -ForegroundColor Red
+            }
+        }
+        return $returnObj
+    }
+
+    function Invoke-RemoteCleanRAM {
+        param(
+            [Parameter(Mandatory=$true)]$ctx,
+            [switch]$Silent
+        )
+        $ipRemota = $ctx.ComputerName
+        $cred = $ctx.Credential
+        
+        if (-not $Silent) {
+            Write-Host "Optimizando memoria RAM en el equipo remoto $ipRemota..." -ForegroundColor Yellow
+        }
+        
+        $remoteScriptContent = @'
+$codigoC = "
+    using System;
+    using System.Runtime.InteropServices;
+    public class RamUtil {
+        [DllImport(\"psapi.dll\")]
+        public static extern bool EmptyWorkingSet(IntPtr hProcess);
+    }
+"
+if (-not ([System.Management.Automation.PSTypeName]"RamUtil").Type) {
+    Add-Type -TypeDefinition $codigoC -ErrorAction SilentlyContinue
+}
+$procesos = [System.Diagnostics.Process]::GetProcesses()
+$count = 0
+foreach ($p in $procesos) {
+    if ($p.Id -gt 4) {
+        try {
+            if ([RamUtil]::EmptyWorkingSet($p.Handle)) {
+                $count++
+            }
+        } catch {}
+    }
+    if ($p) { $p.Dispose() }
+}
+Write-Output "Optimizado $count procesos."
+'@
+        $res = Invoke-RemotePowerShellEncoded -ComputerName $ipRemota -Credential $cred -ScriptContent $remoteScriptContent
+        $success = ($res -and $res.ReturnValue -eq 0)
+        if ($success) {
+            Start-Sleep -Seconds 2
+            if (-not $Silent) {
+                Write-Host "[OK] Memoria RAM optimizada exitosamente en el equipo remoto $ipRemota." -ForegroundColor White -BackgroundColor DarkGreen
+            }
+        } else {
+            if (-not $Silent) {
+                Write-Host "[ERROR] No se pudo ejecutar la optimizacion de RAM remota." -ForegroundColor Red
+            }
+        }
+        return [PSCustomObject]@{ Success = $success; ProcessId = if ($res) { $res.ProcessId } else { $null } }
+    }
+
+    function Invoke-RemoteCleanCPU {
+        param(
+            [Parameter(Mandatory=$true)]$ctx,
+            [switch]$Silent
+        )
+        $ipRemota = $ctx.ComputerName
+        $cred = $ctx.Credential
+        
+        if (-not $Silent) {
+            Write-Host "Ajustando prioridad de procesos en el equipo remoto $ipRemota..." -ForegroundColor Yellow
+        }
+        
+        $remoteScriptContent = @'
+$procesosPesados = Get-Process | Sort-Object CPU -Descending | Select-Object -First 10
+$count = 0
+foreach ($proc in $procesosPesados) {
+    if ($proc.Name -ne "Idle" -and $proc.Name -ne "powershell") {
+        try {
+            $proc.PriorityClass = "BelowNormal"
+            $count++
+        } catch {}
+    }
+}
+[System.GC]::Collect()
+Write-Output "Ajustada prioridad para $count procesos pesados."
+'@
+        $res = Invoke-RemotePowerShellEncoded -ComputerName $ipRemota -Credential $cred -ScriptContent $remoteScriptContent
+        $success = ($res -and $res.ReturnValue -eq 0)
+        if ($success) {
+            Start-Sleep -Seconds 2
+            if (-not $Silent) {
+                Write-Host "[OK] Procesador y prioridades de tareas optimizadas en $ipRemota." -ForegroundColor White -BackgroundColor DarkGreen
+            }
+        } else {
+            if (-not $Silent) {
+                Write-Host "[ERROR] No se pudo ejecutar la optimizacion de CPU remota." -ForegroundColor Red
+            }
+        }
+        return [PSCustomObject]@{ Success = $success; ProcessId = if ($res) { $res.ProcessId } else { $null } }
+    }
+
+    function Invoke-RemoteCleanRecycleBin {
+        param(
+            [Parameter(Mandatory=$true)]$ctx,
+            [switch]$Silent
+        )
+        $ipRemota = $ctx.ComputerName
+        $cred = $ctx.Credential
+        
+        if (-not $Silent) {
+            Write-Host "Vaciando Papelera de Reciclaje remota en $ipRemota..." -ForegroundColor Yellow
+        }
+        
+        $remoteRecycleScript = @'
+try {
+    if (Get-Command Clear-RecycleBin -ErrorAction SilentlyContinue) {
+        Clear-RecycleBin -Force -ErrorAction SilentlyContinue
+    }
+} catch {}
+cmd.exe /c "rd /s /q C:\`$Recycle.Bin" 2>&1 | Out-Null
+'@
+        $res = Invoke-RemotePowerShellEncoded -ComputerName $ipRemota -Credential $cred -ScriptContent $remoteRecycleScript
+        $success = ($res -and $res.ReturnValue -eq 0)
+        if ($success) {
+            Start-Sleep -Seconds 2
+            if (-not $Silent) {
+                Write-Host "[OK] Papelera de reciclaje remota vaciada correctamente en $ipRemota." -ForegroundColor White -BackgroundColor DarkGreen
+            }
+        } else {
+            if (-not $Silent) {
+                Write-Host "[ERROR] No se pudo vaciar la papelera en el equipo remoto." -ForegroundColor Red
+            }
+        }
+        return [PSCustomObject]@{ Success = $success; ProcessId = if ($res) { $res.ProcessId } else { $null } }
+    }
+
+    function Invoke-RemoteCleanAdvancedProfiles {
+        param(
+            [Parameter(Mandatory=$true)]$ctx,
+            [switch]$Silent
+        )
+        $ipRemota = $ctx.ComputerName
+        $cred = $ctx.Credential
+        
+        $drive = Mount-RemoteCShare -ComputerName $ipRemota -Credential $cred
+        if ($null -eq $drive) {
+            return [PSCustomObject]@{ TotalFiles = 0; TotalFolders = 0; TotalMB = 0.0; TotalErrors = 0; Success = $false }
+        }
+
+        if (-not $Silent) {
+            Write-Host "Preparando ejecucion remota de limpieza profunda de temporales con desglose de usuarios..." -ForegroundColor Yellow
+        }
+        
+        $remoteScriptContent = @'
+$profilePaths = @()
+try {
+    # 1. Obtener perfiles de usuario locales y de dominio desde el Registro de Windows
+    $profileKeys = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\*" -ErrorAction Stop
+    foreach ($pk in $profileKeys) {
+        $path = $pk.ProfileImagePath
+        if ($path -and (Test-Path -LiteralPath $path)) {
+            if ($path -notmatch "System32" -and $path -notmatch "ServiceProfiles") {
+                if ($path -notin $profilePaths) {
+                    $profilePaths += $path
+                }
+            }
+        }
+    }
+}
+catch {
+    try {
+        $profiles = Get-WmiObject -Class Win32_UserProfile -Filter "Special=False" -ErrorAction Stop
+        foreach ($p in $profiles) {
+            if ($p.LocalPath -and (Test-Path -LiteralPath $p.LocalPath)) {
+                if ($p.LocalPath -notin $profilePaths) {
+                    $profilePaths += $p.LocalPath
+                }
+            }
+        }
+    }
+    catch {
+        $fallbackPath = "C:\Users"
+        if (Test-Path -LiteralPath $fallbackPath) {
+            $folders = Get-ChildItem -LiteralPath $fallbackPath -Directory -ErrorAction SilentlyContinue
+            foreach ($f in $folders) {
+                if ($f.Name -notin "Default", "Default User", "All Users", "Public", "Publico") {
+                    $profilePaths += $f.FullName
+                }
+            }
+        }
+    }
+}
+
+$report = @()
+$global:progressData = @{}
+$global:lastUpdate = [DateTime]::MinValue
+$UserTimeoutSeconds = 30
+
+function Write-ProgressFile {
+    param([string]$currentUser, [string]$status)
+    $now = Get-Date
+    if (($now - $global:lastUpdate).TotalSeconds -lt 1 -and $status -ne "Done" -and $status -ne "Error" -and $status -notmatch "Timeout") {
+        return
+    }
+    $global:lastUpdate = $now
+    $lines = @()
+    foreach ($u in $global:progressData.Keys) {
+        $data = $global:progressData[$u]
+        $lines += "User:$u|Path:$($data.Path)|Files:$($data.Files)|Folders:$($data.Folders)|Bytes:$($data.Bytes)|Status:$($data.Status)"
+    }
+    try {
+        $lines | Out-File -FilePath "C:\Windows\Temp\clean_temp_progress.txt" -Encoding UTF8 -Force
+    } catch {}
+}
+
+function Clear-FolderContents {
+    param(
+        [string]$FolderPath,
+        [string]$userName,
+        [ref]$errs,
+        [DateTime]$userStartTime,
+        [int]$timeoutSecs
+    )
+    if (-not (Test-Path -LiteralPath $FolderPath)) { return }
+    $dirs = @()
+    try {
+        Get-ChildItem -LiteralPath $FolderPath -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
+            if ($_.Name -like "clean_temp_*") { return }
+            if (((Get-Date) - $userStartTime).TotalSeconds -gt $timeoutSecs) { throw "UserFolderTimeout" }
+            $item = $_
+            if ($item.PSIsContainer) {
+                $dirs += $item
+            } else {
+                $len = $item.Length
+                try {
+                    Remove-Item -LiteralPath $item.FullName -Force -ErrorAction Stop
+                    $global:progressData[$userName].Files++
+                    $global:progressData[$userName].Bytes += $len
+                    Write-ProgressFile -currentUser $userName -status "In Progress"
+                } catch { $errs.Value++ }
+            }
+        }
+    }
+    catch {
+        if ($_.ToString() -match "UserFolderTimeout" -or $_.Exception.Message -match "UserFolderTimeout") {
+            throw "UserFolderTimeout"
+        }
+        $errs.Value++
+    }
+    
+    if ($dirs.Count -gt 0) {
+        $sortedDirs = $dirs | Sort-Object -Property @{Expression={$_.FullName.Length}} -Descending
+        foreach ($dir in $sortedDirs) {
+            if (((Get-Date) - $userStartTime).TotalSeconds -gt $timeoutSecs) { throw "UserFolderTimeout" }
+            try {
+                Remove-Item -LiteralPath $dir.FullName -Force -Confirm:$false -ErrorAction Stop
+                $global:progressData[$userName].Folders++
+                Write-ProgressFile -currentUser $userName -status "In Progress"
+            } catch { $errs.Value++ }
+        }
+    }
+}
+
+try {
+    foreach ($path in $profilePaths) {
+        $uName = Split-Path $path -Leaf
+        $global:progressData[$uName] = @{
+            Path    = $path
+            Files   = 0
+            Folders = 0
+            Bytes   = [int64]0
+            Status  = "Pending"
+        }
+    }
+    $global:progressData["_SYSTEM_"] = @{
+        Path    = "Sistema (Temp/Prefetch/Update/ServiceProfiles)"
+        Files   = 0
+        Folders = 0
+        Bytes   = [int64]0
+        Status  = "Pending"
+    }
+    Write-ProgressFile -currentUser "System" -status "Init"
+
+    foreach ($path in $profilePaths) {
+        $userName = Split-Path $path -Leaf
+        $global:progressData[$userName].Status = "In Progress"
+        Write-ProgressFile -currentUser $userName -status "In Progress"
+        $uErrors = 0
+        $userStartTime = Get-Date
+        try {
+            Clear-FolderContents -FolderPath (Join-Path $path "AppData\Local\Temp") -userName $userName -errs ([ref]$uErrors) -userStartTime $userStartTime -timeoutSecs $UserTimeoutSeconds
+            Clear-FolderContents -FolderPath (Join-Path $path "AppData\LocalLow\Temp") -userName $userName -errs ([ref]$uErrors) -userStartTime $userStartTime -timeoutSecs $UserTimeoutSeconds
+            Clear-FolderContents -FolderPath (Join-Path $path "AppData\Local\Microsoft\Windows\INetCache") -userName $userName -errs ([ref]$uErrors) -userStartTime $userStartTime -timeoutSecs $UserTimeoutSeconds
+            Clear-FolderContents -FolderPath (Join-Path $path "AppData\Local\Microsoft\Windows\Temporary Internet Files") -userName $userName -errs ([ref]$uErrors) -userStartTime $userStartTime -timeoutSecs $UserTimeoutSeconds
+            Clear-FolderContents -FolderPath (Join-Path $path "AppData\Local\CrashDumps") -userName $userName -errs ([ref]$uErrors) -userStartTime $userStartTime -timeoutSecs $UserTimeoutSeconds
+            $global:progressData[$userName].Status = "Done"
+            Write-ProgressFile -currentUser $userName -status "Done"
+        }
+        catch {
+            if ($_.ToString() -match "UserFolderTimeout" -or $_.Exception.Message -match "UserFolderTimeout") {
+                $global:progressData[$userName].Status = "Timeout"
+                Write-ProgressFile -currentUser $userName -status "Timeout"
+            } else {
+                $global:progressData[$userName].Status = "Error"
+                Write-ProgressFile -currentUser $userName -status "Error"
+            }
+        }
+        $uData = $global:progressData[$userName]
+        $report += "User:$userName|Path:$path|Files:$($uData.Files)|Folders:$($uData.Folders)|Bytes:$($uData.Bytes)|Errors:$uErrors|Status:$($uData.Status)"
+    }
+    
+    $userName = "_SYSTEM_"
+    $global:progressData[$userName].Status = "In Progress"
+    Write-ProgressFile -currentUser $userName -status "In Progress"
+    $sysErrors = 0
+    $sysStartTime = Get-Date
+    try {
+        $systemPaths = @(
+            "C:\Windows\Temp",
+            "C:\Windows\Prefetch",
+            "C:\Windows\SoftwareDistribution\Download",
+            "C:\Windows\System32\config\systemprofile\AppData\Local\Temp",
+            "C:\Windows\ServiceProfiles\LocalService\AppData\Local\Temp",
+            "C:\Windows\ServiceProfiles\NetworkService\AppData\Local\Temp"
+        )
+        foreach ($sysPath in $systemPaths) {
+            Clear-FolderContents -FolderPath $sysPath -userName $userName -errs ([ref]$sysErrors) -userStartTime $sysStartTime -timeoutSecs $UserTimeoutSeconds
+        }
+        $global:progressData[$userName].Status = "Done"
+        Write-ProgressFile -currentUser $userName -status "Done"
+    }
+    catch {
+        if ($_.ToString() -match "UserFolderTimeout" -or $_.Exception.Message -match "UserFolderTimeout") {
+            $global:progressData[$userName].Status = "Timeout"
+            Write-ProgressFile -currentUser $userName -status "Timeout"
+        } else {
+            $global:progressData[$userName].Status = "Error"
+            Write-ProgressFile -currentUser $userName -status "Error"
+        }
+    }
+    $sysData = $global:progressData[$userName]
+    $report += "User:$userName|Path:$($sysData.Path)|Files:$($sysData.Files)|Folders:$($sysData.Folders)|Bytes:$($sysData.Bytes)|Errors:$sysErrors|Status:$($sysData.Status)"
+
+    $outputPath = "C:\Windows\Temp\clean_temp_results.txt"
+    $report | Out-File -FilePath $outputPath -Encoding UTF8 -Force
+}
+catch {
+    $errPath = "C:\Windows\Temp\clean_temp_errors.txt"
+    $_ | Out-File -FilePath $errPath -Encoding UTF8 -Force
+}
+'@
+        $scriptBytes = [System.Text.Encoding]::Unicode.GetBytes($remoteScriptContent)
+        $scriptBase64 = [Convert]::ToBase64String($scriptBytes)
+        $cmd = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand $scriptBase64"
+        
+        if (-not $Silent) {
+            Write-Host "Ejecutando script de limpieza profunda en segundo plano..." -ForegroundColor Yellow
+        }
+        
+        $totalFiles = 0
+        $totalFolders = 0
+        $totalBytes = [int64]0
+        $totalErrors = 0
+        $hasResults = $false
+
+        try {
+            if ($null -ne $cred) {
+                $result = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $cmd -ComputerName $ipRemota -Credential $cred
+            } else {
+                $result = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $cmd -ComputerName $ipRemota
+            }
+
+            if ($result.ReturnValue -eq 0 -and $result.ProcessId) {
+                $remotePid = $result.ProcessId
+                if (-not $Silent) {
+                    Write-Host "Proceso remoto iniciado exitosamente (PID: $remotePid)." -ForegroundColor Green
+                    Write-Host "Realizando limpieza profunda en tiempo real (monitoreando progreso)...`n" -ForegroundColor Yellow
+                }
+                
+                $timeout = 300
+                $elapsed = 0
+                $lastReport = @{}
+                $progressFilePath = "${drive}:\Windows\Temp\clean_temp_progress.txt"
+                
+                while ($elapsed -lt $timeout) {
+                    Start-Sleep -Seconds 2
+                    $procCheck = $null
+                    try {
+                        if ($null -ne $cred) {
+                            $procCheck = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -Credential $cred -ErrorAction Stop
+                        } else {
+                            $procCheck = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -ErrorAction Stop
+                        }
+                    } catch {
+                        $procCheck = "SimulatedActive"
+                    }
+                    
+                    if (Test-Path -LiteralPath $progressFilePath) {
+                        try {
+                            $progressContent = Get-Content -LiteralPath $progressFilePath -Encoding UTF8 -ErrorAction Stop
+                            if ($progressContent) {
+                                foreach ($line in $progressContent) {
+                                    $parts = $line -split '\|'
+                                    $stats = @{}
+                                    foreach ($part in $parts) {
+                                        if ($part -match "^([^:]+):(.*)$") {
+                                            $stats[$Matches[1]] = $Matches[2]
+                                        }
+                                    }
+                                    $uName = $stats["User"]
+                                    $uPath = $stats["Path"]
+                                    if (-not $uName) { continue }
+                                    
+                                    $uFiles = [int]$stats["Files"]
+                                    $uFolders = [int]$stats["Folders"]
+                                    $uBytes = [int64]$stats["Bytes"]
+                                    $uStatus = $stats["Status"]
+                                    
+                                    $prev = $lastReport[$uName]
+                                    if ($null -eq $prev -or $prev.Files -ne $uFiles -or $prev.Folders -ne $uFolders -or $prev.Status -ne $uStatus) {
+                                        $mbUser = [Math]::Round($uBytes / 1MB, 2)
+                                        $displayContext = if ($uName -eq "_SYSTEM_") { "Sistema (Temp/Prefetch/Update/ServiceProfiles)" } else { "Carpeta: $uPath (Usuario: $uName)" }
+                                        
+                                        if (-not $Silent) {
+                                            if ($uStatus -eq "Done") {
+                                                Write-Host " -> [COMPLETADO] $displayContext | Archivos: $uFiles | Carpetas: $uFolders | Liberado: $mbUser MB" -ForegroundColor Green
+                                            } elseif ($uStatus -eq "Timeout") {
+                                                Write-Host " -> [OMITIDO (TIMEOUT)] $displayContext | Archivos: $uFiles | Carpetas: $uFolders | Excedio limite 30s" -ForegroundColor Yellow
+                                            } elseif ($uStatus -eq "Error") {
+                                                Write-Host " -> [ERROR] $displayContext | Limpieza interrumpida" -ForegroundColor Red
+                                            } elseif ($uStatus -eq "In Progress") {
+                                                Write-Host " -> [PROGRESO] $displayContext | Archivos: $uFiles | Carpetas: $uFolders | Liberado: $mbUser MB..." -ForegroundColor Yellow
+                                            }
+                                        }
+                                        $lastReport[$uName] = @{ Files = $uFiles; Folders = $uFolders; Status = $uStatus }
+                                    }
+                                }
+                            }
+                        } catch {}
+                    }
+                    if ($null -eq $procCheck) { break }
+                    $elapsed += 2
+                }
+
+                $resultsPath = "${drive}:\Windows\Temp\clean_temp_results.txt"
+                $errorsPath = "${drive}:\Windows\Temp\clean_temp_errors.txt"
+                
+                for ($i = 0; $i -lt 6; $i++) {
+                    if (Test-Path -LiteralPath $resultsPath) { $hasResults = $true; break }
+                    if (Test-Path -LiteralPath $errorsPath) { break }
+                    Start-Sleep -Milliseconds 500
+                }
+
+                if ($hasResults) {
+                    if (-not $Silent) {
+                        Write-Host "`n--- DETALLE FINAL DE LIMPIEZA POR USUARIO ---" -ForegroundColor Cyan
+                    }
+                    Get-Content -Path $resultsPath | ForEach-Object {
+                        $parts = $_ -split '\|'
+                        $userStats = @{}
+                        foreach ($part in $parts) {
+                            if ($part -match "^([^:]+):(.*)$") {
+                                $userStats[$Matches[1]] = $Matches[2]
+                            }
+                        }
+                        $uName = $userStats["User"]
+                        $uPath = $userStats["Path"]
+                        $uFiles = [int]$userStats["Files"]
+                        $uFolders = [int]$userStats["Folders"]
+                        $uBytes = [int64]$userStats["Bytes"]
+                        $uErrors = [int]$userStats["Errors"]
+                        $uStatus = $userStats["Status"]
+                        
+                        $totalFiles += $uFiles
+                        $totalFolders += $uFolders
+                        $totalBytes += $uBytes
+                        $totalErrors += $uErrors
+                        
+                        $mbUser = [Math]::Round($uBytes / 1MB, 2)
+                        $displayContext = if ($uName -eq "_SYSTEM_") { "Sistema (Temp/Prefetch/Update/ServiceProfiles)" } else { "Carpeta: $uPath (Usuario: $uName)" }
+                        
+                        if (-not $Silent) {
+                            $statusLabel = if ($uStatus -eq "Timeout") { " [OMITIDO POR TIMEOUT]" } else { "" }
+                            $color = if ($uStatus -eq "Timeout") { "Yellow" } else { "White" }
+                            Write-Host "[$displayContext]$statusLabel" -ForegroundColor $color
+                            Write-Host "  -> Archivos eliminados: $uFiles" -ForegroundColor Green
+                            Write-Host "  -> Carpetas eliminadas: $uFolders" -ForegroundColor Green
+                            Write-Host "  -> Espacio liberado   : $mbUser MB" -ForegroundColor Green
+                            Write-Host "  -> Errores/Bloqueados : $uErrors" -ForegroundColor Yellow
+                            Write-Host ""
+                        }
+                    }
+                    
+                    $totalMBLiberados = [Math]::Round($totalBytes / 1MB, 2)
+                    if (-not $Silent) {
+                        Write-Host "-----------------------------------------------------------" -ForegroundColor Gray
+                        Write-Host "RESUMEN GLOBAL DE LIMPIEZA MULTI-USUARIO REMOTA (AVANZADA):" -ForegroundColor Cyan
+                        Write-Host "Total archivos eliminados: $totalFiles" -ForegroundColor White
+                        Write-Host "Total carpetas eliminadas: $totalFolders" -ForegroundColor White
+                        Write-Host "Total espacio liberado:    $totalMBLiberados MB" -ForegroundColor Green
+                        Write-Host "Total errores/bloqueados:  $totalErrors" -ForegroundColor Yellow
+                        Write-Host "-----------------------------------------------------------" -ForegroundColor Gray
+                    }
+                }
+                
+                Remove-Item -Path "${drive}:\Windows\Temp\clean_temp_results.txt" -Force -ErrorAction SilentlyContinue
+                Remove-Item -Path "${drive}:\Windows\Temp\clean_temp_progress.txt" -Force -ErrorAction SilentlyContinue
+                Remove-Item -Path "${drive}:\Windows\Temp\clean_temp_errors.txt" -Force -ErrorAction SilentlyContinue
+                Dismount-RemoteCShare -driveName $drive
+            } else {
+                if (-not $Silent) {
+                    Write-Host "[ERROR] El proceso remoto retorno un error: $($result.ReturnValue)" -ForegroundColor Red
+                }
+                Dismount-RemoteCShare -driveName $drive
+            }
+        }
+        catch {
+            if (-not $Silent) {
+                Write-Host "[ERROR] Fallo la llamada WMI: $_" -ForegroundColor Red
+            }
+            Dismount-RemoteCShare -driveName $drive
+        }
+
+        return [PSCustomObject]@{
+            TotalFiles   = $totalFiles
+            TotalFolders = $totalFolders
+            TotalMB      = [Math]::Round($totalBytes / 1MB, 2)
+            TotalErrors  = $totalErrors
+            Success      = $hasResults
+        }
+    }
+
+    function Invoke-RemoteCleanGeneral {
+        param(
+            [Parameter(Mandatory=$true)]$ctx
+        )
+        $ipRemota = $ctx.ComputerName
+        $swMaster = [System.Diagnostics.Stopwatch]::StartNew()
+        
+        Write-Host "`n==========================================================================" -ForegroundColor Cyan
+        Write-Host "   INICIANDO LIMPIEZA GENERAL Y MANTENIMIENTO INTEGRAL EN $ipRemota" -ForegroundColor Yellow
+        Write-Host "==========================================================================" -ForegroundColor Cyan
+        
+        # 1. Liberar RAM
+        Write-Host "`n[FASE 1/6] Optimizando Memoria RAM..." -ForegroundColor Yellow
+        $resRAM = Invoke-RemoteCleanRAM -ctx $ctx -Silent
+        if ($resRAM.Success) {
+            Write-Host "  -> Memoria RAM optimizada exitosamente (API EmptyWorkingSet)." -ForegroundColor Green
+        } else {
+            Write-Host "  -> [AVISO] No se pudo optimizar la RAM." -ForegroundColor Yellow
+        }
+
+        # 2. Liberar CPU
+        Write-Host "`n[FASE 2/6] Optimizando Procesador y Prioridades..." -ForegroundColor Yellow
+        $resCPU = Invoke-RemoteCleanCPU -ctx $ctx -Silent
+        if ($resCPU.Success) {
+            Write-Host "  -> Prioridades de procesos pesados ajustadas a BelowNormal." -ForegroundColor Green
+        } else {
+            Write-Host "  -> [AVISO] No se pudo ajustar la prioridad de CPU." -ForegroundColor Yellow
+        }
+
+        # 3. Limpiar Temporales de Carpetas (Windows Temp, Prefetch, Temp usuario activo)
+        Write-Host "`n[FASE 3/6] Limpiando Archivos Temporales de Carpetas del Sistema..." -ForegroundColor Yellow
+        $resTemp = Invoke-RemoteCleanTempFolders -ctx $ctx -Silent
+        if ($resTemp.Success) {
+            Write-Host "  -> Archivos eliminados : $($resTemp.Files)" -ForegroundColor White
+            Write-Host "  -> Carpetas eliminadas : $($resTemp.Dirs)" -ForegroundColor White
+            Write-Host "  -> Espacio liberado    : $($resTemp.MB) MB" -ForegroundColor Green
+        } else {
+            Write-Host "  -> [AVISO] No se pudo completar la limpieza de temporales de carpetas." -ForegroundColor Yellow
+        }
+
+        # 4. Limpieza de ProgramData (Poda selectiva)
+        Write-Host "`n[FASE 4/6] Mantenimiento de Archivos Temporales en ProgramData..." -ForegroundColor Yellow
+        $resProg = Invoke-RemoteCleanProgramData -ctx $ctx -Silent
+        if ($resProg.Success) {
+            Write-Host "  -> Carpetas analizadas : $($resProg.Scanned)" -ForegroundColor White
+            Write-Host "  -> Archivos obsoletos  : $($resProg.Deleted)" -ForegroundColor White
+            Write-Host "  -> Espacio liberado    : $($resProg.MB) MB" -ForegroundColor Green
+        } else {
+            Write-Host "  -> [AVISO] No se pudo completar la limpieza de ProgramData." -ForegroundColor Yellow
+        }
+
+        # 5. Vaciar Papelera de Reciclaje
+        Write-Host "`n[FASE 5/6] Vaciando Papelera de Reciclaje Remota..." -ForegroundColor Yellow
+        $resRecycle = Invoke-RemoteCleanRecycleBin -ctx $ctx -Silent
+        if ($resRecycle.Success) {
+            Write-Host "  -> Papelera de reciclaje vaciada para todos los usuarios." -ForegroundColor Green
+        } else {
+            Write-Host "  -> [AVISO] No se pudo vaciar la papelera." -ForegroundColor Yellow
+        }
+
+        # 6. Limpieza Avanzada Multi-Usuario (Perfiles)
+        Write-Host "`n[FASE 6/6] Limpieza Avanzada de Temporales (Todos los Usuarios)..." -ForegroundColor Yellow
+        $resAdv = Invoke-RemoteCleanAdvancedProfiles -ctx $ctx
+        
+        $swMaster.Stop()
+        $totalDuracion = [Math]::Round($swMaster.Elapsed.TotalSeconds, 2)
+        $advFiles = 0
+        $advDirs = 0
+        $advMB = 0.0
+        if ($resAdv) {
+            $advFiles = $resAdv.TotalFiles
+            $advDirs = $resAdv.TotalFolders
+            $advMB = $resAdv.TotalMB
+        }
+        $granTotalArchivos = $resTemp.Files + $resProg.Deleted + $advFiles
+        $granTotalCarpetas = $resTemp.Dirs + $advDirs
+        $granTotalMB = [Math]::Round($resTemp.MB + $resProg.MB + $advMB, 2)
+
+        Write-Host "`n==========================================================================" -ForegroundColor Green
+        Write-Host "   RESUMEN MAESTRO: LIMPIEZA GENERAL COMPLETADA EN $ipRemota" -ForegroundColor White -BackgroundColor DarkGreen
+        Write-Host "==========================================================================" -ForegroundColor Green
+        Write-Host ("  Total Archivos Eliminados : {0}" -f $granTotalArchivos) -ForegroundColor White
+        Write-Host ("  Total Carpetas Eliminadas : {0}" -f $granTotalCarpetas) -ForegroundColor White
+        Write-Host ("  Total Espacio Liberado    : {0} MB" -f $granTotalMB) -ForegroundColor Green
+        Write-Host ("  Tiempo Total Transcurrido : {0} segundos" -f $totalDuracion) -ForegroundColor Cyan
+        Write-Host "==========================================================================" -ForegroundColor Green
     }
 
     function Ejecutar-DefragRemoto {
@@ -351,6 +1315,7 @@ Write-Output "Proceso de optimizacion completado con exito."
             Write-Host "    13.4. Liberar Procesador Remoto" -ForegroundColor DarkCyan
             Write-Host "    13.5. Vaciar Papelera de Reciclaje Remoto" -ForegroundColor DarkCyan
             Write-Host "    13.6. Eliminacion avanzada de temporales (Todos los usuarios) Remoto" -ForegroundColor Yellow
+            Write-Host "    13.7. Limpieza General de Archivos en PC Remoto" -ForegroundColor Cyan
             Write-Host "  ----------------------------------------"
             Write-Host "  14. defragmentacion PC Remoto" -ForegroundColor Cyan
             Write-Host "    14.1 Desfragmentar Unidad C: (Principal)" -ForegroundColor DarkCyan
@@ -369,12 +1334,13 @@ Write-Output "Proceso de optimizacion completado con exito."
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
 
-                    # 1. Solicitar los 2 ultimos octeto al usuario
-                    # Se usa Read-Host que es el equivalente a 'SET /P'
-                    $segmentoFinal = Read-Host "Introduzca los 2 ultimos segmentos IP (192.168.XXX.xxx) y presione Enter"
-
-                    # 2. Construir la dirección IP completa
-                    $IPCompleta = "192.168.$segmentoFinal"
+                    # 1. Solicitar IP estandarizada (IP completa o 2 ultimos octetos)
+                    $IPCompleta = Get-StandardIPPrompt
+                    if ([string]::IsNullOrWhiteSpace($IPCompleta)) {
+                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                        Read-Host "Presione ENTER para continuar..."
+                        break
+                    }
 
                     Write-Host "`nConsultando informacion de red para: $IPCompleta" -ForegroundColor Cyan
 
@@ -396,26 +1362,12 @@ Write-Output "Proceso de optimizacion completado con exito."
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
 
-                    # 1. Entrada de datos
-                    $entrada = Read-Host "Ingrese IP completa, los 2 ultimos octetos (ej. 13.15), el ultimo octeto (ej. 15) o el Hostname"
-                    $entrada = $entrada.Trim()
-
-                    $ipRemota = ""
-                    if ($entrada -match "^[a-zA-Z]") {
-                        # Es un Hostname
-                        $ipRemota = $entrada
-                    }
-                    elseif ($entrada -split "\." -and ($entrada -split "\.").Count -eq 2) {
-                        # Si ingreso exactamente 2 octetos (ej: 13.15)
-                        $ipRemota = "192.168." + $entrada
-                    }
-                    elseif ($entrada -split "\." -and ($entrada -split "\.").Count -eq 1 -and $entrada -match "^\d+$") {
-                        # Si ingreso exactamente 1 octeto (ej: 15)
-                        $ipRemota = "192.168.176." + $entrada
-                    }
-                    else {
-                        # IP Completa u otros formatos
-                        $ipRemota = $entrada
+                    # 1. Entrada de datos estandarizada
+                    $ipRemota = Get-StandardIPPrompt
+                    if ([string]::IsNullOrWhiteSpace($ipRemota)) {
+                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                        Read-Host "Presione ENTER para continuar..."
+                        break
                     }
 
                     Write-Host "`n--- Consultando informacion de red... ---" -ForegroundColor Yellow
@@ -769,9 +1721,12 @@ Write-Output "Proceso de optimizacion completado con exito."
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
 
                     # --- CONFIGURACIÓN DE RED REMOTA CON COMPARATIVA ANTES/DESPUÉS ---
-                    $baseIP = "192.168.176."
-                    $ultimoOctetoActual = Read-Host "Ingrese el ultimo octeto de la IP ACTUAL (192.168.176.XXX)"
-                    $ipRemota = $baseIP + $ultimoOctetoActual
+                    $ipRemota = Get-StandardIPPrompt -Mensaje "Ingrese la IP ACTUAL completa (ej: 192.168.176.50) o los 2 ultimos octetos (ej: 176.50)"
+                    if ([string]::IsNullOrWhiteSpace($ipRemota)) {
+                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                        Read-Host "Presione ENTER para continuar..."
+                        break
+                    }
 
                     Write-Host "`n--- Conectando a: $ipRemota ---" -ForegroundColor Yellow
 
@@ -884,9 +1839,12 @@ Write-Output "Proceso de optimizacion completado con exito."
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
 
                     # --- CONFIGURACIÓN DE RED REMOTA: REGRESO A DHCP (CORREGIDO) ---
-                    $baseIP = "192.168.176."
-                    $ultimoOctetoActual = Read-Host "Ingrese el ultimo octeto de la IP ACTUAL (192.168.176.XXX)"
-                    $ipRemota = $baseIP + $ultimoOctetoActual
+                    $ipRemota = Get-StandardIPPrompt -Mensaje "Ingrese la IP ACTUAL completa (ej: 192.168.176.50) o los 2 ultimos octetos (ej: 176.50)"
+                    if ([string]::IsNullOrWhiteSpace($ipRemota)) {
+                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                        Read-Host "Presione ENTER para continuar..."
+                        break
+                    }
 
                     Write-Host "`n--- Conectando a: $ipRemota ---" -ForegroundColor Yellow
 
@@ -964,9 +1922,13 @@ Write-Output "Proceso de optimizacion completado con exito."
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
 
-                    # Solicitud del ultimo octeto para la IP remota
-                    $octeto4 = Read-Host "Ingrese el ULTIMO octeto de la IP remota (192.168.176.XXX)"
-                    $ipRemota = "192.168.176.$octeto4"
+                    # Solicitud estandarizada de IP remota
+                    $ipRemota = Get-StandardIPPrompt
+                    if ([string]::IsNullOrWhiteSpace($ipRemota)) {
+                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                        Read-Host "Presione ENTER para continuar..."
+                        break
+                    }
 
                     Write-Host "`nConsultando interfaces en: $ipRemota...`n" -ForegroundColor Cyan
 
@@ -993,9 +1955,13 @@ Write-Output "Proceso de optimizacion completado con exito."
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
 
-                    # 1. Entrada de red
-                    $octeto4 = Read-Host "Ingrese el ULTIMO octeto de la IP remota (192.168.176.XXX)"
-                    $ipRemota = "192.168.176.$octeto4"
+                    # 1. Entrada de red estandarizada
+                    $ipRemota = Get-StandardIPPrompt
+                    if ([string]::IsNullOrWhiteSpace($ipRemota)) {
+                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                        Read-Host "Presione ENTER para continuar..."
+                        break
+                    }
 
                     Write-Host "`nConectando a $ipRemota...`n" -ForegroundColor Cyan
 
@@ -1078,17 +2044,13 @@ Write-Output "Proceso de optimizacion completado con exito."
                     Write-Host "========================================================"
                     Write-Host ""
 
-                    $Segmento = "192.168.176."
+                    $IP = Get-StandardIPPrompt
 
-                    $Octeto = Read-Host "Ingrese el ultimo octeto del segmento 192.168.176.XXX"
-
-                    if ([string]::IsNullOrEmpty($Octeto)) {
+                    if ([string]::IsNullOrWhiteSpace($IP)) {
                         Write-Host ""
                         Write-Host "Debe ingresar un valor." -ForegroundColor Red
                         return
                     }
-
-                    $IP = $Segmento + $Octeto
 
                     Write-Host ""
                     Write-Host "Direccion IP : $IP" -ForegroundColor Yellow
@@ -1256,17 +2218,13 @@ Write-Output "Proceso de optimizacion completado con exito."
                     Write-Host "========================================================"
                     Write-Host ""
 
-                    $Segmento = "192.168.176."
+                    $IP = Get-StandardIPPrompt
 
-                    $Octeto = Read-Host "Ingrese el ultimo octeto del segmento 192.168.176.XXX"
-
-                    if ([string]::IsNullOrEmpty($Octeto)) {
+                    if ([string]::IsNullOrWhiteSpace($IP)) {
                         Write-Host ""
                         Write-Host "Debe ingresar un valor." -ForegroundColor Red
                         return
                     }
-
-                    $IP = $Segmento + $Octeto
 
                     Write-Host ""
                     Write-Host "Direccion IP : $IP" -ForegroundColor Yellow
@@ -1370,7 +2328,12 @@ Write-Output "Proceso de optimizacion completado con exito."
                 "1.9" { 
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
-                    psHabilitarAdministracionRemota
+                    $target = Get-StandardIPPrompt
+                    if (-not [string]::IsNullOrWhiteSpace($target)) {
+                        psHabilitarAdministracionRemota -targetInput $target
+                    } else {
+                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                    }
                     Read-Host "Presione ENTER para continuar..."
                 }
 
@@ -1899,16 +2862,17 @@ try {
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
 
-                    # 1. Definir el segmento de red
-                    $segmento = "192.168"
-
                     # 2. Solicitar la entrada del usuario (Equivalente a SET /P)
                     Write-Host "==============================================" -ForegroundColor Cyan
                     Write-Host "   REINICIO REMOTO DE EQUIPOS (Win 7 - 11)    " -ForegroundColor Cyan
                     Write-Host "==============================================" -ForegroundColor Cyan
 
-                    $ultimoOcteto = Read-Host "Introduzca los 2 ultimos segmentos IP para $segmento.XXX.xxx"
-                    $IPRemota = "$segmento.$ultimoOcteto"
+                    $IPRemota = Get-StandardIPPrompt
+                    if ([string]::IsNullOrWhiteSpace($IPRemota)) {
+                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                        Read-Host "Presione ENTER para continuar..."
+                        break
+                    }
 
                     # 3. Validar si el equipo responde (Ping) antes de intentar el comando
                     Write-Host "`nVerificando conexion con $IPRemota" -ForegroundColor Yellow
@@ -1945,16 +2909,17 @@ try {
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
 
-                    # 1. Definir el segmento de red
-                    $segmento = "192.168"
-
                     # 2. Solicitar la entrada del usuario (Equivalente a SET /P)
                     Write-Host "==============================================" -ForegroundColor Cyan
                     Write-Host "   APAGADO REMOTO DE EQUIPOS (Win 7 - 11)    " -ForegroundColor Cyan
                     Write-Host "==============================================" -ForegroundColor Cyan
 
-                    $ultimoOcteto = Read-Host "Introduzca los 2 ultimos segmentos IP para $segmento.XXX.xxx"
-                    $IPRemota = "$segmento.$ultimoOcteto"
+                    $IPRemota = Get-StandardIPPrompt
+                    if ([string]::IsNullOrWhiteSpace($IPRemota)) {
+                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                        Read-Host "Presione ENTER para continuar..."
+                        break
+                    }
 
                     # 3. Validar si el equipo responde (Ping) antes de intentar el comando
                     Write-Host "`nVerificando conexion con $IPRemota" -ForegroundColor Yellow
@@ -2017,16 +2982,16 @@ try {
 
                     # ==============================================================================
                     # 2. DEFINICIÓN DE RED Y ENTRADA DE USUARIO
-                    # ==============================================================================
-                    $segmentoBase = "192.168"
-
                     Write-Host "==============================================" -ForegroundColor Cyan
                     Write-Host "     EXPLORADOR DE ESCRITORIO PUBLICO REMOTO  " -ForegroundColor Cyan
                     Write-Host "==============================================" -ForegroundColor Cyan
 
-                    # El usuario debe ingresar algo como "176.80"
-                    $ultimoOcteto = Read-Host "Introduzca los 2 ultimos segmentos IP para $segmentoBase.XXX.xxx"
-                    $IPRemota = "$segmentoBase.$ultimoOcteto"
+                    $IPRemota = Get-StandardIPPrompt
+                    if ([string]::IsNullOrWhiteSpace($IPRemota)) {
+                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                        Read-Host "Presione ENTER para continuar..."
+                        break
+                    }
 
                     # ==============================================================================
                     # 3. CONSTRUCCIÓN DE RUTA Y APERTURA
@@ -2075,15 +3040,16 @@ try {
                     # ==============================================================================
                     # 2. ENTRADA DE USUARIO Y DEFINICIÓN DE RUTA
                     # ==============================================================================
-                    $segmentoBase = "192.168"
-
                     Write-Host "`n==============================================" -ForegroundColor Cyan
                     Write-Host "    ACCESO A CARPETA STARTUP (Win 7 - 11)     " -ForegroundColor Cyan
                     Write-Host "==============================================" -ForegroundColor Cyan
 
-                    # El usuario debe ingresar algo como "176.80"
-                    $ultimoOcteto = Read-Host "Introduzca los 2 ultimos segmentos IP para $segmentoBase.XXX.xxx"
-                    $IPRemota = "$segmentoBase.$ultimoOcteto"
+                    $IPRemota = Get-StandardIPPrompt
+                    if ([string]::IsNullOrWhiteSpace($IPRemota)) {
+                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                        Read-Host "Presione ENTER para continuar..."
+                        break
+                    }
 
                     # Definimos la ruta completa al menú de inicio (Carpeta de Inicio común para todos los usuarios)
                     $rutaStartUp = "\\$IPRemota\c$\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
@@ -2134,12 +3100,15 @@ try {
 
                     $usu = Read-Host "Introduzca Usuario dominio (gmsantacruz\usuario)"
                     $cla = Read-Host "Introduzca clave de usuario" -AsSecureString # Se oculta la clave por seguridad
-                    $ipPC = Read-Host "Introduzca ultimo octeto IP (192.168.176.xxx)"
+                    $IPFinal = Get-StandardIPPrompt
+                    if ([string]::IsNullOrWhiteSpace($IPFinal)) {
+                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                        Read-Host "Presione ENTER para continuar..."
+                        break
+                    }
 
                     # Convertir la clave segura a texto plano para PsExec (requerido por la herramienta)
                     $claTexto = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($cla))
-
-                    $IPFinal = "192.168.176.$ipPC"
                     $psexecPath = "C:\PSTools\PsExec.exe"
 
                     # ==============================================================================
@@ -2201,12 +3170,15 @@ try {
 
                     $usu = Read-Host "Introduzca Usuario dominio (gmsantacruz\usuario)"
                     $cla = Read-Host "Introduzca clave de usuario" -AsSecureString 
-                    $ipPC = Read-Host "Introduzca ultimo octeto IP (192.168.176.xxx)"
+                    $IPFinal = Get-StandardIPPrompt
+                    if ([string]::IsNullOrWhiteSpace($IPFinal)) {
+                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                        Read-Host "Presione ENTER para continuar..."
+                        break
+                    }
 
                     # Conversión de credencial
                     $claTexto = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($cla))
-
-                    $IPFinal = "192.168.176.$ipPC"
                     $psexecPath = "C:\PSTools\PsExec.exe"
 
                     # ==============================================================================
@@ -2251,19 +3223,22 @@ try {
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
 
-                    # 1. Entrada de red (Dos últimos octetos)
+                    # 1. Entrada de red estandarizada
                     Write-Host "--- Configuracion de Energia GMSANTACRUZ ---" -ForegroundColor Cyan
-                    $octeto3 = "176"
-                    $octeto4 = Read-Host "Ingrese el CUARTO octeto (192.168.$octeto3.XXX)"
-                    $ipRemota = "192.168.$octeto3.$octeto4"
+                    $ipRemota = Get-StandardIPPrompt
+                    if ([string]::IsNullOrWhiteSpace($ipRemota)) {
+                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                        Read-Host "Presione ENTER para continuar..."
+                        break
+                    }
 
                     # 2. Entrada de tiempo de pantalla
                     Write-Host "`n--- Configuracion de Tiempos ---" -ForegroundColor White
                     $minutosPantalla = Read-Host "Minutos para apagar la PANTALLA (Ej. 30)"
 
                     # Validación de entradas numéricas
-                    if ($octeto3 -notmatch '^\d+$' -or $octeto4 -notmatch '^\d+$' -or $minutosPantalla -notmatch '^\d+$') {
-                        Write-Host "ERROR: Todos los valores deben ser numericos." -ForegroundColor Red
+                    if ($minutosPantalla -notmatch '^\d+$') {
+                        Write-Host "ERROR: El valor de minutos debe ser numerico." -ForegroundColor Red
                         Pause
                         break
                     }
@@ -2326,7 +3301,12 @@ try {
 
                     Write-Host "MOSTRAR IMPRESORAS DISPONIBLES EN UNA PC REMOTA" -ForegroundColor Cyan
 
-                    $computer = Read-Host "`nIngrese el nombre o IP de la PC remota"
+                    $computer = Get-StandardIPPrompt
+                    if ([string]::IsNullOrWhiteSpace($computer)) {
+                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                        Read-Host "Presione ENTER para continuar..."
+                        break
+                    }
                     $psExecPath = "C:\PSTools\psexec.exe"
 
                     if (-not (Test-Path $psExecPath)) {
@@ -2544,64 +3524,42 @@ try {
 
                     # --- Bloque de Control / Ejecución Inicial ---
                     Write-Host '--- Monitor de Impresoras GMSANTACRUZ ---' -ForegroundColor Cyan
-                    $octeto3 = '176'
-                    $octeto4 = Read-Host 'Ingrese el CUARTO octeto (192.168.176.XXX)'
+                    $ipRemota = Get-StandardIPPrompt
+                    if ([string]::IsNullOrWhiteSpace($ipRemota)) {
+                        Write-Host 'Operacion cancelada.' -ForegroundColor Red
+                        Read-Host "Presione ENTER para continuar..."
+                        break
+                    }
+                    $fullIP = $ipRemota
+                    Write-Host "`n--- Consultando Host: $fullIP ---" -ForegroundColor Cyan
+                            
+                    try {
+                        # 3. Ejecución optimizada de quser (query user)
+                        $resultado = quser /server:$fullIP 2>&1
 
-                    # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                    # 2. Captura del último OCTETO con validación simple
-                    $baseIP = "192.168.$octeto3."
-                    $hostID = $octeto4
-
-                    if ($hostID -match '^\d{1,3}$') {
-                        $fullIP = $baseIP + $hostID
-                        Write-Host "`n--- Consultando Host: $fullIP ---" -ForegroundColor Cyan
-                                
-                        try {
-                            # 3. Ejecución optimizada de quser (query user)
-                            # Redirigimos el error 2 al flujo de éxito para procesar el texto de "No hay usuarios"
-                            $resultado = quser /server:$fullIP 2>&1
-
-                            # 4. Procesamiento de la respuesta
-                            if ($resultado -like "*No hay ningún usuario*" -or $resultado -like "*No user exists*") {
-                                Write-Host "Estado: Equipo encendido, pero sin sesiones activas." -ForegroundColor Cyan
-                            }
-                            elseif ($resultado -like "*Error*") {
-                                Write-Host "Error: No se pudo establecer conexion RPC con $fullIP." -ForegroundColor Red
-                                Write-Host "Verifique que el equipo esté en línea y el Firewall permita RPC." -ForegroundColor Gray
-                            }
-                            else {
-                                # Limpiamos líneas vacías y mostramos la tabla de quser
-                                $resultado | Where-Object { $_.Trim() -ne "" }
-                            }
+                        if ($resultado -like "*No hay ningún usuario*" -or $resultado -like "*No user exists*") {
+                            Write-Host "Estado: Equipo encendido, pero sin sesiones activas." -ForegroundColor Cyan
                         }
-                        catch {
-                            Write-Host "Error inesperado al ejecutar el comando." -ForegroundColor Red
+                        elseif ($resultado -like "*Error*") {
+                            Write-Host "Error: No se pudo establecer conexion RPC con $fullIP." -ForegroundColor Red
+                            Write-Host "Verifique que el equipo esté en línea y el Firewall permita RPC." -ForegroundColor Gray
+                        }
+                        else {
+                            $resultado | Where-Object { $_.Trim() -ne "" }
                         }
                     }
-                    else {
-                        Write-Host "Entrada invalida. Debe ingresar solo numeros (0-255)." -ForegroundColor Red
+                    catch {
+                        Write-Host "Error inesperado al ejecutar el comando." -ForegroundColor Red
                     }
 
-                    # Pausa para ver los resultados antes de cerrar la consola
-                    #Write-Host "`nPresione cualquier tecla para finalizar esta consulta..."
-                    # $null = [Console]::ReadKey()   # Esperar a presionar una tecla
                     Write-Host ""
                     Write-Host '========================================================================' -ForegroundColor Yellow
-                    # Read-Host "  P R E S I O N E   ||| E N T E R |||   P A R A   C O N T I N U A R ..."
-                    # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                     $usuarioInput = Read-Host 'Ingrese el NOMBRE DE USUARIO de dominio'
-                    $ipRemota = "192.168.$octeto3.$octeto4"
-
-                    if ($octeto4 -notmatch '^\d+$') {
-                        Write-Host 'ERROR: El octeto ingresado debe ser un numero valido.' -ForegroundColor Red
-                        $null = Read-Host -Prompt 'Presione ENTER para salir...'
-                        # exit
-                    }
 
                     if ([string]::IsNullOrEmpty($usuarioInput)) {
                         Write-Host 'ERROR: El nombre de usuario no puede estar vacio.' -ForegroundColor Red
                         $null = Read-Host -Prompt 'Presione ENTER para salir...'
-                        # exit
+                        break
                     }
 
                     Write-Host ''
@@ -2614,7 +3572,6 @@ try {
                         Write-Host "ERROR: El equipo $ipRemota se encuentra fuera de linea (Offline)." -ForegroundColor Red
                     }
 
-                    # Cierre limpio de consola
                     Write-Host ''                    
             
                 }
@@ -2624,11 +3581,14 @@ try {
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
 
                     # 1. Entrada de datos
-                    $baseIP = "192.168.176."
-                    $hostID = Read-Host "Ingrese el ultimo OCTETO del segmento 192.168.176.XXX"
+                    $targetIP = Get-StandardIPPrompt
+                    if ([string]::IsNullOrWhiteSpace($targetIP)) {
+                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                        Read-Host "Presione ENTER para continuar..."
+                        break
+                    }
 
-                    if ($hostID -match '^\d{1,3}$') {
-                        $targetIP = $baseIP + $hostID
+                    if ($true) {
                         Write-Host "`n--- Filtrando Impresoras Fisicas en: $targetIP ---" -ForegroundColor Yellow
 
                         try {
@@ -2839,16 +3799,11 @@ try {
                 "12.1" {
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
-                    $baseIP = "192.168.176."
-                    $ultimoOcteto = Read-Host "Ingrese el ultimo octeto de la IP (192.168.176.XXX) o IP completa"
-                    if ($ultimoOcteto -eq "") { 
+                    $ipRemota = Get-StandardIPPrompt
+                    if ([string]::IsNullOrWhiteSpace($ipRemota)) { 
                         Write-Host "Operacion cancelada." -ForegroundColor Red
                     }
                     else {
-                        $ipRemota = $ultimoOcteto
-                        if ($ultimoOcteto -notmatch "\.") {
-                            $ipRemota = $baseIP + $ultimoOcteto
-                        }
                         
                         Write-Host "Habilitando ejecucion remota en $ipRemota..." -ForegroundColor Cyan
                         $process = Get-WmiObject -List -ComputerName $ipRemota -Class Win32_Process -ErrorAction SilentlyContinue
@@ -2881,16 +3836,11 @@ try {
                 "12.2" {
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
-                    $baseIP = "192.168.176."
-                    $ultimoOcteto = Read-Host "Ingrese el ultimo octeto de la IP (192.168.176.XXX) o IP completa"
-                    if ($ultimoOcteto -eq "") { 
+                    $ipRemota = Get-StandardIPPrompt
+                    if ([string]::IsNullOrWhiteSpace($ipRemota)) { 
                         Write-Host "Operacion cancelada." -ForegroundColor Red
                     }
                     else {
-                        $ipRemota = $ultimoOcteto
-                        if ($ultimoOcteto -notmatch "\.") {
-                            $ipRemota = $baseIP + $ultimoOcteto
-                        }
                         
                         Write-Host "Deshabilitando ejecucion remota en $ipRemota..." -ForegroundColor Cyan
                         $process = Get-WmiObject -List -ComputerName $ipRemota -Class Win32_Process -ErrorAction SilentlyContinue
@@ -2923,8 +3873,7 @@ try {
                 "12.3" {
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
-                    $baseIP = "192.168.176."
-                    $targetInput = Read-Host "Ingrese el ultimo octeto (192.168.176.XXX), IP completa o Nombre de Equipo"
+                    $targetInput = Get-StandardIPPrompt
                     if ([string]::IsNullOrWhiteSpace($targetInput)) { 
                         Write-Host "Operacion cancelada." -ForegroundColor Red
                     }
@@ -2939,12 +3888,6 @@ try {
                         }
                         else {
                             $ipRemota = $targetInput.Trim()
-                            if ($targetInput -split "\." -and ($targetInput -split "\.").Count -eq 2) {
-                                $ipRemota = "192.168." + $targetInput.Trim()
-                            }
-                            elseif ($targetInput -notmatch "\.") {
-                                $ipRemota = $baseIP + $targetInput.Trim()
-                            }
                             Write-Host "Direccion IP de destino: $ipRemota" -ForegroundColor Cyan
                             
                             Write-Host "Resolviendo nombre de equipo (Hostname) necesario para la conexion..." -ForegroundColor Cyan
@@ -3576,9 +4519,8 @@ try {
                 "13" { 
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
-                    Write-Host "Por favor seleccione una sub-opcion especifica (13.1 a 13.6)" -ForegroundColor Yellow
+                    Write-Host "Por favor seleccione una sub-opcion especifica (13.1 a 13.7)" -ForegroundColor Yellow
                     Write-Host ""
-                    Read-Host "Presione ENTER para continuar..."
                 }
 
                 "13.1" {
@@ -3587,78 +4529,7 @@ try {
                     
                     $ctx = Get-RemoteConnectionContext
                     if ($null -ne $ctx) {
-                        $ipRemota = $ctx.ComputerName
-                        $cred = $ctx.Credential
-                        
-                        $drive = Mount-RemoteCShare -ComputerName $ipRemota -Credential $cred
-                        if ($null -ne $drive) {
-                            Write-Host "Iniciando limpieza de temporales en el equipo remoto $ipRemota..." -ForegroundColor Yellow
-                            
-                            # 1. Limpieza de Windows\Temp
-                            Write-Host " > Limpiando Temp de Windows..." -NoNewline
-                            Remove-Item -Path "${drive}:\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
-                            Write-Host " [OK]" -ForegroundColor Green
-                            
-                            # 2. Limpieza de Windows\Prefetch
-                            Write-Host " > Limpiando Prefetch de Windows..." -NoNewline
-                            Remove-Item -Path "${drive}:\Windows\Prefetch\*" -Recurse -Force -ErrorAction SilentlyContinue
-                            Write-Host " [OK]" -ForegroundColor Green
-                            
-                            # 3. Limpieza de Temp del Usuario con Sesion Activa
-                            Write-Host " > Identificando usuario activo..." -NoNewline
-                            try {
-                                if ($null -ne $cred) {
-                                    $compSystem = Get-WmiObject -Class Win32_ComputerSystem -ComputerName $ipRemota -Credential $cred -ErrorAction Stop
-                                }
-                                else {
-                                    $compSystem = Get-WmiObject -Class Win32_ComputerSystem -ComputerName $ipRemota -ErrorAction Stop
-                                }
-                                $activeUser = $compSystem.UserName
-                                if ($activeUser) {
-                                    $userName = $activeUser.Split('\')[-1]
-                                    Write-Host " [$userName]" -ForegroundColor Cyan
-                                    
-                                    Write-Host " > Limpiando Temp de Usuario ($userName)..." -NoNewline
-                                    $profilePath = "${drive}:\Users\$userName\AppData\Local\Temp"
-                                    if (Test-Path $profilePath) {
-                                        Remove-Item -Path "$profilePath\*" -Recurse -Force -ErrorAction SilentlyContinue
-                                        Write-Host " [OK]" -ForegroundColor Green
-                                    }
-                                    else {
-                                        if ($null -ne $cred) {
-                                            $profiles = Get-WmiObject -Class Win32_UserProfile -ComputerName $ipRemota -Credential $cred -ErrorAction SilentlyContinue
-                                        }
-                                        else {
-                                            $profiles = Get-WmiObject -Class Win32_UserProfile -ComputerName $ipRemota -ErrorAction SilentlyContinue
-                                        }
-                                        $matchProfile = $profiles | Where-Object { $_.LocalPath -like "*\$userName" } | Select-Object -First 1
-                                        if ($matchProfile) {
-                                            $customPath = $matchProfile.LocalPath.Replace("C:\", "${drive}:\")
-                                            $tempPath = Join-Path $customPath "AppData\Local\Temp"
-                                            if (Test-Path $tempPath) {
-                                                Remove-Item -Path "$tempPath\*" -Recurse -Force -ErrorAction SilentlyContinue
-                                                Write-Host " [OK]" -ForegroundColor Green
-                                            }
-                                            else {
-                                                Write-Host " [No Encontrado]" -ForegroundColor Red
-                                            }
-                                        }
-                                        else {
-                                            Write-Host " [No Encontrado]" -ForegroundColor Red
-                                        }
-                                    }
-                                }
-                                else {
-                                    Write-Host " [Ninguno]" -ForegroundColor Gray
-                                }
-                            }
-                            catch {
-                                Write-Host " [Error: $_]" -ForegroundColor Red
-                            }
-                            
-                            Dismount-RemoteCShare -driveName $drive
-                            Write-Host "Limpieza remota completada." -ForegroundColor White -BackgroundColor DarkGreen
-                        }
+                        Invoke-RemoteCleanTempFolders -ctx $ctx
                     }
                     Write-Host ""
                 }
@@ -3669,38 +4540,7 @@ try {
                     
                     $ctx = Get-RemoteConnectionContext
                     if ($null -ne $ctx) {
-                        $ipRemota = $ctx.ComputerName
-                        $cred = $ctx.Credential
-                        
-                        $drive = Mount-RemoteCShare -ComputerName $ipRemota -Credential $cred
-                        if ($null -ne $drive) {
-                            Write-Host "Iniciando limpieza de ProgramData remota..." -ForegroundColor Yellow
-                            
-                            $excluir = @("*Microsoft*", "*Package Cache*", "*Antivirus*", "*SoftwareLicensing*", "*NVIDIA*")
-                            
-                            Write-Host " > Escaneando y eliminando temporales obsoletos..." -NoNewline
-                            $targetPath = "${drive}:\ProgramData"
-                            if (Test-Path $targetPath) {
-                                Get-ChildItem -Path $targetPath -Recurse -File -Force -ErrorAction SilentlyContinue | 
-                                Where-Object {
-                                    $itemPath = $_.FullName
-                                    $safe = $true
-                                    foreach ($pattern in $excluir) {
-                                        if ($itemPath -like $pattern) { $safe = $false; break }
-                                    }
-                                    $safe -and 
-                                    ($_.Extension -match "\.(tmp|log|bak|old|chk|temp)$") -and 
-                                    ($_.LastWriteTime -lt (Get-Date).AddDays(-7))
-                                } | Remove-Item -Force -ErrorAction SilentlyContinue
-                                Write-Host " [OK]" -ForegroundColor Green
-                            }
-                            else {
-                                Write-Host " [Error: Ruta no encontrada]" -ForegroundColor Red
-                            }
-                            
-                            Dismount-RemoteCShare -driveName $drive
-                            Write-Host "Limpieza de ProgramData completada." -ForegroundColor White -BackgroundColor DarkGreen
-                        }
+                        Invoke-RemoteCleanProgramData -ctx $ctx
                     }
                     Write-Host ""
                 }
@@ -3711,97 +4551,7 @@ try {
                     
                     $ctx = Get-RemoteConnectionContext
                     if ($null -ne $ctx) {
-                        $ipRemota = $ctx.ComputerName
-                        $cred = $ctx.Credential
-                        
-                        $drive = Mount-RemoteCShare -ComputerName $ipRemota -Credential $cred
-                        if ($null -ne $drive) {
-                            Write-Host "Preparando ejecucion remota de optimizacion de RAM..." -ForegroundColor Yellow
-                            
-                            $remoteScriptContent = @'
-$codigoC = "
-    using System;
-    using System.Runtime.InteropServices;
-    public class RamUtil {
-        [DllImport(\"psapi.dll\")]
-        public static extern bool EmptyWorkingSet(IntPtr hProcess);
-    }
-"
-if (-not ([System.Management.Automation.PSTypeName]"RamUtil").Type) {
-    Add-Type -TypeDefinition $codigoC -ErrorAction SilentlyContinue
-}
-$procesos = [System.Diagnostics.Process]::GetProcesses()
-$count = 0
-foreach ($p in $procesos) {
-    if ($p.Id -gt 4) {
-        try {
-            if ([RamUtil]::EmptyWorkingSet($p.Handle)) {
-                $count++
-            }
-        } catch {}
-    }
-    if ($p) { $p.Dispose() }
-}
-Write-Output "Optimizado $count procesos."
-'@
-                            $remoteScriptPath = "${drive}:\Windows\Temp\clean_ram_remote.ps1"
-                            try {
-                                $remoteScriptContent | Out-File -FilePath $remoteScriptPath -Encoding ascii -Force -ErrorAction Stop
-                                Write-Host "Script de limpieza copiado al equipo remoto." -ForegroundColor Green
-                            }
-                            catch {
-                                Write-Host "[ERROR] No se pudo copiar el script de limpieza: $_" -ForegroundColor Red
-                                Dismount-RemoteCShare -driveName $drive
-                                break
-                            }
-                            
-                            Dismount-RemoteCShare -driveName $drive
-                            
-                            $cmd = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\Windows\Temp\clean_ram_remote.ps1"
-                            Write-Host "Ejecutando script de optimizacion en segundo plano..." -ForegroundColor Yellow
-                            
-                            try {
-                                if ($null -ne $cred) {
-                                    $result = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $cmd -ComputerName $ipRemota -Credential $cred
-                                }
-                                else {
-                                    $result = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $cmd -ComputerName $ipRemota
-                                }
-                                
-                                if ($result.ReturnValue -eq 0 -and $result.ProcessId) {
-                                    $remotePid = $result.ProcessId
-                                    Write-Host "Proceso remoto iniciado exitosamente (PID: $remotePid)." -ForegroundColor Green
-                                    Write-Host "Esperando finalizacion..." -ForegroundColor Yellow
-                                    
-                                    $timeout = 20
-                                    $elapsed = 0
-                                    while ($elapsed -lt $timeout) {
-                                        Start-Sleep -Seconds 1
-                                        if ($null -ne $cred) {
-                                            $procCheck = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -Credential $cred -ErrorAction SilentlyContinue
-                                        }
-                                        else {
-                                            $procCheck = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -ErrorAction SilentlyContinue
-                                        }
-                                        if ($null -eq $procCheck) { break }
-                                        $elapsed++
-                                    }
-                                    Write-Host "Optimizacion finalizada en segundo plano." -ForegroundColor Green
-                                    
-                                    $drive = Mount-RemoteCShare -ComputerName $ipRemota -Credential $cred
-                                    if ($null -ne $drive) {
-                                        Remove-Item -Path "${drive}:\Windows\Temp\clean_ram_remote.ps1" -Force -ErrorAction SilentlyContinue
-                                        Dismount-RemoteCShare -driveName $drive
-                                    }
-                                }
-                                else {
-                                    Write-Host "[ERROR] El proceso remoto retorno un error: $($result.ReturnValue)" -ForegroundColor Red
-                                }
-                            }
-                            catch {
-                                Write-Host "[ERROR] Fallo la llamada WMI para crear el proceso: $_" -ForegroundColor Red
-                            }
-                        }
+                        Invoke-RemoteCleanRAM -ctx $ctx
                     }
                     Write-Host ""
                 }
@@ -3812,85 +4562,7 @@ Write-Output "Optimizado $count procesos."
                     
                     $ctx = Get-RemoteConnectionContext
                     if ($null -ne $ctx) {
-                        $ipRemota = $ctx.ComputerName
-                        $cred = $ctx.Credential
-                        
-                        $drive = Mount-RemoteCShare -ComputerName $ipRemota -Credential $cred
-                        if ($null -ne $drive) {
-                            Write-Host "Preparando ejecucion remota de optimizacion de CPU..." -ForegroundColor Yellow
-                            
-                            $remoteScriptContent = @'
-$procesosPesados = Get-Process | Sort-Object CPU -Descending | Select-Object -First 10
-$count = 0
-foreach ($proc in $procesosPesados) {
-    if ($proc.Name -ne "Idle" -and $proc.Name -ne "powershell") {
-        try {
-            $proc.PriorityClass = "BelowNormal"
-            $count++
-        } catch {}
-    }
-}
-[System.GC]::Collect()
-Write-Output "Ajustada prioridad para $count procesos pesados."
-'@
-                            $remoteScriptPath = "${drive}:\Windows\Temp\clean_cpu_remote.ps1"
-                            try {
-                                $remoteScriptContent | Out-File -FilePath $remoteScriptPath -Encoding ascii -Force -ErrorAction Stop
-                                Write-Host "Script de optimizacion copiado al equipo remoto." -ForegroundColor Green
-                            }
-                            catch {
-                                Write-Host "[ERROR] No se pudo copiar el script: $_" -ForegroundColor Red
-                                Dismount-RemoteCShare -driveName $drive
-                                break
-                            }
-                            
-                            Dismount-RemoteCShare -driveName $drive
-                            
-                            $cmd = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\Windows\Temp\clean_cpu_remote.ps1"
-                            Write-Host "Ejecutando script de optimizacion de CPU en segundo plano..." -ForegroundColor Yellow
-                            
-                            try {
-                                if ($null -ne $cred) {
-                                    $result = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $cmd -ComputerName $ipRemota -Credential $cred
-                                }
-                                else {
-                                    $result = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $cmd -ComputerName $ipRemota
-                                }
-                                
-                                if ($result.ReturnValue -eq 0 -and $result.ProcessId) {
-                                    $remotePid = $result.ProcessId
-                                    Write-Host "Proceso remoto iniciado exitosamente (PID: $remotePid)." -ForegroundColor Green
-                                    Write-Host "Esperando finalizacion..." -ForegroundColor Yellow
-                                    
-                                    $timeout = 20
-                                    $elapsed = 0
-                                    while ($elapsed -lt $timeout) {
-                                        Start-Sleep -Seconds 1
-                                        if ($null -ne $cred) {
-                                            $procCheck = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -Credential $cred -ErrorAction SilentlyContinue
-                                        }
-                                        else {
-                                            $procCheck = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -ErrorAction SilentlyContinue
-                                        }
-                                        if ($null -eq $procCheck) { break }
-                                        $elapsed++
-                                    }
-                                    Write-Host "Optimizacion de CPU finalizada." -ForegroundColor Green
-                                    
-                                    $drive = Mount-RemoteCShare -ComputerName $ipRemota -Credential $cred
-                                    if ($null -ne $drive) {
-                                        Remove-Item -Path "${drive}:\Windows\Temp\clean_cpu_remote.ps1" -Force -ErrorAction SilentlyContinue
-                                        Dismount-RemoteCShare -driveName $drive
-                                    }
-                                }
-                                else {
-                                    Write-Host "[ERROR] El proceso remoto retorno un error: $($result.ReturnValue)" -ForegroundColor Red
-                                }
-                            }
-                            catch {
-                                Write-Host "[ERROR] Fallo la llamada WMI: $_" -ForegroundColor Red
-                            }
-                        }
+                        Invoke-RemoteCleanCPU -ctx $ctx
                     }
                     Write-Host ""
                 }
@@ -3901,26 +4573,7 @@ Write-Output "Ajustada prioridad para $count procesos pesados."
                     
                     $ctx = Get-RemoteConnectionContext
                     if ($null -ne $ctx) {
-                        $ipRemota = $ctx.ComputerName
-                        $cred = $ctx.Credential
-                        
-                        $drive = Mount-RemoteCShare -ComputerName $ipRemota -Credential $cred
-                        if ($null -ne $drive) {
-                            Write-Host "Vaciando Papelera de Reciclaje remota..." -ForegroundColor Yellow
-                            
-                            $recyclePath = "${drive}:\`$Recycle.Bin"
-                            if (Test-Path $recyclePath) {
-                                Write-Host " > Limpiando directorios de la papelera..." -NoNewline
-                                Remove-Item -Path "$recyclePath\*" -Recurse -Force -ErrorAction SilentlyContinue
-                                Write-Host " [OK]" -ForegroundColor Green
-                            }
-                            else {
-                                Write-Host "[AVISO] No se encontro la carpeta de la papelera ($recyclePath)." -ForegroundColor Yellow
-                            }
-                            
-                            Dismount-RemoteCShare -driveName $drive
-                            Write-Host "Papelera remota vaciada correctamente." -ForegroundColor White -BackgroundColor DarkGreen
-                        }
+                        Invoke-RemoteCleanRecycleBin -ctx $ctx
                     }
                     Write-Host ""
                 }
@@ -3931,487 +4584,18 @@ Write-Output "Ajustada prioridad para $count procesos pesados."
                     
                     $ctx = Get-RemoteConnectionContext
                     if ($null -ne $ctx) {
-                        $ipRemota = $ctx.ComputerName
-                        $cred = $ctx.Credential
-                        
-                        $drive = Mount-RemoteCShare -ComputerName $ipRemota -Credential $cred
-                        if ($null -ne $drive) {
-                            Write-Host "Preparando ejecucion remota de limpieza profunda de temporales con desglose de usuarios..." -ForegroundColor Yellow
-                            
-                            $remoteScriptContent = @'
-$profilePaths = @()
-try {
-    # 1. Obtener perfiles de usuario locales y de dominio desde el Registro de Windows
-    $profileKeys = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\*" -ErrorAction Stop
-    foreach ($pk in $profileKeys) {
-        $path = $pk.ProfileImagePath
-        if ($path -and (Test-Path -LiteralPath $path)) {
-            if ($path -notmatch "System32" -and $path -notmatch "ServiceProfiles") {
-                if ($path -notin $profilePaths) {
-                    $profilePaths += $path
+                        Invoke-RemoteCleanAdvancedProfiles -ctx $ctx
+                    }
+                    Write-Host ""
                 }
-            }
-        }
-    }
-}
-catch {
-    # Fallback 1: WMI si el registro falla
-    try {
-        $profiles = Get-WmiObject -Class Win32_UserProfile -Filter "Special=False" -ErrorAction Stop
-        foreach ($p in $profiles) {
-            if ($p.LocalPath -and (Test-Path -LiteralPath $p.LocalPath)) {
-                if ($p.LocalPath -notin $profilePaths) {
-                    $profilePaths += $p.LocalPath
-                }
-            }
-        }
-    }
-    catch {
-        # Fallback 2: Listar directorio C:\Users
-        $fallbackPath = "C:\Users"
-        if (Test-Path -LiteralPath $fallbackPath) {
-            $folders = Get-ChildItem -LiteralPath $fallbackPath -Directory -ErrorAction SilentlyContinue
-            foreach ($f in $folders) {
-                if ($f.Name -notin "Default", "Default User", "All Users", "Public", "Publico") {
-                    $profilePaths += $f.FullName
-                }
-            }
-        }
-    }
-}
 
-$report = @()
-
-# Datos globales de progreso remoto
-$global:progressData = @{}
-$global:lastUpdate = [DateTime]::MinValue
-$UserTimeoutSeconds = 30
-
-function Write-ProgressFile {
-    param(
-        [string]$currentUser,
-        [string]$status
-    )
-    # Tasa limite: Solo escribir si ha pasado 1 segundo desde la ultima escritura,
-    # a menos que el estado sea "Done", "Error" o "Timeout".
-    $now = Get-Date
-    if (($now - $global:lastUpdate).TotalSeconds -lt 1 -and $status -ne "Done" -and $status -ne "Error" -and $status -notmatch "Timeout") {
-        return
-    }
-    $global:lastUpdate = $now
-    
-    $lines = @()
-    foreach ($u in $global:progressData.Keys) {
-        $data = $global:progressData[$u]
-        $lines += "User:$u|Path:$($data.Path)|Files:$($data.Files)|Folders:$($data.Folders)|Bytes:$($data.Bytes)|Status:$($data.Status)"
-    }
-    try {
-        $lines | Out-File -FilePath "C:\Windows\Temp\clean_temp_progress.txt" -Encoding UTF8 -Force
-    }
-    catch {}
-}
-
-# Funcion optimizada para vaciar contenidos en un flujo pipeline directo con deteccion de timeout
-function Clear-FolderContents {
-    param(
-        [string]$FolderPath,
-        [string]$userName,
-        [ref]$errs,
-        [DateTime]$userStartTime,
-        [int]$timeoutSecs
-    )
-    if (-not (Test-Path -LiteralPath $FolderPath)) { return }
-    
-    $dirs = @()
-    
-    try {
-        # Procesar recursivamente mediante canalización (pipeline) para iniciar eliminación y reportar progreso inmediato
-        Get-ChildItem -LiteralPath $FolderPath -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
-            # Evitar auto-eliminación de nuestros archivos de control y comunicación remota
-            if ($_.Name -like "clean_temp_*") {
-                return
-            }
-            
-            # Verificar si se excedio el limite de tiempo de 30 segundos
-            if (((Get-Date) - $userStartTime).TotalSeconds -gt $timeoutSecs) {
-                throw "UserFolderTimeout"
-            }
-            
-            $item = $_
-            if ($item.PSIsContainer) {
-                $dirs += $item
-            }
-            else {
-                $len = $item.Length
-                try {
-                    Remove-Item -LiteralPath $item.FullName -Force -ErrorAction Stop
-                    $global:progressData[$userName].Files++
-                    $global:progressData[$userName].Bytes += $len
-                    Write-ProgressFile -currentUser $userName -status "In Progress"
-                }
-                catch {
-                    $errs.Value++
-                }
-            }
-        }
-    }
-    catch {
-        if ($_.ToString() -match "UserFolderTimeout" -or $_.Exception.Message -match "UserFolderTimeout") {
-            throw "UserFolderTimeout"
-        }
-        $errs.Value++
-    }
-    
-    # 2. Eliminar carpetas recursivamente (de mas profunda a mas superficial)
-    if ($dirs.Count -gt 0) {
-        $sortedDirs = $dirs | Sort-Object -Property @{Expression={$_.FullName.Length}} -Descending
-        foreach ($dir in $sortedDirs) {
-            # Verificar timeout antes de borrar carpetas
-            if (((Get-Date) - $userStartTime).TotalSeconds -gt $timeoutSecs) {
-                throw "UserFolderTimeout"
-            }
-            try {
-                Remove-Item -LiteralPath $dir.FullName -Force -Confirm:$false -ErrorAction Stop
-                $global:progressData[$userName].Folders++
-                Write-ProgressFile -currentUser $userName -status "In Progress"
-            }
-            catch {
-                $errs.Value++
-            }
-        }
-    }
-}
-
-try {
-    # Inicializar estado en el archivo de progreso para todos los perfiles de usuario
-    foreach ($path in $profilePaths) {
-        $uName = Split-Path $path -Leaf
-        $global:progressData[$uName] = @{
-            Path    = $path
-            Files   = 0
-            Folders = 0
-            Bytes   = [int64]0
-            Status  = "Pending"
-        }
-    }
-    # Inicializar sistema
-    $global:progressData["_SYSTEM_"] = @{
-        Path    = "Sistema (Temp/Prefetch/Update/ServiceProfiles)"
-        Files   = 0
-        Folders = 0
-        Bytes   = [int64]0
-        Status  = "Pending"
-    }
-    Write-ProgressFile -currentUser "System" -status "Init"
-
-    # 1. Limpieza de perfiles de usuario (Locales y de Dominio)
-    foreach ($path in $profilePaths) {
-        $userName = Split-Path $path -Leaf
-        $global:progressData[$userName].Status = "In Progress"
-        Write-ProgressFile -currentUser $userName -status "In Progress"
-        
-        $uErrors = 0
-        $userStartTime = Get-Date
-        
-        try {
-            Clear-FolderContents -FolderPath (Join-Path $path "AppData\Local\Temp") -userName $userName -errs ([ref]$uErrors) -userStartTime $userStartTime -timeoutSecs $UserTimeoutSeconds
-            Clear-FolderContents -FolderPath (Join-Path $path "AppData\LocalLow\Temp") -userName $userName -errs ([ref]$uErrors) -userStartTime $userStartTime -timeoutSecs $UserTimeoutSeconds
-            Clear-FolderContents -FolderPath (Join-Path $path "AppData\Local\Microsoft\Windows\INetCache") -userName $userName -errs ([ref]$uErrors) -userStartTime $userStartTime -timeoutSecs $UserTimeoutSeconds
-            Clear-FolderContents -FolderPath (Join-Path $path "AppData\Local\Microsoft\Windows\Temporary Internet Files") -userName $userName -errs ([ref]$uErrors) -userStartTime $userStartTime -timeoutSecs $UserTimeoutSeconds
-            Clear-FolderContents -FolderPath (Join-Path $path "AppData\Local\CrashDumps") -userName $userName -errs ([ref]$uErrors) -userStartTime $userStartTime -timeoutSecs $UserTimeoutSeconds
-            
-            $global:progressData[$userName].Status = "Done"
-            Write-ProgressFile -currentUser $userName -status "Done"
-        }
-        catch {
-            if ($_.ToString() -match "UserFolderTimeout" -or $_.Exception.Message -match "UserFolderTimeout") {
-                $global:progressData[$userName].Status = "Timeout"
-                Write-ProgressFile -currentUser $userName -status "Timeout"
-            }
-            else {
-                $global:progressData[$userName].Status = "Error"
-                Write-ProgressFile -currentUser $userName -status "Error"
-            }
-        }
-        
-        $uData = $global:progressData[$userName]
-        $report += "User:$userName|Path:$path|Files:$($uData.Files)|Folders:$($uData.Folders)|Bytes:$($uData.Bytes)|Errors:$uErrors|Status:$($uData.Status)"
-    }
-    
-    # 2. Limpieza de directorios del sistema (incluye perfiles de sistema y servicios)
-    $userName = "_SYSTEM_"
-    $global:progressData[$userName].Status = "In Progress"
-    Write-ProgressFile -currentUser $userName -status "In Progress"
-    
-    $sysErrors = 0
-    $sysStartTime = Get-Date
-    
-    try {
-        $systemPaths = @(
-            "C:\Windows\Temp",
-            "C:\Windows\Prefetch",
-            "C:\Windows\SoftwareDistribution\Download",
-            "C:\Windows\System32\config\systemprofile\AppData\Local\Temp",
-            "C:\Windows\ServiceProfiles\LocalService\AppData\Local\Temp",
-            "C:\Windows\ServiceProfiles\NetworkService\AppData\Local\Temp"
-        )
-        foreach ($sysPath in $systemPaths) {
-            Clear-FolderContents -FolderPath $sysPath -userName $userName -errs ([ref]$sysErrors) -userStartTime $sysStartTime -timeoutSecs $UserTimeoutSeconds
-        }
-        
-        $global:progressData[$userName].Status = "Done"
-        Write-ProgressFile -currentUser $userName -status "Done"
-    }
-    catch {
-        if ($_.ToString() -match "UserFolderTimeout" -or $_.Exception.Message -match "UserFolderTimeout") {
-            $global:progressData[$userName].Status = "Timeout"
-            Write-ProgressFile -currentUser $userName -status "Timeout"
-        }
-        else {
-            $global:progressData[$userName].Status = "Error"
-            Write-ProgressFile -currentUser $userName -status "Error"
-        }
-    }
-    
-    $sysData = $global:progressData[$userName]
-    $report += "User:$userName|Path:$($sysData.Path)|Files:$($sysData.Files)|Folders:$($sysData.Folders)|Bytes:$($sysData.Bytes)|Errors:$sysErrors|Status:$($sysData.Status)"
-    
-    # Guardar resultados finales
-    $outputPath = "C:\Windows\Temp\clean_temp_results.txt"
-    $report | Out-File -FilePath $outputPath -Encoding UTF8 -Force
-}
-catch {
-    $errPath = "C:\Windows\Temp\clean_temp_errors.txt"
-    $_ | Out-File -FilePath $errPath -Encoding UTF8 -Force
-}
-'@
-                            # Codificamos el script remoto en Base64 para ejecutarlo directamente en memoria.
-                            # Esto evita bloqueos de ejecución por directivas locales de seguridad (ej. AppLocker o Execution Policy) en C:\Windows\Temp
-                            $scriptBytes = [System.Text.Encoding]::Unicode.GetBytes($remoteScriptContent)
-                            $scriptBase64 = [Convert]::ToBase64String($scriptBytes)
-                            
-                            # Mantenemos el recurso compartido montado durante la ejecucion para leer el progreso
-                            $cmd = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand $scriptBase64"
-                            Write-Host "Ejecutando script de limpieza profunda en segundo plano..." -ForegroundColor Yellow
-                            
-                            try {
-                                if ($null -ne $cred) {
-                                    $result = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $cmd -ComputerName $ipRemota -Credential $cred
-                                }
-                                else {
-                                    $result = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $cmd -ComputerName $ipRemota
-                                }
-                                
-                                if ($result.ReturnValue -eq 0 -and $result.ProcessId) {
-                                    $remotePid = $result.ProcessId
-                                    Write-Host "Proceso remoto iniciado exitosamente (PID: $remotePid)." -ForegroundColor Green
-                                    Write-Host "Realizando limpieza profunda en tiempo real (monitoreando progreso)...`n" -ForegroundColor Yellow
-                                    
-                                    $timeout = 300
-                                    $elapsed = 0
-                                    
-                                    # Registro del progreso reportado para evitar duplicar mensajes
-                                    $lastReport = @{}
-                                    $progressFilePath = "${drive}:\Windows\Temp\clean_temp_progress.txt"
-                                    
-                                    while ($elapsed -lt $timeout) {
-                                        Start-Sleep -Seconds 2
-                                        
-                                        # 1. Verificar si el proceso sigue ejecutandose (Protegido con try/catch ante caidas de red)
-                                        $procCheck = $null
-                                        try {
-                                            if ($null -ne $cred) {
-                                                $procCheck = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -Credential $cred -ErrorAction Stop
-                                            }
-                                            else {
-                                                $procCheck = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -ErrorAction Stop
-                                            }
-                                        }
-                                        catch {
-                                            # En caso de fallo de WMI (ej. timeout de red), asumimos que el proceso sigue activo
-                                            # para evitar romper el monitoreo en tiempo real prematuramente
-                                            $procCheck = "SimulatedActive"
-                                        }
-                                        
-                                        # 2. Leer archivo de progreso y mostrar diferencias
-                                        if (Test-Path -LiteralPath $progressFilePath) {
-                                            try {
-                                                $progressContent = Get-Content -LiteralPath $progressFilePath -Encoding UTF8 -ErrorAction Stop
-                                                if ($progressContent) {
-                                                    foreach ($line in $progressContent) {
-                                                        $parts = $line -split '\|'
-                                                        $stats = @{}
-                                                        foreach ($part in $parts) {
-                                                            if ($part -match "^([^:]+):(.*)$") {
-                                                                $stats[$Matches[1]] = $Matches[2]
-                                                            }
-                                                        }
-                                                        $uName = $stats["User"]
-                                                        $uPath = $stats["Path"]
-                                                        if (-not $uName) { continue }
-                                                        
-                                                        $uFiles = [int]$stats["Files"]
-                                                        $uFolders = [int]$stats["Folders"]
-                                                        $uBytes = [int64]$stats["Bytes"]
-                                                        $uStatus = $stats["Status"]
-                                                        
-                                                        $prev = $lastReport[$uName]
-                                                        
-                                                        # Mostrar actualizacion si no existe estado previo, si cambiaron numeros, o si cambio el estado
-                                                        if ($null -eq $prev -or 
-                                                            $prev.Files -ne $uFiles -or 
-                                                            $prev.Folders -ne $uFolders -or 
-                                                            $prev.Status -ne $uStatus) {
-                                                            
-                                                            $mbUser = [Math]::Round($uBytes / 1MB, 2)
-                                                            
-                                                            # Determinar contexto visual
-                                                            if ($uName -eq "_SYSTEM_") {
-                                                                $displayContext = "Sistema (Temp/Prefetch/Update/ServiceProfiles)"
-                                                            }
-                                                            else {
-                                                                $displayContext = "Carpeta: $uPath (Usuario: $uName)"
-                                                            }
-                                                            
-                                                            if ($uStatus -eq "Done") {
-                                                                Write-Host " -> [COMPLETADO] $displayContext | Archivos: $uFiles | Carpetas: $uFolders | Liberado: $mbUser MB" -ForegroundColor Green
-                                                            }
-                                                            elseif ($uStatus -eq "Timeout") {
-                                                                Write-Host " -> [OMITIDO (TIMEOUT)] $displayContext | Archivos: $uFiles | Carpetas: $uFolders | Excedio limite 30s" -ForegroundColor Yellow
-                                                            }
-                                                            elseif ($uStatus -eq "Error") {
-                                                                Write-Host " -> [ERROR] $displayContext | Limpieza interrumpida" -ForegroundColor Red
-                                                            }
-                                                            elseif ($uStatus -eq "In Progress") {
-                                                                Write-Host " -> [PROGRESO] $displayContext | Archivos: $uFiles | Carpetas: $uFolders | Liberado: $mbUser MB..." -ForegroundColor Yellow
-                                                            }
-                                                            
-                                                            # Guardar estado actual reportado
-                                                            $lastReport[$uName] = @{
-                                                                Files   = $uFiles
-                                                                Folders = $uFolders
-                                                                Status  = $uStatus
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            catch {
-                                                # Ignorar errores de acceso concurrente/lectura del archivo de progreso
-                                            }
-                                        }
-                                        
-                                        if ($null -eq $procCheck) { break }
-                                        $elapsed += 2
-                                    }
-                                    Write-Host ""
-                                    
-                                    # Leer resultados finales y realizar limpieza de archivos de comunicacion remota
-                                    # Implementamos un bucle de reintentos para mitigar la latencia de metadatos de red (caché SMB)
-                                    $resultsPath = "${drive}:\Windows\Temp\clean_temp_results.txt"
-                                    $errorsPath = "${drive}:\Windows\Temp\clean_temp_errors.txt"
-                                    
-                                    $hasResults = $false
-                                    $hasErrors = $false
-                                    for ($i = 0; $i -lt 6; $i++) {
-                                        if (Test-Path -LiteralPath $resultsPath) {
-                                            $hasResults = $true
-                                            break
-                                        }
-                                        if (Test-Path -LiteralPath $errorsPath) {
-                                            $hasErrors = $true
-                                            break
-                                        }
-                                        Start-Sleep -Milliseconds 500
-                                    }
-                                    
-                                    if ($hasResults) {
-                                        Write-Host "`n--- DETALLE FINAL DE LIMPIEZA POR USUARIO ---" -ForegroundColor Cyan
-                                        
-                                        $totalFiles = 0
-                                        $totalFolders = 0
-                                        $totalBytes = 0
-                                        $totalErrors = 0
-                                        
-                                        Get-Content -Path $resultsPath | ForEach-Object {
-                                            $parts = $_ -split '\|'
-                                            $userStats = @{}
-                                            foreach ($part in $parts) {
-                                                if ($part -match "^([^:]+):(.*)$") {
-                                                    $userStats[$Matches[1]] = $Matches[2]
-                                                }
-                                            }
-                                            
-                                            $uName = $userStats["User"]
-                                            $uPath = $userStats["Path"]
-                                            $uFiles = [int]$userStats["Files"]
-                                            $uFolders = [int]$userStats["Folders"]
-                                            $uBytes = [int64]$userStats["Bytes"]
-                                            $uErrors = [int]$userStats["Errors"]
-                                            $uStatus = $userStats["Status"]
-                                            
-                                            $totalFiles += $uFiles
-                                            $totalFolders += $uFolders
-                                            $totalBytes += $uBytes
-                                            $totalErrors += $uErrors
-                                            
-                                            $mbUser = [Math]::Round($uBytes / 1MB, 2)
-                                            
-                                            if ($uName -eq "_SYSTEM_") {
-                                                $displayContext = "Sistema (Temp/Prefetch/Update/ServiceProfiles)"
-                                            }
-                                            else {
-                                                $displayContext = "Carpeta: $uPath (Usuario: $uName)"
-                                            }
-                                            
-                                            $statusLabel = ""
-                                            $color = "White"
-                                            if ($uStatus -eq "Timeout") {
-                                                $statusLabel = " [OMITIDO POR TIMEOUT]"
-                                                $color = "Yellow"
-                                            }
-                                            
-                                            Write-Host "[$displayContext]$statusLabel" -ForegroundColor $color
-                                            Write-Host "  -> Archivos eliminados: $uFiles" -ForegroundColor Green
-                                            Write-Host "  -> Carpetas eliminadas: $uFolders" -ForegroundColor Green
-                                            Write-Host "  -> Espacio liberado   : $mbUser MB" -ForegroundColor Green
-                                            Write-Host "  -> Errores/Bloqueados : $uErrors" -ForegroundColor Yellow
-                                            Write-Host ""
-                                        }
-                                        
-                                        $totalMBLiberados = [Math]::Round($totalBytes / 1MB, 2)
-                                        Write-Host "-----------------------------------------------------------" -ForegroundColor Gray
-                                        Write-Host "RESUMEN GLOBAL DE LIMPIEZA MULTI-USUARIO REMOTA (AVANZADA):" -ForegroundColor Cyan
-                                        Write-Host "Total archivos eliminados: $totalFiles" -ForegroundColor White
-                                        Write-Host "Total carpetas eliminadas: $totalFolders" -ForegroundColor White
-                                        Write-Host "Total espacio liberado:    $totalMBLiberados MB" -ForegroundColor Green
-                                        Write-Host "Total errores/bloqueados:  $totalErrors" -ForegroundColor Yellow
-                                        Write-Host "-----------------------------------------------------------" -ForegroundColor Gray
-                                    }
-                                    elseif ($hasErrors) {
-                                        Write-Host "`n[ERROR DETECTADO EN EJECUCION REMOTA]" -ForegroundColor Red
-                                        Get-Content -Path $errorsPath | Write-Host -ForegroundColor White
-                                    }
-                                    else {
-                                        Write-Host "[ADVERTENCIA] No se pudo obtener el archivo de resultados remotos." -ForegroundColor Yellow
-                                    }
-                                    
-                                    # Eliminar archivos de resultados creados durante el proceso
-                                    Remove-Item -Path "${drive}:\Windows\Temp\clean_temp_results.txt" -Force -ErrorAction SilentlyContinue
-                                    Remove-Item -Path "${drive}:\Windows\Temp\clean_temp_progress.txt" -Force -ErrorAction SilentlyContinue
-                                    Remove-Item -Path "${drive}:\Windows\Temp\clean_temp_errors.txt" -Force -ErrorAction SilentlyContinue
-                                    Dismount-RemoteCShare -driveName $drive
-                                }
-                                else {
-                                    Write-Host "[ERROR] El proceso remoto retorno un error: $($result.ReturnValue)" -ForegroundColor Red
-                                    Dismount-RemoteCShare -driveName $drive
-                                }
-                            }
-                            catch {
-                                Write-Host "[ERROR] Fallo la llamada WMI: $_" -ForegroundColor Red
-                                Dismount-RemoteCShare -driveName $drive
-                            }
-                        }
+                "13.7" {
+                    cabecera
+                    menuOpcion "Se encuentra en: OPTIMIZACION Y LIMPIEZA REMOTA -> Limpieza General de Archivos en PC Remoto"
+                    
+                    $ctx = Get-RemoteConnectionContext
+                    if ($null -ne $ctx) {
+                        Invoke-RemoteCleanGeneral -ctx $ctx
                     }
                     Write-Host ""
                 }
@@ -4550,11 +4734,11 @@ catch {
                                     $usu = Read-Host "Introduzca Usuario dominio (gmsantacruz\usuario)"
                                     $cla = Read-Host "Introduzca clave de usuario" -AsSecureString
                                     
-                                    $ipInput = Read-Host "Introduzca los 2 ultimos segmentos IP (ej. 176.80) o la IP completa"
-                                    if ($ipInput -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$') {
-                                        $IPFinal = $ipInput
-                                    } else {
-                                        $IPFinal = "192.168.$ipInput"
+                                    $IPFinal = Get-StandardIPPrompt
+                                    if ([string]::IsNullOrWhiteSpace($IPFinal)) {
+                                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                                        Read-Host "Presione ENTER para continuar..."
+                                        break
                                     }
                                     
                                     $claTexto = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($cla))
@@ -4759,7 +4943,7 @@ objShell.Run "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Byp
             # 2. Eliminar variables temporales de la sesión para evitar errores de "cadena de entrada"
             # Mantenemos variables críticas del script
             Get-Variable | Where-Object { 
-                $_.Name -notmatch 'salirPrincipal|opcion|SCRIPT_PATH|PWD|PS|HOME|Error|PID' 
+                $_.Name -notmatch 'salirPrincipal|opcion|SCRIPT_PATH|PWD|PS|HOME|Error|PID|RemoteTarget' 
             } | Remove-Variable -ErrorAction SilentlyContinue
 
             # 3. Pequeña pausa para estabilizar procesos de red si fuera necesario
