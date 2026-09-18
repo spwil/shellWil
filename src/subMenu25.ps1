@@ -5,7 +5,9 @@ function psSubMenu25 {
 
     function Get-StandardIPPrompt {
         param(
-            [string]$Mensaje = "Ingrese la IP completa (ej: 192.168.176.50) o los 2 ultimos octetos (ej: 176.50)"
+            [string]$Mensaje = "Ingrese la IP completa (ej: 192.168.176.50) o los 2 ultimos octetos (ej: 176.50)",
+            [pscredential]$Credential = $null,
+            [switch]$OmitUserInfo
         )
         $inputRaw = Read-Host $Mensaje
         if ([string]::IsNullOrWhiteSpace($inputRaw)) {
@@ -13,20 +15,30 @@ function psSubMenu25 {
         }
         $inputRaw = $inputRaw.Trim()
 
+        $resolvedIP = ""
         # Modalidad 1: IP Completa (formato X.X.X.X)
         if ($inputRaw -match '^(\d{1,3}\.){3}\d{1,3}$') {
-            return $inputRaw
+            $resolvedIP = $inputRaw
         }
         # Modalidad 2: 2 ultimos octetos (ej: 176.50 o 13.15) -> Asume prefijo 192.168.
         elseif ($inputRaw -match '^\d{1,3}\.\d{1,3}$') {
-            return "192.168.$inputRaw"
+            $resolvedIP = "192.168.$inputRaw"
         }
         # Tolerancia: 1 octeto (ej: 50) -> Asume prefijo 192.168.176.
         elseif ($inputRaw -match '^\d{1,3}$') {
-            return "192.168.176.$inputRaw"
+            $resolvedIP = "192.168.176.$inputRaw"
         }
         # Nombre de equipo (Hostname) o formato extendido
-        return $inputRaw
+        else {
+            $resolvedIP = $inputRaw
+        }
+
+        # Visualizar inmediatamente la tarjeta del usuario activo como primera salida tras digitar la IP
+        if (-not $OmitUserInfo -and -not [string]::IsNullOrWhiteSpace($resolvedIP)) {
+            psMostrarInformacionUsuarioActivo -TargetIP $resolvedIP -Credential $Credential
+        }
+
+        return $resolvedIP
     }
 
     function Parse-RemoteTarget {
@@ -45,6 +57,334 @@ function psSubMenu25 {
             return "192.168.176.$Target"
         }
         return $Target
+    }
+
+    # ==============================================================================
+    #   FUNCIONES DE SONDEO RAPIDO, SNMP NATIVO Y CLASIFICACION DE HARDWARE
+    # ==============================================================================
+
+    function Test-PortQuick {
+        param(
+            [string]$ComputerName,
+            [int]$Port,
+            [int]$TimeoutMs = 120
+        )
+        try {
+            $tcp = New-Object System.Net.Sockets.TcpClient
+            $async = $tcp.BeginConnect($ComputerName, $Port, $null, $null)
+            if ($async.AsyncWaitHandle.WaitOne($TimeoutMs, $false) -and $tcp.Connected) {
+                $tcp.Close()
+                return $true
+            }
+            $tcp.Close()
+            return $false
+        } catch {
+            return $false
+        }
+    }
+
+    function Enable-LocalTrustedHostsConfig {
+        try {
+            $wsmanService = Get-Service -Name "WinRM" -ErrorAction SilentlyContinue
+            if ($wsmanService -and $wsmanService.Status -ne "Running") {
+                Start-Service -Name "WinRM" -ErrorAction SilentlyContinue
+            }
+            $currentTH = (Get-Item WSMan:\localhost\Client\TrustedHosts -ErrorAction SilentlyContinue).Value
+            if ($currentTH -ne "*") {
+                Set-Item WSMan:\localhost\Client\TrustedHosts -Value "*" -Force -ErrorAction SilentlyContinue
+            }
+        } catch {}
+    }
+
+    function Get-NativeSnmpSummary {
+        param(
+            [string]$TargetIP,
+            [string]$Community = "public",
+            [int]$TimeoutMs = 400
+        )
+        $resObj = [PSCustomObject]@{
+            SysDescr = $null
+            SysName  = $null
+            IsActive = $false
+        }
+
+        $fnOidToBytes = {
+            param([string]$oid)
+            $parts = $oid.Split('.') | ForEach-Object { [int]$_ }
+            $bytes = New-Object 'System.Collections.Generic.List[byte]'
+            $bytes.Add([byte](40 * $parts[0] + $parts[1]))
+            for ($i = 2; $i -lt $parts.Count; $i++) {
+                $val = $parts[$i]
+                $temp = New-Object 'System.Collections.Generic.List[byte]'
+                $temp.Add([byte]($val -band 0x7f))
+                $val = $val -shr 7
+                while ($val -gt 0) {
+                    $temp.Insert(0, [byte](($val -band 0x7f) -bor 0x80))
+                    $val = $val -shr 7
+                }
+                $bytes.AddRange($temp)
+            }
+            return $bytes.ToArray()
+        }
+
+        $fnBuildSnmp = {
+            param([string]$comm, [string]$oid)
+            $oidBytes = & $fnOidToBytes $oid
+            $varbind = New-Object 'System.Collections.Generic.List[byte]'
+            $varbind.Add(0x06); $varbind.Add([byte]$oidBytes.Length); $varbind.AddRange($oidBytes)
+            $varbind.Add(0x05); $varbind.Add(0x00)
+
+            $varbindList = New-Object 'System.Collections.Generic.List[byte]'
+            $varbindList.Add(0x30); $varbindList.Add([byte]$varbind.Count); $varbindList.AddRange($varbind)
+
+            $pdu = New-Object 'System.Collections.Generic.List[byte]'
+            $pdu.Add(0x02); $pdu.Add(0x04); $pdu.AddRange(@(0x00, 0x00, 0x00, 0x01))
+            $pdu.Add(0x02); $pdu.Add(0x01); $pdu.Add(0x00)
+            $pdu.Add(0x02); $pdu.Add(0x01); $pdu.Add(0x00)
+            $pdu.AddRange($varbindList)
+
+            $commBytes = [System.Text.Encoding]::ASCII.GetBytes($comm)
+            $msg = New-Object 'System.Collections.Generic.List[byte]'
+            $msg.Add(0x02); $msg.Add(0x01); $msg.Add(0x01)
+            $msg.Add(0x04); $msg.Add([byte]$commBytes.Length); $msg.AddRange($commBytes)
+
+            $env = New-Object 'System.Collections.Generic.List[byte]'
+            $env.Add(0xa0); $env.Add([byte]$pdu.Count); $env.AddRange($pdu)
+            $msg.AddRange($env)
+
+            $pkt = New-Object 'System.Collections.Generic.List[byte]'
+            $pkt.Add(0x30); $pkt.Add([byte]$msg.Count); $pkt.AddRange($msg)
+            return $pkt.ToArray()
+        }
+
+        $fnQueryOid = {
+            param([string]$oid)
+            $sock = $null
+            try {
+                $sock = New-Object System.Net.Sockets.UdpClient
+                $sock.Client.ReceiveTimeout = $TimeoutMs
+                $pkt = & $fnBuildSnmp $Community $oid
+                $sock.Connect($TargetIP, 161)
+                $sock.Send($pkt, $pkt.Length) | Out-Null
+                $ep = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
+                $resp = $sock.Receive([ref]$ep)
+
+                $oidB = & $fnOidToBytes $oid
+                $oidIdx = -1
+                for ($i = 0; $i -le ($resp.Length - $oidB.Length); $i++) {
+                    $m = $true
+                    for ($j = 0; $j -lt $oidB.Length; $j++) {
+                        if ($resp[$i + $j] -ne $oidB[$j]) { $m = $false; break }
+                    }
+                    if ($m) { $oidIdx = $i; break }
+                }
+                if ($oidIdx -eq -1) { return $null }
+                $vIdx = $oidIdx + $oidB.Length
+                if ($vIdx -ge $resp.Length) { return $null }
+                $vTag = $resp[$vIdx]
+                $lByte = $resp[$vIdx + 1]
+                $dIdx = $vIdx + 2
+                $vLen = $lByte
+                if ($lByte -band 0x80) {
+                    $nBytes = $lByte -band 0x7f
+                    $vLen = 0
+                    for ($k = 0; $k -lt $nBytes; $k++) { $vLen = ($vLen -shl 8) + $resp[$dIdx + $k] }
+                    $dIdx += $nBytes
+                }
+                if (($dIdx + $vLen) -gt $resp.Length) { return $null }
+                if ($vTag -eq 0x04) {
+                    return [System.Text.Encoding]::ASCII.GetString($resp, $dIdx, $vLen)
+                }
+                return $null
+            } catch {
+                return $null
+            } finally {
+                if ($sock) { $sock.Close() }
+            }
+        }
+
+        $d = & $fnQueryOid "1.3.6.1.2.1.1.1.0"
+        if ($d) {
+            $resObj.SysDescr = $d.Trim()
+            $resObj.IsActive = $true
+        }
+        $n = & $fnQueryOid "1.3.6.1.2.1.1.5.0"
+        if ($n) {
+            $resObj.SysName = $n.Trim()
+            $resObj.IsActive = $true
+        }
+        return $resObj
+    }
+
+    function Get-NetworkDeviceProfile {
+        param(
+            [string]$TargetIP,
+            [string]$HostName,
+            [string]$MACAddress
+        )
+
+        $ouiDB = @{
+            '00:17:61' = 'ZKTeco (Biometrico)'; '6C:DF:FB' = 'ZKTeco (Biometrico)'; 'E0:69:95' = 'ZKTeco (Biometrico)'
+            'C4:2F:90' = 'ZKTeco (Biometrico)'; '00:0B:82' = 'Grandstream (Biometrico/VoIP)'; '2C:26:17' = 'Anviz (Biometrico)'
+            '50:13:95' = 'Suprema (Biometrico)'
+            '00:26:73' = 'Ricoh (Fotocopiadora)'; '00:00:85' = 'Canon (Fotocopiadora/Impresora)'; '00:20:6B' = 'Konica Minolta (Fotocopiadora)'
+            '00:04:F2' = 'Polycom/Ricoh'; '00:17:C8' = 'Kyocera (Fotocopiadora)'; '00:C0:EE' = 'Kyocera (Fotocopiadora)'
+            '00:00:AA' = 'Xerox (Fotocopiadora)'; '00:80:77' = 'Brother (Fotocopiadora/Impresora)'; '00:1B:A9' = 'Toshiba (Fotocopiadora)'
+            '78:8C:77' = 'Sharp (Fotocopiadora)'; '00:00:07' = 'Xerox (Fotocopiadora)'
+            '00:1E:0B' = 'HP (Impresora)'; '00:25:B3' = 'HP (Impresora)'; '3C:D9:2B' = 'HP (Impresora)'
+            '70:5A:0F' = 'HP (Impresora)'; 'A4:5D:36' = 'HP (Impresora)'; '00:00:48' = 'Epson (Impresora)'
+            '00:26:AB' = 'Epson (Impresora)'; '00:01:E6' = 'Hewlett Packard (Impresora)'; '00:05:9A' = 'Zebra (Impresora)'
+            '58:38:79' = 'Hikvision (CCTV)'; '44:19:B6' = 'Hikvision (CCTV)'; 'C0:56:E3' = 'Hikvision (CCTV)'
+            'B4:A3:82' = 'Hikvision (CCTV)'; '28:57:BE' = 'Hikvision (CCTV)'; '54:C4:15' = 'Dahua (CCTV)'
+            'E0:50:8B' = 'Dahua (CCTV)'; '38:AF:29' = 'Dahua (CCTV)'; 'B0:C5:54' = 'Dahua (CCTV)'
+            '00:40:8C' = 'Axis (CCTV)'; '48:EA:63' = 'Uniview (CCTV)'
+            '00:00:0C' = 'Cisco Systems'; '00:01:42' = 'Cisco Systems'; '00:1C:7F' = 'Cisco Systems'
+            '00:1A:A1' = 'Cisco Systems'; '48:8F:5A' = 'HPE Aruba'; '6C:3B:6B' = 'HPE Aruba'
+            'CC:2D:E0' = 'HPE ProCurve'; 'D4:CA:6D' = 'MikroTik'; 'D4:F5:EF' = 'Huawei'
+            'C0:06:C3' = 'D-Link'; '50:D4:F7' = 'TP-Link'
+            '24:A4:3C' = 'Ubiquiti Networks'; 'F0:9F:C2' = 'Ubiquiti Networks'
+            '50:C7:BF' = 'TP-Link WiFi'; 'E8:48:B8' = 'TP-Link WiFi'
+            'F8:BC:12' = 'Dell (Computadora)'; '7C:57:58' = 'Dell (Computadora)'; '00:14:22' = 'Dell (Computadora)'
+            '18:66:DA' = 'Dell (Computadora)'; 'B8:CA:3A' = 'Dell (Computadora)'; 'AC:16:2D' = 'Hewlett Packard (PC)'
+            'B0:4F:13' = 'Hewlett Packard (PC)'; 'A0:B3:CC' = 'Lenovo (Computadora)'; 'E4:54:E8' = 'Lenovo (Computadora)'
+            '00:59:07' = 'Lenovo (Computadora)'
+        }
+
+        # 1. Prospeccion rapida de puertos Windows
+        $p135 = Test-PortQuick $TargetIP 135 100
+        $p445 = Test-PortQuick $TargetIP 445 100
+        $p3389 = $false
+        $p5985 = $false
+        if ($p135 -or $p445) {
+            $p3389 = Test-PortQuick $TargetIP 3389 100
+            $p5985 = Test-PortQuick $TargetIP 5985 100
+        }
+
+        $fabricanteOUI = "No identificado"
+        if ($MACAddress -and $MACAddress.Length -ge 8) {
+            $pref = $MACAddress.Substring(0, 8).ToUpper()
+            if ($ouiDB.ContainsKey($pref)) {
+                $fabricanteOUI = $ouiDB[$pref]
+            }
+        }
+
+        # Si responde puertos Windows (135 o 445), se clasifica como Computadora
+        if ($p135 -or $p445) {
+            return [PSCustomObject]@{
+                IsComputer    = $true
+                DeviceType    = "Computadora (Windows PC / Servidor)"
+                Port135       = $p135
+                Port445       = $p445
+                Port3389      = $p3389
+                Port5985      = $p5985
+                OpenPorts     = @()
+                Manufacturer  = $fabricanteOUI
+                SnmpData      = $null
+                EffectiveHost = $HostName
+            }
+        }
+
+        # Sondeo de puertos para dispositivos de red no-PC
+        $p9100 = Test-PortQuick $TargetIP 9100 120
+        $p515  = Test-PortQuick $TargetIP 515 100
+        $p631  = Test-PortQuick $TargetIP 631 100
+        $p4370 = Test-PortQuick $TargetIP 4370 120
+        $p5005 = Test-PortQuick $TargetIP 5005 100
+        $p554  = Test-PortQuick $TargetIP 554 100
+        $p8000 = Test-PortQuick $TargetIP 8000 100
+        $p37777= Test-PortQuick $TargetIP 37777 100
+        $p34567= Test-PortQuick $TargetIP 34567 100
+        $p8291 = Test-PortQuick $TargetIP 8291 100
+        $p22   = Test-PortQuick $TargetIP 22 100
+        $p23   = Test-PortQuick $TargetIP 23 100
+        $p80   = Test-PortQuick $TargetIP 80 100
+        $p443  = Test-PortQuick $TargetIP 443 100
+        $p8080 = Test-PortQuick $TargetIP 8080 100
+
+        # Sondeo SNMP
+        $snmpInfo = Get-NativeSnmpSummary $TargetIP "public" 400
+
+        $openPortsList = @()
+        if ($p9100) { $openPortsList += "9100 (RAW Print)" }
+        if ($p515)  { $openPortsList += "515 (LPD Print)" }
+        if ($p631)  { $openPortsList += "631 (IPP Print)" }
+        if ($p4370) { $openPortsList += "4370 (ZKTeco Biometric)" }
+        if ($p5005) { $openPortsList += "5005 (Suprema Biometric)" }
+        if ($p554)  { $openPortsList += "554 (RTSP Video)" }
+        if ($p8000) { $openPortsList += "8000 (Hikvision SDK)" }
+        if ($p37777){ $openPortsList += "37777 (Dahua SDK)" }
+        if ($p34567){ $openPortsList += "34567 (XM DVR)" }
+        if ($p8291) { $openPortsList += "8291 (MikroTik Winbox)" }
+        if ($p22)   { $openPortsList += "22 (SSH)" }
+        if ($p23)   { $openPortsList += "23 (Telnet)" }
+        if ($p80)   { $openPortsList += "80 (HTTP Web)" }
+        if ($p443)  { $openPortsList += "443 (HTTPS Web)" }
+        if ($p8080) { $openPortsList += "8080 (HTTP Alt)" }
+        if ($snmpInfo.IsActive) { $openPortsList += "161 (SNMP UDP)" }
+
+        # Si SNMP trajo un sysName mas preciso, actualizar HostName
+        $effectiveHost = $HostName
+        if ([string]::IsNullOrWhiteSpace($effectiveHost) -or $effectiveHost -eq $TargetIP) {
+            if ($snmpInfo.SysName) {
+                $effectiveHost = $snmpInfo.SysName
+            }
+        }
+
+        # Logica de clasificacion
+        $hUpper = "$effectiveHost $($snmpInfo.SysDescr) $fabricanteOUI".ToUpper()
+        $tipo = "Dispositivo de Red (Generico)"
+
+        if ($p4370 -or $p5005 -or ($hUpper -match "ZK|BIO|RELOJ|ANVIZ|TIMESTATION|CONTROL-ASISTENCIA|SUPREMA") -or ($fabricanteOUI -match "ZKTeco|Anviz|Suprema")) {
+            $tipo = "Reloj biometrico / Control de Asistencia"
+        }
+        elseif (($hUpper -match "DVR|NVR|XVR|HIK-NVR|DAHUA-NVR|GRABADOR|HIKVISION-NVR") -or 
+                (($p8000 -or $p37777 -or $p34567) -and ($hUpper -notmatch "CAM|IPC") -and $p554)) {
+            $tipo = "DVR / NVR (Grabador de Video de Seguridad)"
+        }
+        elseif ($p554 -or ($hUpper -match "CAM|IPC|CAMERA|DOMO|TUBO|BULLET|CCTV|HIK-CAM|DAHUA-CAM|HIKVISION|DAHUA|UNIVIEW|AXIS") -or ($fabricanteOUI -match "Hikvision|Dahua|Axis|Uniview")) {
+            $tipo = "Camara CCTV / Seguridad IP"
+        }
+        elseif (($hUpper -match "RICOH|AFICIO|KONICA|BIZHUB|KYOCERA|TASKALFA|XEROX|WORKCENTRE|ALTALINK|VERSALINK|TOSHIBA|ESTUDIO|SHARP|MX-|DEVELOP|IMAGERUNNER|IR-ADV|COPIADORA|FOTOCOPIADORA") -or
+                ($p9100 -and ($p80 -or $p443) -and ($fabricanteOUI -match "Ricoh|Canon|Konica|Kyocera|Xerox|Toshiba|Sharp"))) {
+            $tipo = "Fotocopiadora (Multifuncional Corporativa)"
+        }
+        elseif ($p9100 -or $p515 -or $p631 -or ($hUpper -match "PRN|PRINT|EPSON|BROTHER|HP-PRINT|LASERJET|DESKJET|PAGEWIDE|ZEBRA|SATO|IMPRESORA|HEWLETT PACKARD") -or ($fabricanteOUI -match "HP|Epson|Brother|Zebra")) {
+            $tipo = "Impresora de red"
+        }
+        elseif ($p8291 -or ($hUpper -match "ROUTER|GW|GATEWAY|MIKROTIK|FORTINET|CISCO-ROUTER|PFSENSE|OPNSENSE|EDGEROUTER|FIREWALL") -or ($fabricanteOUI -match "MikroTik")) {
+            $tipo = "Router / Gateway / Firewall"
+        }
+        elseif ($p8080 -or ($hUpper -match "WIFI|AP-|AP_|WIRELESS|ACCESSPOINT|UNIFI|UAP|AIRMAX|TENDA|MERCUSYS") -or ($fabricanteOUI -match "Ubiquiti")) {
+            $tipo = "Router inalambrico / Access Point"
+        }
+        elseif ($p22 -or $p23 -or ($snmpInfo.IsActive) -or ($hUpper -match "SW|SWITCH|SW-|CATALYST|PROCURVE|ARUBA|EDGESWITCH|CISCO") -or ($fabricanteOUI -match "Cisco|Aruba|ProCurve|Huawei")) {
+            $tipo = "Switch de datos / Red"
+        }
+        elseif ($hUpper -match "SCANNER|ESCANER|AVISION|FUJITSU") {
+            $tipo = "Escaner de red"
+        }
+        elseif ($p22 -and -not $p135 -and -not $p445) {
+            $tipo = "Servidor Linux / Unix"
+        }
+
+        $isComputerGuess = $false
+        if ($openPortsList.Count -eq 0 -and ($hUpper -match "DESKTOP|LAPTOP|PC|WIN|SRV|SERVER|WS-|HMP")) {
+            $isComputerGuess = $true
+            $tipo = "Computadora (Windows PC - Firewall Activo / Puertos Filtrados)"
+        }
+
+        return [PSCustomObject]@{
+            IsComputer    = $isComputerGuess
+            DeviceType    = $tipo
+            Port135       = $false
+            Port445       = $false
+            Port3389      = $false
+            Port5985      = $false
+            OpenPorts     = $openPortsList
+            Manufacturer  = $fabricanteOUI
+            SnmpData      = $snmpInfo
+            EffectiveHost = $effectiveHost
+        }
     }
 
     function Get-RemoteConnectionContext {
@@ -72,6 +412,9 @@ function psSubMenu25 {
         else {
             $target = Parse-RemoteTarget $inputTarget
         }
+
+        # Visualizar inmediatamente la tarjeta del usuario activo como primera salida tras digitar la IP
+        psMostrarInformacionUsuarioActivo -TargetIP $target
 
         # 1. Comprobación rápida de conectividad (.NET Ping con timeout 1000ms)
         Write-Host "Verificando conexion con $target (Ping rapido)..." -ForegroundColor Yellow
@@ -1370,35 +1713,249 @@ Write-Output "Proceso de optimizacion completado con exito."
                         break
                     }
 
-                    Write-Host "`n--- Consultando informacion de red... ---" -ForegroundColor Yellow
+                    Write-Host "`n--- Consultando informacion de red para $ipRemota... ---" -ForegroundColor Yellow
 
-                    if (-not (Test-Connection -ComputerName $ipRemota -Count 1 -Quiet)) {
-                        Write-Warning "El equipo $ipRemota no responde a ping. Es posible que este apagado o tenga el firewall activo."
+                    # A. Ping rapido (.NET Ping con timeout 800ms)
+                    $pingOk = $false
+                    try {
+                        $pObj = New-Object System.Net.NetworkInformation.Ping
+                        $r = $pObj.Send($ipRemota, 800)
+                        if ($r.Status -eq [System.Net.NetworkInformation.IPStatus]::Success) {
+                            $pingOk = $true
+                        }
+                    } catch {}
+                    if (-not $pingOk) {
+                        Write-Warning "El equipo $ipRemota no respondio a ping (Timeout 800ms). Es posible que este apagado o tenga firewall activo."
                     }
 
-                    # Resolución de Hostname para soporte Kerberos en Dominio
+                    # B. Resolucion de MAC via ARP / Get-NetNeighbor
+                    $macRemota = ""
+                    try {
+                        $neighbor = Get-NetNeighbor -IPAddress $ipRemota -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1
+                        if ($neighbor -and $neighbor.LinkLayerAddress) {
+                            $macRemota = $neighbor.LinkLayerAddress.ToUpper().Replace("-", ":")
+                        }
+                    } catch {}
+                    if ([string]::IsNullOrEmpty($macRemota)) {
+                        try {
+                            $arpLines = arp -a $ipRemota
+                            foreach ($al in $arpLines) {
+                                if ($al -match '([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}') {
+                                    $macRemota = $Matches[0].ToUpper().Replace("-", ":")
+                                    break
+                                }
+                            }
+                        } catch {}
+                    }
+                    if ([string]::IsNullOrEmpty($macRemota)) { $macRemota = "No disponible" }
+
+                    # C. Resolucion de Hostname (DNS Asincrono no bloqueante + Fallback NetBIOS)
                     $computerTarget = $ipRemota
+                    $resolvedHost = ""
                     Write-Host "[*] Resolviendo Hostname de $ipRemota..." -ForegroundColor Gray
                     try {
-                        $entry = [System.Net.Dns]::GetHostEntry($ipRemota)
-                        $computerTarget = $entry.HostName.Split('.')[0]
-                        Write-Host "[+] Hostname resuelto: $computerTarget (Kerberos habilitado)" -ForegroundColor Green
+                        $asyncDns = [System.Net.Dns]::BeginGetHostEntry($ipRemota, $null, $null)
+                        if ($asyncDns.AsyncWaitHandle.WaitOne(400, $false)) {
+                            $entry = [System.Net.Dns]::EndGetHostEntry($asyncDns)
+                            if ($entry -and $entry.HostName) {
+                                $resolvedHost = $entry.HostName.Split('.')[0]
+                                $computerTarget = $resolvedHost
+                                Write-Host "[+] Hostname resuelto via DNS: $computerTarget (Kerberos habilitado)" -ForegroundColor Green
+                            }
+                        }
+                    } catch {}
+
+                    if ([string]::IsNullOrEmpty($resolvedHost)) {
+                        try {
+                            $nbt = nbtstat -a $ipRemota 2>$null
+                            $lineaName = $nbt | Where-Object { $_ -match "<\x00>.*UNIQUE" } | Select-Object -First 1
+                            if ($lineaName -and $lineaName -match "^\s*([A-Za-z0-9\-]+)") {
+                                $resolvedHost = $Matches[1].Trim()
+                                $computerTarget = $resolvedHost
+                                Write-Host "[+] Hostname resuelto via NetBIOS: $computerTarget" -ForegroundColor Green
+                            }
+                        } catch {}
                     }
-                    catch {
-                        # Intento por NetBIOS/nbtstat
-                        $nbt = nbtstat -a $ipRemota
-                        $lineaName = $nbt | Where-Object { $_ -match "<\x00>.*UNIQUE" } | Select-Object -First 1
-                        if ($lineaName -and $lineaName -match "^\s*([A-Za-z0-9\-]+)") {
-                            $computerTarget = $Matches[1].Trim()
-                            Write-Host "[+] Hostname resuelto via NetBIOS: $computerTarget" -ForegroundColor Green
-                        } else {
-                            Write-Host "[-] No se pudo resolver Hostname. Usando IP directamente (NTLM)." -ForegroundColor Yellow
+
+                    if ([string]::IsNullOrEmpty($resolvedHost)) {
+                        Write-Host "[-] No se pudo resolver Hostname. Usando IP directamente ($ipRemota)." -ForegroundColor Yellow
+                    }
+
+                    # D. Sondeo Rapido de Dispositivo y Clasificacion (< 800 ms)
+                    Write-Host "[*] Identificando perfil y servicios del equipo..." -ForegroundColor Gray
+                    $devProfile = Get-NetworkDeviceProfile -TargetIP $ipRemota -HostName $computerTarget -MACAddress $macRemota
+                    if ($devProfile.EffectiveHost -and $devProfile.EffectiveHost -ne $ipRemota) {
+                        $computerTarget = $devProfile.EffectiveHost
+                    }
+
+                    # =========================================================================
+                    # CASO A: EL EQUIPO NO ES UNA COMPUTADORA (Impresora, Switch, Camara, etc.)
+                    # =========================================================================
+                    if (-not $devProfile.IsComputer) {
+                        Write-Host "`n===========================================================" -ForegroundColor Cyan
+                        Write-Host "        DISPOSITIVO DE RED DETECTADO (NO ES UNA PC)        " -ForegroundColor Cyan
+                        Write-Host "===========================================================" -ForegroundColor Cyan
+                        Write-Host ""
+                        Write-Host "  Tipo de Dispositivo:  " -NoNewline
+                        Write-Host "$($devProfile.DeviceType)" -ForegroundColor Green
+                        Write-Host "  Direccion IP:         " -NoNewline
+                        Write-Host "$ipRemota" -ForegroundColor Yellow
+                        Write-Host "  Nombre de Host:       " -NoNewline
+                        $hDisplay = if ($computerTarget -and $computerTarget -ne $ipRemota) { $computerTarget } else { "(Sin Hostname registrado)" }
+                        Write-Host "$hDisplay" -ForegroundColor Yellow
+                        Write-Host "  Direccion MAC:        " -NoNewline
+                        Write-Host "$macRemota" -ForegroundColor Yellow
+                        Write-Host "  Fabricante (OUI):     " -NoNewline
+                        Write-Host "$($devProfile.Manufacturer)" -ForegroundColor Cyan
+                        
+                        $portsStr = if ($devProfile.OpenPorts.Count -gt 0) { $devProfile.OpenPorts -join ", " } else { "Ningun puerto estandar responde (Posible bloqueo o filtrado)" }
+                        Write-Host "  Servicios / Puertos:  " -NoNewline
+                        Write-Host "$portsStr" -ForegroundColor Gray
+
+                        if ($devProfile.SnmpData -and $devProfile.SnmpData.SysDescr) {
+                            Write-Host "  Descripcion SNMP:     " -NoNewline
+                            Write-Host "$($devProfile.SnmpData.SysDescr)" -ForegroundColor White
+                        }
+                        if ($devProfile.SnmpData -and $devProfile.SnmpData.SysName) {
+                            Write-Host "  Nombre SNMP (sysName):" -NoNewline
+                            Write-Host "$($devProfile.SnmpData.SysName)" -ForegroundColor White
+                        }
+
+                        $estadoEnlace = if ($pingOk -or $devProfile.OpenPorts.Count -gt 0 -or $macRemota -ne "No disponible") { "En linea / Activo en la red" } else { "Inaccesible / Desconectado" }
+                        Write-Host "  Estado de Conexion:   " -NoNewline
+                        Write-Host "$estadoEnlace" -ForegroundColor Green
+                        Write-Host "===========================================================`n" -ForegroundColor Cyan
+
+                        Read-Host "Presione ENTER para continuar..."
+                        break
+                    }
+
+                    # =========================================================================
+                    # CASO B: EL EQUIPO ES UNA COMPUTADORA (Windows PC / Servidor / Workgroup)
+                    # =========================================================================
+                    Write-Host "[+] Computadora detectada ($($devProfile.DeviceType)). Iniciando conexion WMI..." -ForegroundColor Cyan
+
+                    # Gestion de Credenciales y reintentos para Dominio / Grupo de Trabajo
+                    $sys = $null
+                    $cred = $null
+                    $targetWmi = if ($resolvedHost) { $resolvedHost } else { $ipRemota }
+                    $reintentarConCred = $true
+                    $credProporcionada = $null
+
+                    if ($global:RemoteTargetIP -eq $ipRemota -and $global:RemoteTargetCred -ne $null) {
+                        $credProporcionada = $global:RemoteTargetCred
+                    }
+
+                    while ($reintentarConCred) {
+                        $reintentarConCred = $false
+                        try {
+                            if ($cred) {
+                                $sys = Get-WmiObject -Class Win32_ComputerSystem -ComputerName $targetWmi -Credential $cred -ErrorAction Stop
+                            } else {
+                                $sys = Get-WmiObject -Class Win32_ComputerSystem -ComputerName $targetWmi -ErrorAction Stop
+                            }
+                        }
+                        catch {
+                            $errMsg = $_.Exception.Message
+                            $esAccesoDenegado = ($errMsg -match "Acceso denegado" -or $errMsg -match "Access is denied" -or $errMsg -match "0x80070005")
+                            $esRpcNoDisponible = ($errMsg -match "RPC" -or $errMsg -match "0x800706BA" -or $errMsg -match "no disponible")
+
+                            if ($esAccesoDenegado) {
+                                Write-Host "`n[!] ERROR DE AUTENTICACION: Acceso denegado (0x80070005)" -ForegroundColor Red
+                                Write-Host "    El equipo $ipRemota ($computerTarget) rechazo las credenciales actuales." -ForegroundColor Yellow
+                                Write-Host "    Causa habitual: El equipo se encuentra en un GRUPO DE TRABAJO (Workgroup)" -ForegroundColor Yellow
+                                Write-Host "    o requiere una cuenta de administrador local especifica (ej: .\Administrador).`n" -ForegroundColor Yellow
+
+                                if ($credProporcionada) {
+                                    $resp = Read-Host "¿Desea reintentar usando las credenciales guardadas para $ipRemota? (S/N) [S]"
+                                    if ($resp -eq "" -or $resp.ToUpper() -eq "S") {
+                                        $cred = $credProporcionada
+                                        $reintentarConCred = $true
+                                        $credProporcionada = $null
+                                        $targetWmi = $ipRemota
+                                        Enable-LocalTrustedHostsConfig
+                                        Write-Host "[*] Reintentando conexion con credenciales guardadas..." -ForegroundColor Cyan
+                                        continue
+                                    }
+                                }
+
+                                $respIngresar = Read-Host "¿Desea ingresar credenciales para autenticar en $ipRemota? (S/N) [S]"
+                                if ($respIngresar -eq "" -or $respIngresar.ToUpper() -eq "S") {
+                                    Write-Host "Ingrese credenciales para $ipRemota (ej: .\Administrador o DOMINIO\Usuario):" -ForegroundColor Cyan
+                                    $rawCred = Get-Credential
+                                    if ($rawCred) {
+                                        $uName = $rawCred.UserName
+                                        if ($uName -notmatch '\\' -and $uName -notmatch '@') {
+                                            $fixedUser = ".\$uName"
+                                            $cred = New-Object System.Management.Automation.PSCredential($fixedUser, $rawCred.Password)
+                                        } else {
+                                            $cred = $rawCred
+                                        }
+                                        $global:RemoteTargetIP = $ipRemota
+                                        $global:RemoteTargetCred = $cred
+                                        $targetWmi = $ipRemota
+                                        $reintentarConCred = $true
+                                        Enable-LocalTrustedHostsConfig
+                                        Write-Host "[*] Reintentando conexion con credenciales suministradas..." -ForegroundColor Cyan
+                                        continue
+                                    }
+                                }
+                            }
+                            elseif ($esRpcNoDisponible) {
+                                Write-Host "`n[!] ERROR DE COMUNICACION: Servidor RPC no disponible (0x800706BA)" -ForegroundColor Red
+                                Write-Host "    El equipo remoto tiene bloqueado WMI/RPC en el Firewall de Windows" -ForegroundColor Yellow
+                                Write-Host "    o los servicios de administracion remota estan detenidos.`n" -ForegroundColor Yellow
+
+                                $respHab = Read-Host "¿Desea intentar HABILITAR WMI, RPC y Firewall en $ipRemota ahora? (S/N) [S]"
+                                if ($respHab -eq "" -or $respHab.ToUpper() -eq "S") {
+                                    if ($cred) {
+                                        $usu = $cred.UserName
+                                        $pass = $cred.GetNetworkCredential().Password
+                                        psHabilitarAdministracionRemota -targetInput $ipRemota -username $usu -passwordText $pass
+                                    } else {
+                                        psHabilitarAdministracionRemota -targetInput $ipRemota
+                                    }
+                                    Write-Host "[*] Esperando 3 segundos y reintentando conexion..." -ForegroundColor Cyan
+                                    Start-Sleep -Seconds 3
+                                    $reintentarConCred = $true
+                                    continue
+                                }
+                            }
+                            else {
+                                Write-Host "ERROR: No se pudo establecer conexion con $ipRemota ($computerTarget)." -ForegroundColor Red
+                                Write-Host "Detalle: $($errMsg)" -ForegroundColor Gray
+                            }
                         }
                     }
 
+                    if (-not $sys) {
+                        Write-Host "`nNo fue posible recuperar los datos del equipo remoto." -ForegroundColor Red
+                        Read-Host "Presione ENTER para continuar..."
+                        break
+                    }
+
+                    # Funcion de consulta WMI segura utilizando credenciales si estan disponibles
+                    function Get-SubMenuWmiSafe {
+                        param(
+                            [string]$Class,
+                            [string]$Filter = $null,
+                            [switch]$SilentlyContinue
+                        )
+                        $p = @{
+                            Class        = $Class
+                            ComputerName = $targetWmi
+                        }
+                        if ($cred) { $p["Credential"] = $cred }
+                        if ($Filter) { $p["Filter"] = $Filter }
+                        if ($SilentlyContinue) {
+                            $p["ErrorAction"] = "SilentlyContinue"
+                        } else {
+                            $p["ErrorAction"] = "Stop"
+                        }
+                        return (Get-WmiObject @p)
+                    }
+
                     try {
-                        # 2. Consultas WMI Optimizadas usando el Hostname (o IP fallback)
-                        $sys = Get-WmiObject -Class Win32_ComputerSystem -ComputerName $computerTarget -ErrorAction Stop
                         $marca = if ($sys.Manufacturer) { $sys.Manufacturer.Trim() } else { "Desconocido" }
                         $modelo = if ($sys.Model) { $sys.Model.Trim() } else { "Desconocido" }
 
@@ -1410,47 +1967,53 @@ Write-Output "Proceso de optimizacion completado con exito."
                             $redGrupo = "Grupo de Trabajo: $($sys.Domain)"
                         }
 
-                        $os = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $computerTarget -ErrorAction Stop
-                        $osName = if ($os.Caption) { $os.Caption.Trim() } else { "Windows (Desconocido)" }
-                        $osVer = if ($os.Version) { $os.Version.Trim() } else { "" }
-                        $osArch = if ($os.OSArchitecture) { $os.OSArchitecture.Trim() } else { "" }
+                        $os = Get-SubMenuWmiSafe -Class Win32_OperatingSystem -SilentlyContinue
+                        $osName = if ($os -and $os.Caption) { $os.Caption.Trim() } else { "Windows (Desconocido)" }
+                        $osVer = if ($os -and $os.Version) { $os.Version.Trim() } else { "" }
+                        $osArch = if ($os -and $os.OSArchitecture) { $os.OSArchitecture.Trim() } else { "" }
                         $osDisplay = $osName
                         if ($osVer) { $osDisplay += " ($osVer)" }
                         if ($osArch) { $osDisplay += " $osArch" }
 
                         # Microprocesador (CPU)
-                        $cpu = Get-WmiObject -Class Win32_Processor -ComputerName $computerTarget | Select-Object -First 1
+                        $cpu = Get-SubMenuWmiSafe -Class Win32_Processor -SilentlyContinue | Select-Object -First 1
                         $cpuName = if ($cpu -and $cpu.Name) { $cpu.Name.Trim() } else { "Desconocido" }
 
                         # Memoria RAM
-                        $ramSum = (Get-WmiObject -Class Win32_PhysicalMemory -ComputerName $computerTarget | Measure-Object -Property Capacity -Sum).Sum
+                        $ramSum = (Get-SubMenuWmiSafe -Class Win32_PhysicalMemory -SilentlyContinue | Measure-Object -Property Capacity -Sum).Sum
                         if (-not $ramSum) {
                             $ramSum = $sys.TotalPhysicalMemory
                         }
                         $ramGB = if ($ramSum) { [Math]::Round($ramSum / 1GB, 2) } else { 0 }
 
-                        # Almacenamiento Total (Discos Físicos)
-                        $disks = Get-WmiObject -Class Win32_DiskDrive -ComputerName $computerTarget
+                        # Almacenamiento Total (Discos Fisicos)
+                        $disks = Get-SubMenuWmiSafe -Class Win32_DiskDrive -SilentlyContinue
                         $totalStorageBytes = 0
                         $diskDetails = @()
-                        foreach ($disk in $disks) {
-                            if ($disk.Size) {
-                                $totalStorageBytes += $disk.Size
-                                $sizeGB = [Math]::Round($disk.Size / 1GB, 2)
-                                $diskDetails += "      - $($disk.Model): $sizeGB GB"
+                        if ($disks) {
+                            foreach ($disk in $disks) {
+                                if ($disk.Size) {
+                                    $totalStorageBytes += $disk.Size
+                                    $sizeGB = [Math]::Round($disk.Size / 1GB, 2)
+                                    $diskDetails += "      - $($disk.Model): $sizeGB GB"
+                                }
                             }
                         }
                         $totalStorageGB = [Math]::Round($totalStorageBytes / 1GB, 2)
 
-                        # --- MOSTRAR INFORMACIÓN DEL EQUIPO ---
-                        Write-Host "===========================================================" -ForegroundColor Cyan
+                        # --- MOSTRAR INFORMACION DEL EQUIPO ---
+                        Write-Host "`n===========================================================" -ForegroundColor Cyan
                         Write-Host "            CARACTERISTICAS Y ESPECIFICACIONES             " -ForegroundColor Cyan
                         Write-Host "===========================================================" -ForegroundColor Cyan
                         Write-Host ""
                         Write-Host "  Nombre del Equipo (Hostname): " -NoNewline
                         Write-Host "$($sys.Name)" -ForegroundColor Green
                         Write-Host "  Red / Grupo:                  " -NoNewline
-                        Write-Host "$redGrupo" -ForegroundColor Green
+                        if ($sys.PartOfDomain) {
+                            Write-Host "$redGrupo" -ForegroundColor Green
+                        } else {
+                            Write-Host "$redGrupo" -ForegroundColor Yellow
+                        }
                         Write-Host "  Marca y Modelo:               " -NoNewline
                         Write-Host "$marca / $modelo" -ForegroundColor Yellow
                         Write-Host "  Sistema Operativo:            " -NoNewline
@@ -1466,153 +2029,10 @@ Write-Output "Proceso de optimizacion completado con exito."
                         }
                         Write-Host ""
 
-                        # --- DETECTAR INFORMACIÓN DEL USUARIO ACTIVO ---
-                        $usuariosActivos = @()
-
-                        # 1. Intentar detectar usuarios interactivos a través de procesos explorer.exe
-                        try {
-                            $procesosExplorer = Get-WmiObject -Class Win32_Process -ComputerName $computerTarget -Filter "Name='explorer.exe'" -ErrorAction SilentlyContinue
-                            if ($procesosExplorer) {
-                                foreach ($proc in $procesosExplorer) {
-                                    $propietario = $proc.GetOwner()
-                                    if ($propietario.ReturnValue -eq 0 -and -not [string]::IsNullOrEmpty($propietario.User)) {
-                                        $fechaInicio = ""
-                                        try {
-                                            if ($proc.CreationDate) {
-                                                $fechaInicio = [Management.ManagementDateTimeConverter]::ToDateTime($proc.CreationDate).ToString("dd/MM/yyyy HH:mm:ss")
-                                            }
-                                        } catch {}
-
-                                        $usuariosActivos += [PSCustomObject]@{
-                                            Domain      = $propietario.Domain
-                                            User        = $propietario.User
-                                            AccountName = "$($propietario.Domain)\$($propietario.User)"
-                                            LogonTime   = $fechaInicio
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        catch {}
-
-                        # 2. Fallback a $sys.UserName en caso de que explorer.exe no arroje resultados
-                        if ($usuariosActivos.Count -eq 0 -and -not [string]::IsNullOrEmpty($sys.UserName)) {
-                            $partes = $sys.UserName.Split('\')
-                            $dom = if ($partes.Count -gt 1) { $partes[0] } else { "" }
-                            $usr = if ($partes.Count -gt 1) { $partes[1] } else { $partes[0] }
-                            $usuariosActivos += [PSCustomObject]@{
-                                Domain      = $dom
-                                User        = $usr
-                                AccountName = $sys.UserName
-                                LogonTime   = "No disponible"
-                            }
-                        }
-
-                        # Filtrar usuarios únicos por cuenta
-                        if ($usuariosActivos.Count -gt 0) {
-                            $usuariosUnicos = @()
-                            $vistos = @{}
-                            foreach ($u in $usuariosActivos) {
-                                $clave = $u.AccountName.ToUpper()
-                                if (-not $vistos.ContainsKey($clave)) {
-                                    $vistos[$clave] = $true
-                                    $usuariosUnicos += $u
-                                }
-                            }
-                            $usuariosActivos = $usuariosUnicos
-                        }
-
-                        # --- MOSTRAR APARTADO DE INFORMACIÓN DEL USUARIO ACTIVO ---
-                        Write-Host "===========================================================" -ForegroundColor Cyan
-                        Write-Host "               INFORMACION DEL USUARIO ACTIVO              " -ForegroundColor Cyan
-                        Write-Host "===========================================================" -ForegroundColor Cyan
-                        Write-Host ""
-
-                        if ($usuariosActivos.Count -eq 0) {
-                            Write-Host "  Estado de Sesion:             " -NoNewline
-                            Write-Host "Sin sesion activa (Ningun usuario conectado)" -ForegroundColor Yellow
-                        }
-                        else {
-                            # Consultar perfiles de usuario de forma segura
-                            $perfilesRemotos = try {
-                                Get-WmiObject -Class Win32_UserProfile -ComputerName $computerTarget -ErrorAction SilentlyContinue
-                            } catch { $null }
-
-                            foreach ($u in $usuariosActivos) {
-                                # Determinar si es usuario de Dominio o Local
-                                $esLocal = ($u.Domain.ToUpper() -eq $sys.Name.ToUpper()) -or ($u.Domain -eq ".") -or (-not $sys.PartOfDomain)
-                                $tipoCuenta = ""
-                                if ($esLocal) {
-                                    $tipoCuenta = "Usuario Local"
-                                }
-                                else {
-                                    $nombreDominio = if ($sys.Domain) { $sys.Domain } else { $u.Domain }
-                                    $tipoCuenta = "Usuario de Dominio ($nombreDominio)"
-                                }
-
-                                # Intentar obtener Nombre Completo / DisplayName
-                                $nombreCompleto = ""
-                                if ($esLocal) {
-                                    try {
-                                        $acc = Get-WmiObject -Class Win32_UserAccount -ComputerName $computerTarget -Filter "Name='$($u.User)' and LocalAccount=True" -ErrorAction SilentlyContinue
-                                        if ($acc -and $acc.FullName) { $nombreCompleto = $acc.FullName.Trim() }
-                                    } catch {}
-                                }
-                                else {
-                                    try {
-                                        $searcher = [adsisearcher]"(sAMAccountName=$($u.User))"
-                                        $adUser = $searcher.FindOne()
-                                        if ($adUser -and $adUser.Properties["displayname"]) {
-                                            $nombreCompleto = $adUser.Properties["displayname"][0].ToString().Trim()
-                                        }
-                                    } catch {}
-                                }
-                                if ([string]::IsNullOrEmpty($nombreCompleto)) {
-                                    $nombreCompleto = "No especificado / No disponible"
-                                }
-
-                                # Obtener Ruta del Perfil
-                                $rutaPerfil = ""
-                                if ($perfilesRemotos) {
-                                    $perfil = $perfilesRemotos | Where-Object { 
-                                        ($_.LocalPath -like "*\$($u.User)") -or 
-                                        ($_.Loaded -eq $true -and -not $_.Special) 
-                                    } | Select-Object -First 1
-                                    if ($perfil -and $perfil.LocalPath) {
-                                        $rutaPerfil = $perfil.LocalPath
-                                    }
-                                }
-                                if ([string]::IsNullOrEmpty($rutaPerfil)) {
-                                    $rutaPerfil = "C:\Users\$($u.User)"
-                                }
-
-                                $fechaLogon = if (-not [string]::IsNullOrEmpty($u.LogonTime) -and $u.LogonTime -ne "No disponible") { $u.LogonTime } else { "Sesion activa (Hora no disponible)" }
-
-                                Write-Host "  Usuario con Sesion:           " -NoNewline
-                                Write-Host "$($u.AccountName)" -ForegroundColor Green
-                                Write-Host "  Nombre Completo:              " -NoNewline
-                                Write-Host "$nombreCompleto" -ForegroundColor Yellow
-                                Write-Host "  Tipo de Cuenta:               " -NoNewline
-                                if ($esLocal) {
-                                    Write-Host "$tipoCuenta" -ForegroundColor Yellow
-                                } else {
-                                    Write-Host "$tipoCuenta" -ForegroundColor Green
-                                }
-                                Write-Host "  Ruta de Perfil:               " -NoNewline
-                                Write-Host "$rutaPerfil" -ForegroundColor Yellow
-                                Write-Host "  Inicio de Sesion:             " -NoNewline
-                                Write-Host "$fechaLogon" -ForegroundColor Gray
-                                Write-Host "  Estado de Sesion:             " -NoNewline
-                                Write-Host "Activa (Conectado)" -ForegroundColor Green
-                                if ($usuariosActivos.Count -gt 1) {
-                                    Write-Host "  ---------------------------------------------------------" -ForegroundColor Gray
-                                }
-                            }
-                        }
-                        Write-Host ""
+                        # (La informacion del usuario activo ya fue visualizada como primer paso tras digitar la IP)
 
                         # --- OBTENER ADAPTADORES DE RED REMOTOS ---
-                        $nicConfigs = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -ComputerName $computerTarget -Filter "IPEnabled = TRUE"
+                        $nicConfigs = Get-SubMenuWmiSafe -Class Win32_NetworkAdapterConfiguration -Filter "IPEnabled = TRUE" -SilentlyContinue
                         
                         Write-Host "===========================================================" -ForegroundColor Cyan
                         Write-Host "             CONFIGURACION DE RED Y CONECTIVIDAD           " -ForegroundColor Cyan
@@ -1623,82 +2043,82 @@ Write-Output "Proceso de optimizacion completado con exito."
 
                         $hayAdaptadorActivo = $false
 
-                        foreach ($config in $nicConfigs) {
-                            $ips = @()
-                            if ($config.IPAddress) {
-                                foreach ($ip in $config.IPAddress) {
-                                    if ($ip -match "^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$") {
-                                        $ips += $ip
+                        if ($nicConfigs) {
+                            foreach ($config in $nicConfigs) {
+                                $ips = @()
+                                if ($config.IPAddress) {
+                                    foreach ($ip in $config.IPAddress) {
+                                        if ($ip -match "^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$") {
+                                            $ips += $ip
+                                        }
                                     }
                                 }
-                            }
-                            if ($ips.Count -eq 0) { continue }
+                                if ($ips.Count -eq 0) { continue }
 
-                            $hayAdaptadorActivo = $true
-                            $adapterInfo = Get-WmiObject -Class Win32_NetworkAdapter -ComputerName $computerTarget -Filter "Index = $($config.Index)"
-                            
-                            $tipoConectividad = "Ethernet (Cableado)"
-                            if ($adapterInfo) {
-                                $netConnectionId = $adapterInfo.NetConnectionID
-                                $adapterTypeId = $adapterInfo.AdapterTypeId
-                                if (($netConnectionId -match "Wi-Fi|Wireless|WLAN|Inalámbrica|Inalambrica") -or 
-                                    ($config.Description -match "Wi-Fi|Wireless|WLAN|802\.11") -or 
-                                    ($adapterTypeId -eq 9)) {
-                                    $tipoConectividad = "Wi-Fi (Inalambrico)"
-                                }
-                            } else {
-                                if ($config.Description -match "Wi-Fi|Wireless|WLAN|802\.11") {
-                                    $tipoConectividad = "Wi-Fi (Inalambrico)"
-                                }
-                            }
-
-                            $dhcpStatus = if ($config.DHCPEnabled) { "DHCP" } else { "IP Fija (Estatica)" }
-                            $mac = if ($config.MACAddress) { $config.MACAddress.Trim() } else { "No disponible" }
-
-                            # Gateways
-                            $gateways = @()
-                            if ($config.DefaultIPGateway) {
-                                foreach ($gw in $config.DefaultIPGateway) {
-                                    if ($gw -match "^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$") {
-                                        $gateways += $gw
+                                $hayAdaptadorActivo = $true
+                                $adapterInfo = Get-SubMenuWmiSafe -Class Win32_NetworkAdapter -Filter "Index = $($config.Index)" -SilentlyContinue
+                                
+                                $tipoConectividad = "Ethernet (Cableado)"
+                                if ($adapterInfo) {
+                                    $netConnectionId = $adapterInfo.NetConnectionID
+                                    $adapterTypeId = $adapterInfo.AdapterTypeId
+                                    if (($netConnectionId -match "Wi-Fi|Wireless|WLAN|Inalámbrica|Inalambrica") -or 
+                                        ($config.Description -match "Wi-Fi|Wireless|WLAN|802\.11") -or 
+                                        ($adapterTypeId -eq 9)) {
+                                        $tipoConectividad = "Wi-Fi (Inalambrico)"
+                                    }
+                                } else {
+                                    if ($config.Description -match "Wi-Fi|Wireless|WLAN|802\.11") {
+                                        $tipoConectividad = "Wi-Fi (Inalambrico)"
                                     }
                                 }
-                            }
 
-                            # DNS
-                            $dnsServers = @()
-                            if ($config.DNSServerSearchOrder) {
-                                foreach ($dns in $config.DNSServerSearchOrder) {
-                                    if ($dns -match "^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$") {
-                                        $dnsServers += $dns
+                                $dhcpStatus = if ($config.DHCPEnabled) { "DHCP" } else { "IP Fija (Estatica)" }
+                                $mac = if ($config.MACAddress) { $config.MACAddress.Trim() } else { "No disponible" }
+
+                                $gateways = @()
+                                if ($config.DefaultIPGateway) {
+                                    foreach ($gw in $config.DefaultIPGateway) {
+                                        if ($gw -match "^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$") {
+                                            $gateways += $gw
+                                        }
                                     }
                                 }
-                            }
 
-                            Write-Host "  [+] Adaptador:  " -NoNewline
-                            Write-Host $config.Description -ForegroundColor Cyan
-                            Write-Host "      Estado:     " -NoNewline
-                            Write-Host "Conectado / Activo" -ForegroundColor Green
-                            Write-Host "      Conexion:   " -NoNewline
-                            Write-Host $tipoConectividad -ForegroundColor Gray
-                            Write-Host "      Asignacion: " -NoNewline
-                            Write-Host $dhcpStatus -ForegroundColor Gray
-                            Write-Host "      Direccion MAC: " -NoNewline
-                            Write-Host $mac -ForegroundColor Yellow
-                            Write-Host "      IP(s):      " -NoNewline
-                            Write-Host ($ips -join ", ") -ForegroundColor Yellow
-                            if ($gateways.Count -gt 0) {
-                                Write-Host "      Gateway:    " -NoNewline
-                                Write-Host ($gateways -join ", ") -ForegroundColor Gray
+                                $dnsServers = @()
+                                if ($config.DNSServerSearchOrder) {
+                                    foreach ($dns in $config.DNSServerSearchOrder) {
+                                        if ($dns -match "^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$") {
+                                            $dnsServers += $dns
+                                        }
+                                    }
+                                }
+
+                                Write-Host "  [+] Adaptador:  " -NoNewline
+                                Write-Host $config.Description -ForegroundColor Cyan
+                                Write-Host "      Estado:     " -NoNewline
+                                Write-Host "Conectado / Activo" -ForegroundColor Green
+                                Write-Host "      Conexion:   " -NoNewline
+                                Write-Host $tipoConectividad -ForegroundColor Gray
+                                Write-Host "      Asignacion: " -NoNewline
+                                Write-Host $dhcpStatus -ForegroundColor Gray
+                                Write-Host "      Direccion MAC: " -NoNewline
+                                Write-Host $mac -ForegroundColor Yellow
+                                Write-Host "      IP(s):      " -NoNewline
+                                Write-Host ($ips -join ", ") -ForegroundColor Yellow
+                                if ($gateways.Count -gt 0) {
+                                    Write-Host "      Gateway:    " -NoNewline
+                                    Write-Host ($gateways -join ", ") -ForegroundColor Gray
+                                }
+                                if ($dnsServers.Count -gt 0) {
+                                    Write-Host "      DNS:        " -NoNewline
+                                    Write-Host ($dnsServers -join ", ") -ForegroundColor Green
+                                } else {
+                                    Write-Host "      DNS:        " -NoNewline
+                                    Write-Host "No configurados" -ForegroundColor DarkGray
+                                }
+                                Write-Host ""
                             }
-                            if ($dnsServers.Count -gt 0) {
-                                Write-Host "      DNS:        " -NoNewline
-                                Write-Host ($dnsServers -join ", ") -ForegroundColor Green
-                            } else {
-                                Write-Host "      DNS:        " -NoNewline
-                                Write-Host "No configurados" -ForegroundColor DarkGray
-                            }
-                            Write-Host ""
                         }
 
                         if (-not $hayAdaptadorActivo) {
@@ -1709,11 +2129,12 @@ Write-Output "Proceso de optimizacion completado con exito."
                         Write-Host ""
                     }
                     catch {
-                        Write-Host "ERROR: No se pudo establecer conexion con $ipRemota ($computerTarget)." -ForegroundColor Red
+                        Write-Host "ERROR al consultar especificaciones de $ipRemota ($computerTarget)." -ForegroundColor Red
                         Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
                     }
 
-                    
+                    [System.GC]::Collect()
+                    Read-Host "Presione ENTER para continuar..."
                 }
 
                 "1.2" { 
@@ -3100,7 +3521,11 @@ try {
 
                     $usu = Read-Host "Introduzca Usuario dominio (gmsantacruz\usuario)"
                     $cla = Read-Host "Introduzca clave de usuario" -AsSecureString # Se oculta la clave por seguridad
-                    $IPFinal = Get-StandardIPPrompt
+                    $credOpt = $null
+                    if (-not [string]::IsNullOrWhiteSpace($usu) -and $null -ne $cla) {
+                        $credOpt = New-Object System.Management.Automation.PSCredential("gmsantacruz\$usu", $cla)
+                    }
+                    $IPFinal = Get-StandardIPPrompt -Credential $credOpt
                     if ([string]::IsNullOrWhiteSpace($IPFinal)) {
                         Write-Host "Operacion cancelada." -ForegroundColor Red
                         Read-Host "Presione ENTER para continuar..."
@@ -3170,7 +3595,11 @@ try {
 
                     $usu = Read-Host "Introduzca Usuario dominio (gmsantacruz\usuario)"
                     $cla = Read-Host "Introduzca clave de usuario" -AsSecureString 
-                    $IPFinal = Get-StandardIPPrompt
+                    $credOpt = $null
+                    if (-not [string]::IsNullOrWhiteSpace($usu) -and $null -ne $cla) {
+                        $credOpt = New-Object System.Management.Automation.PSCredential("gmsantacruz\$usu", $cla)
+                    }
+                    $IPFinal = Get-StandardIPPrompt -Credential $credOpt
                     if ([string]::IsNullOrWhiteSpace($IPFinal)) {
                         Write-Host "Operacion cancelada." -ForegroundColor Red
                         Read-Host "Presione ENTER para continuar..."
@@ -4733,8 +5162,11 @@ try {
                                     
                                     $usu = Read-Host "Introduzca Usuario dominio (gmsantacruz\usuario)"
                                     $cla = Read-Host "Introduzca clave de usuario" -AsSecureString
-                                    
-                                    $IPFinal = Get-StandardIPPrompt
+                                    $credOpt = $null
+                                    if (-not [string]::IsNullOrWhiteSpace($usu) -and $null -ne $cla) {
+                                        $credOpt = New-Object System.Management.Automation.PSCredential("gmsantacruz\$usu", $cla)
+                                    }
+                                    $IPFinal = Get-StandardIPPrompt -Credential $credOpt
                                     if ([string]::IsNullOrWhiteSpace($IPFinal)) {
                                         Write-Host "Operacion cancelada." -ForegroundColor Red
                                         Read-Host "Presione ENTER para continuar..."

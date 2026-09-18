@@ -162,7 +162,8 @@ function psHabilitarAdministracionRemota {
         'netsh advfirewall firewall set rule group="File and Printer Sharing" new enable=yes',
         'netsh advfirewall firewall set rule group="Compartir archivos e impresoras" new enable=yes',
         'netsh advfirewall firewall set rule group="Remote Administration" new enable=yes',
-        'netsh advfirewall firewall set rule group="Administracion remota" new enable=yes'
+        'netsh advfirewall firewall set rule group="Administracion remota" new enable=yes',
+        'reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f'
     )
     $cmdFirewall = $cmds -join " & "
     $cmdPS = "powershell.exe -NoProfile -Command `"try { Enable-PSRemoting -SkipNetworkProfileCheck -Force } catch {}; try { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force } catch {}`""
@@ -218,6 +219,7 @@ function psHabilitarAdministracionRemota {
                     netsh advfirewall firewall set rule group="Compartir archivos e impresoras" new enable=yes
                     netsh advfirewall firewall set rule group="Remote Administration" new enable=yes
                     netsh advfirewall firewall set rule group="Administracion remota" new enable=yes
+                    reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f
                 }
                 ErrorAction = 'Stop'
             }
@@ -673,6 +675,396 @@ function psGestionarServiciosUpdateRemoto {
     }
 }
 
-#******************************************************** SUB MENU.20 *************************************************************
 #**********************************************************************************************************************************
+# MODULO: INFORMACION DEL USUARIO ACTIVO (LOCAL Y DE DOMINIO)
+#**********************************************************************************************************************************
+
+function psMostrarInformacionUsuarioActivo {
+    <#
+    .SYNOPSIS
+        Consulta y muestra en consola la información del usuario activo (local o de dominio)
+        en un equipo remoto o local, respetando el formato visual y paleta de colores estándar.
+    .PARAMETER TargetIP
+        Dirección IP o Nombre de Equipo (Hostname) a consultar.
+    .PARAMETER Credential
+        Credencial opcional para autenticación en WMI/CIM.
+    .PARAMETER TimeoutMs
+        Tiempo de espera para comprobación de red previa.
+    .PARAMETER ForceRefresh
+        Fuerza la consulta ignorando la caché en memoria de la sesión.
+    .PARAMETER ReturnObject
+        Devuelve el objeto con los datos en lugar de solo imprimirlo.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true, Position=0)]
+        [string]$TargetIP,
+        [Parameter(Mandatory=$false)]
+        [pscredential]$Credential = $null,
+        [Parameter(Mandatory=$false)]
+        [int]$TimeoutMs = 1500,
+        [Parameter(Mandatory=$false)]
+        [switch]$ForceRefresh,
+        [Parameter(Mandatory=$false)]
+        [switch]$ReturnObject
+    )
+
+    if ([string]::IsNullOrWhiteSpace($TargetIP)) {
+        return
+    }
+
+    $cleanTarget = $TargetIP.Trim()
+    $cacheKey = $cleanTarget.ToUpper()
+
+    # Inicializar almacenamiento de caché de sesión si no existe
+    if (-not $global:ActiveUserCache) {
+        $global:ActiveUserCache = @{}
+    }
+
+    # Verificar si tenemos datos en caché válidos (vigencia de 45 segundos)
+    if (-not $ForceRefresh -and $global:ActiveUserCache.ContainsKey($cacheKey)) {
+        $cacheEntry = $global:ActiveUserCache[$cacheKey]
+        if ($cacheEntry -and ((Get-Date) - $cacheEntry.Timestamp).TotalSeconds -lt 45) {
+            $cached = $cacheEntry.Data
+            
+            Write-Host "`n============================================================" -ForegroundColor Cyan
+            Write-Host "                INFORMACION DEL USUARIO ACTIVO              " -ForegroundColor Cyan
+            Write-Host "============================================================" -ForegroundColor Cyan
+            Write-Host ""
+            Write-Host ("{0,-30}" -f "Usuario con Sesion:") -ForegroundColor Cyan -NoNewline
+            Write-Host "$($cached.AccountName)" -ForegroundColor Green
+            Write-Host ("{0,-30}" -f "Nombre Completo:") -ForegroundColor Cyan -NoNewline
+            Write-Host "$($cached.FullName)" -ForegroundColor Yellow
+            Write-Host ("{0,-30}" -f "Tipo de Cuenta:") -ForegroundColor Cyan -NoNewline
+            if ($cached.IsLocal) {
+                Write-Host "$($cached.AccountType)" -ForegroundColor Yellow
+            } else {
+                Write-Host "$($cached.AccountType)" -ForegroundColor Green
+            }
+            Write-Host ("{0,-30}" -f "Ruta de Perfil:") -ForegroundColor Cyan -NoNewline
+            Write-Host "$($cached.ProfilePath)" -ForegroundColor Yellow
+            Write-Host ("{0,-30}" -f "Inicio de Sesion:") -ForegroundColor Cyan -NoNewline
+            Write-Host "$($cached.LogonTime)" -ForegroundColor Gray
+            Write-Host ("{0,-30}" -f "Estado de Sesion:") -ForegroundColor Cyan -NoNewline
+            Write-Host "$($cached.SessionState)" -ForegroundColor Green
+            Write-Host ""
+
+            if ($ReturnObject) {
+                return [PSCustomObject]$cached
+            }
+            return
+        }
+    }
+
+    $isLocalMachine = ($cleanTarget -eq "127.0.0.1") -or 
+                      ($cleanTarget -eq "::1") -or 
+                      ($cleanTarget -eq ".") -or 
+                      ($cleanTarget -eq "localhost") -or 
+                      ($cleanTarget.ToUpper() -eq $env:COMPUTERNAME.ToUpper())
+
+    # 1. Verificación rápida de conectividad en destinos remotos para evitar cuelgues (timeout 600ms)
+    if (-not $isLocalMachine) {
+        $pingOk = $false
+        try {
+            $pingObj = New-Object System.Net.NetworkInformation.Ping
+            $reply = $pingObj.Send($cleanTarget, 600)
+            if ($reply.Status -eq [System.Net.NetworkInformation.IPStatus]::Success) {
+                $pingOk = $true
+            }
+        } catch {}
+
+        # Si ping no responde (posible bloqueo ICMP), probar puertos RPC/SMB (135/445)
+        if (-not $pingOk) {
+            $portOk = $false
+            foreach ($port in @(135, 445)) {
+                try {
+                    $tcp = New-Object System.Net.Sockets.TcpClient
+                    $async = $tcp.BeginConnect($cleanTarget, $port, $null, $null)
+                    if ($async.AsyncWaitHandle.WaitOne(350, $false) -and $tcp.Connected) {
+                        $portOk = $true
+                        $tcp.Close()
+                        break
+                    }
+                    $tcp.Close()
+                } catch {}
+            }
+
+            if (-not $portOk) {
+                Write-Host "`n============================================================" -ForegroundColor Cyan
+                Write-Host "                INFORMACION DEL USUARIO ACTIVO              " -ForegroundColor Cyan
+                Write-Host "============================================================" -ForegroundColor Cyan
+                Write-Host ""
+                Write-Host ("{0,-30}" -f "Usuario con Sesion:") -ForegroundColor Cyan -NoNewline
+                Write-Host "No disponible" -ForegroundColor Gray
+                Write-Host ("{0,-30}" -f "Nombre Completo:") -ForegroundColor Cyan -NoNewline
+                Write-Host "No disponible" -ForegroundColor Gray
+                Write-Host ("{0,-30}" -f "Tipo de Cuenta:") -ForegroundColor Cyan -NoNewline
+                Write-Host "No disponible" -ForegroundColor Gray
+                Write-Host ("{0,-30}" -f "Ruta de Perfil:") -ForegroundColor Cyan -NoNewline
+                Write-Host "No disponible" -ForegroundColor Gray
+                Write-Host ("{0,-30}" -f "Inicio de Sesion:") -ForegroundColor Cyan -NoNewline
+                Write-Host "No disponible" -ForegroundColor Gray
+                Write-Host ("{0,-30}" -f "Estado de Sesion:") -ForegroundColor Cyan -NoNewline
+                Write-Host "Equipo no responde (Offline / Firewall)" -ForegroundColor Yellow
+                Write-Host ""
+                return
+            }
+        }
+    }
+
+    # 2. Resolución de Hostname y Datos de Dominio
+    $targetHost = $cleanTarget
+    try {
+        $entry = [System.Net.Dns]::GetHostEntry($cleanTarget)
+        if ($entry -and $entry.HostName) {
+            $targetHost = $entry.HostName.Split('.')[0]
+        }
+    } catch {}
+
+    $sysCS = $null
+    try {
+        $csParams = @{
+            Class = 'Win32_ComputerSystem'
+            ComputerName = $cleanTarget
+            ErrorAction = 'SilentlyContinue'
+        }
+        if ($Credential) { $csParams['Credential'] = $Credential }
+        $sysCS = Get-WmiObject @csParams
+    } catch {}
+
+    $partOfDomain = if ($sysCS) { $sysCS.PartOfDomain } else { $false }
+    $domainFQDN = if ($sysCS -and $sysCS.Domain) { $sysCS.Domain } else { "" }
+
+    # 3. Detección del Usuario Activo
+    $usuariosActivos = @()
+
+    # Método A: Procesos explorer.exe interactivos vía WMI
+    try {
+        $procParams = @{
+            Class = 'Win32_Process'
+            Filter = "Name='explorer.exe'"
+            ComputerName = $cleanTarget
+            ErrorAction = 'Stop'
+        }
+        if ($Credential) { $procParams['Credential'] = $Credential }
+        $procs = Get-WmiObject @procParams
+
+        if ($procs) {
+            foreach ($p in $procs) {
+                $owner = $p.GetOwner()
+                if ($owner.ReturnValue -eq 0 -and -not [string]::IsNullOrEmpty($owner.User)) {
+                    $fechaLogon = "Sesion activa (Hora no disponible)"
+                    if ($p.CreationDate) {
+                        try {
+                            $fechaLogon = [Management.ManagementDateTimeConverter]::ToDateTime($p.CreationDate).ToString("dd/MM/yyyy HH:mm:ss")
+                        } catch {}
+                    }
+                    $usuariosActivos += [PSCustomObject]@{
+                        Domain    = $owner.Domain
+                        User      = $owner.User
+                        LogonTime = $fechaLogon
+                    }
+                }
+            }
+        }
+    } catch {}
+
+    # Método B: Fallback a Win32_ComputerSystem.UserName
+    if ($usuariosActivos.Count -eq 0 -and $sysCS -and -not [string]::IsNullOrEmpty($sysCS.UserName)) {
+        $parts = $sysCS.UserName.Split('\')
+        $dom = if ($parts.Count -gt 1) { $parts[0] } else { "" }
+        $usr = if ($parts.Count -gt 1) { $parts[1] } else { $parts[0] }
+        $usuariosActivos += [PSCustomObject]@{
+            Domain    = $dom
+            User      = $usr
+            LogonTime = "Sesion activa (Hora no disponible)"
+        }
+    }
+
+    # Método C: Fallback rápido mediante quser
+    if ($usuariosActivos.Count -eq 0) {
+        try {
+            $quserOut = quser /server:$cleanTarget 2>$null
+            if ($quserOut) {
+                foreach ($line in ($quserOut | Select-Object -Skip 1)) {
+                    $cleanLine = $line.Trim()
+                    if ($cleanLine -match '^\>?\s*([a-zA-Z0-9_\-\.]+)\s+.*?(\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2})') {
+                        $usuariosActivos += [PSCustomObject]@{
+                            Domain    = if ($domainFQDN) { $domainFQDN } else { "" }
+                            User      = $Matches[1]
+                            LogonTime = $Matches[2]
+                        }
+                    } elseif ($cleanLine -match '^\>?\s*([a-zA-Z0-9_\-\.]+)') {
+                        $usuariosActivos += [PSCustomObject]@{
+                            Domain    = if ($domainFQDN) { $domainFQDN } else { "" }
+                            User      = $Matches[1]
+                            LogonTime = "Sesion activa (Hora no disponible)"
+                        }
+                    }
+                }
+            }
+        } catch {}
+    }
+
+    # Descartar duplicados manteniendo los únicos
+    $usuariosUnicos = @()
+    $seen = @{}
+    foreach ($u in $usuariosActivos) {
+        $key = "$($u.Domain)\$($u.User)".ToUpper()
+        if (-not $seen.ContainsKey($key)) {
+            $seen[$key] = $true
+            $usuariosUnicos += $u
+        }
+    }
+    $usuariosActivos = $usuariosUnicos
+
+    # 4. Caso: Sin sesión interactiva activa
+    if ($usuariosActivos.Count -eq 0) {
+        Write-Host "`n============================================================" -ForegroundColor Cyan
+        Write-Host "                INFORMACION DEL USUARIO ACTIVO              " -ForegroundColor Cyan
+        Write-Host "============================================================" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host ("{0,-30}" -f "Usuario con Sesion:") -ForegroundColor Cyan -NoNewline
+        Write-Host "Sin sesion activa" -ForegroundColor Yellow
+        Write-Host ("{0,-30}" -f "Nombre Completo:") -ForegroundColor Cyan -NoNewline
+        Write-Host "Ningun usuario interactivo conectado" -ForegroundColor Yellow
+        Write-Host ("{0,-30}" -f "Tipo de Cuenta:") -ForegroundColor Cyan -NoNewline
+        Write-Host "No disponible" -ForegroundColor Gray
+        Write-Host ("{0,-30}" -f "Ruta de Perfil:") -ForegroundColor Cyan -NoNewline
+        Write-Host "No disponible" -ForegroundColor Gray
+        Write-Host ("{0,-30}" -f "Inicio de Sesion:") -ForegroundColor Cyan -NoNewline
+        Write-Host "No disponible" -ForegroundColor Gray
+        Write-Host ("{0,-30}" -f "Estado de Sesion:") -ForegroundColor Cyan -NoNewline
+        Write-Host "Sin sesion activa (Conectado a la red)" -ForegroundColor Yellow
+        Write-Host ""
+        return
+    }
+
+    # 5. Obtener perfiles remotos para resolver Ruta de Perfil
+    $perfilesRemotos = $null
+    try {
+        $profParams = @{
+            Class = 'Win32_UserProfile'
+            ComputerName = $cleanTarget
+            ErrorAction = 'SilentlyContinue'
+        }
+        if ($Credential) { $profParams['Credential'] = $Credential }
+        $perfilesRemotos = Get-WmiObject @profParams
+    } catch {}
+
+    # 6. Procesar y presentar la información de cada usuario activo
+    $lastResultObj = $null
+
+    foreach ($u in $usuariosActivos) {
+        $esLocal = ($u.Domain.ToUpper() -eq $targetHost.ToUpper()) -or 
+                   ($u.Domain -eq ".") -or 
+                   ([string]::IsNullOrEmpty($u.Domain)) -or 
+                   (-not $partOfDomain)
+
+        # Resolución de Nombre Completo
+        $nombreCompleto = ""
+        if (-not $esLocal) {
+            try {
+                $searcher = [adsisearcher]"(sAMAccountName=$($u.User))"
+                $adUser = $searcher.FindOne()
+                if ($adUser -and $adUser.Properties["displayname"]) {
+                    $nombreCompleto = $adUser.Properties["displayname"][0].ToString().Trim()
+                }
+            } catch {}
+        }
+        if ([string]::IsNullOrWhiteSpace($nombreCompleto)) {
+            try {
+                $accParams = @{
+                    Class = 'Win32_UserAccount'
+                    Filter = "Name='$($u.User)' and LocalAccount=True"
+                    ComputerName = $cleanTarget
+                    ErrorAction = 'SilentlyContinue'
+                }
+                if ($Credential) { $accParams['Credential'] = $Credential }
+                $acc = Get-WmiObject @accParams
+                if ($acc -and $acc.FullName) {
+                    $nombreCompleto = $acc.FullName.Trim()
+                }
+            } catch {}
+        }
+        if ([string]::IsNullOrWhiteSpace($nombreCompleto)) {
+            $nombreCompleto = "No especificado / No disponible"
+        }
+
+        # Resolución de Tipo de Cuenta
+        $tipoCuenta = ""
+        if ($esLocal) {
+            $tipoCuenta = "Usuario Local (.\$($u.User))"
+        } else {
+            $nombreDominio = if ($domainFQDN) { $domainFQDN } elseif ($u.Domain) { $u.Domain } else { "Dominio" }
+            $tipoCuenta = "Usuario de Dominio ($nombreDominio)"
+        }
+
+        # Resolución de Ruta de Perfil
+        $rutaPerfil = ""
+        if ($perfilesRemotos) {
+            $perf = $perfilesRemotos | Where-Object { 
+                ($_.LocalPath -like "*\$($u.User)") -or 
+                ($_.Loaded -eq $true -and -not $_.Special) 
+            } | Select-Object -First 1
+            if ($perf -and $perf.LocalPath) {
+                $rutaPerfil = $perf.LocalPath
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($rutaPerfil)) {
+            $rutaPerfil = "C:\Users\$($u.User)"
+        }
+
+        # Formateo de Cuenta
+        $cuentaFormato = if (-not [string]::IsNullOrEmpty($u.Domain)) { "$($u.Domain)\$($u.User)" } else { ".\$($u.User)" }
+
+        # Salida visual fiel a la imagen
+        Write-Host "`n============================================================" -ForegroundColor Cyan
+        Write-Host "                INFORMACION DEL USUARIO ACTIVO              " -ForegroundColor Cyan
+        Write-Host "============================================================" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host ("{0,-30}" -f "Usuario con Sesion:") -ForegroundColor Cyan -NoNewline
+        Write-Host "$cuentaFormato" -ForegroundColor Green
+        Write-Host ("{0,-30}" -f "Nombre Completo:") -ForegroundColor Cyan -NoNewline
+        Write-Host "$nombreCompleto" -ForegroundColor Yellow
+        Write-Host ("{0,-30}" -f "Tipo de Cuenta:") -ForegroundColor Cyan -NoNewline
+        if ($esLocal) {
+            Write-Host "$tipoCuenta" -ForegroundColor Yellow
+        } else {
+            Write-Host "$tipoCuenta" -ForegroundColor Green
+        }
+        Write-Host ("{0,-30}" -f "Ruta de Perfil:") -ForegroundColor Cyan -NoNewline
+        Write-Host "$rutaPerfil" -ForegroundColor Yellow
+        Write-Host ("{0,-30}" -f "Inicio de Sesion:") -ForegroundColor Cyan -NoNewline
+        Write-Host "$($u.LogonTime)" -ForegroundColor Gray
+        Write-Host ("{0,-30}" -f "Estado de Sesion:") -ForegroundColor Cyan -NoNewline
+        Write-Host "Activa (Conectado)" -ForegroundColor Green
+        Write-Host ""
+
+        $lastResultObj = [PSCustomObject]@{
+            AccountName  = $cuentaFormato
+            FullName     = $nombreCompleto
+            AccountType  = $tipoCuenta
+            ProfilePath  = $rutaPerfil
+            LogonTime    = $u.LogonTime
+            SessionState = "Activa (Conectado)"
+            IsLocal      = $esLocal
+            Domain       = $u.Domain
+            User         = $u.User
+        }
+
+        # Almacenar en caché de sesión
+        $global:ActiveUserCache[$cacheKey] = @{
+            Timestamp = Get-Date
+            Data      = $lastResultObj
+        }
+    }
+
+    if ($ReturnObject) {
+        return $lastResultObj
+    }
+}
+
+# Alias modular para compatibilidad con convenciones alternativas
+Set-Alias -Name Show-ActiveUserSessionInfo -Value psMostrarInformacionUsuarioActivo -ErrorAction SilentlyContinue
 
