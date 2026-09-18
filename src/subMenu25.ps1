@@ -96,6 +96,1350 @@ function psSubMenu25 {
         } catch {}
     }
 
+    function Invoke-InstalarRSATLocal {
+        cabecera
+        menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: 11.3"
+        Write-Host "`n--- INSTALACION DE COMPONENTES RSAT LOCALES ---" -ForegroundColor Cyan
+
+        $isAdmin = Test-IsProcessAdmin
+        if (-not $isAdmin) {
+            Write-Host "`n[ERROR] La instalacion de componentes RSAT requiere privilegios de Administrador (Token Elevado)." -ForegroundColor Red
+            Write-Host "Por favor ejecute la consola con 'Ejecutar como Administrador' para realizar esta accion." -ForegroundColor Yellow
+            return
+        }
+
+        try {
+            # Asegurar servicios previos necesarios para Features on Demand
+            $preReqServices = @("wuauserv", "bits", "cryptsvc", "TrustedInstaller")
+            foreach ($s in $preReqServices) {
+                try {
+                    $svc = Get-Service -Name $s -ErrorAction SilentlyContinue
+                    if ($svc) {
+                        if ($svc.StartType -eq "Disabled") {
+                            Set-Service -Name $s -StartupType Manual -ErrorAction SilentlyContinue
+                        }
+                        if ($svc.Status -ne "Running") {
+                            Start-Service -Name $s -ErrorAction SilentlyContinue
+                        }
+                    }
+                } catch {}
+            }
+
+            # Importar explícitamente Dism
+            Import-Module -Name Dism -ErrorAction SilentlyContinue
+
+            if (-not (Get-Command -Name Get-WindowsCapability -ErrorAction SilentlyContinue)) {
+                throw "El cmdlet 'Get-WindowsCapability' no esta disponible en este equipo."
+            }
+
+            Write-Host "Consultando componentes RSAT pendientes de instalacion..." -ForegroundColor Gray
+            $capabilities = Get-WindowsCapability -Online -ErrorAction Stop | Where-Object { $_.Name -like "Rsat.*" -and $_.State -eq "NotPresent" }
+            if (-not $capabilities -or $capabilities.Count -eq 0) {
+                Write-Host "[OK] Todos los componentes de RSAT ya estan instalados en este equipo." -ForegroundColor Green
+                return
+            }
+
+            Write-Host "Se encontraron $($capabilities.Count) componentes disponibles para instalar." -ForegroundColor Cyan
+            
+            # Bypass temporal de WSUS si aplica localmente
+            $regPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
+            $wsusBypassed = $false
+            $originalUseWUServer = $null
+            
+            if (Test-Path $regPath) {
+                $val = Get-ItemProperty -Path $regPath -Name "UseWUServer" -ErrorAction SilentlyContinue
+                if ($val -and $val.UseWUServer -eq 1) {
+                    Write-Host "Detectado WSUS activo. Desactivando temporalmente para descargar directamente de Windows Update..." -ForegroundColor Yellow
+                    $originalUseWUServer = 1
+                    Set-ItemProperty -Path $regPath -Name "UseWUServer" -Value 0 -Force -ErrorAction SilentlyContinue
+                    Restart-Service -Name "wuauserv" -Force -ErrorAction SilentlyContinue
+                    $wsusBypassed = $true
+                }
+            }
+
+            try {
+                foreach ($cap in $capabilities) {
+                    Write-Host "Instalando $($cap.Name)..." -ForegroundColor Yellow
+                    try {
+                        Add-WindowsCapability -Online -Name $cap.Name -ErrorAction Stop | Out-Null
+                        Write-Host "Instalado con exito: $($cap.Name)" -ForegroundColor Green
+                    }
+                    catch {
+                        Write-Host "ERROR al instalar $($cap.Name): $($_.Exception.Message)" -ForegroundColor Red
+                    }
+                }
+            }
+            finally {
+                # Restaurar configuración original de WSUS
+                if ($wsusBypassed -and $originalUseWUServer -ne $null) {
+                    Write-Host "Restaurando configuracion original de WSUS..." -ForegroundColor Gray
+                    Set-ItemProperty -Path $regPath -Name "UseWUServer" -Value $originalUseWUServer -Force -ErrorAction SilentlyContinue
+                    Restart-Service -Name "wuauserv" -Force -ErrorAction SilentlyContinue
+                }
+            }
+            Write-Host "`n[EXITO] Proceso de instalacion de componentes RSAT completado." -ForegroundColor Green
+        }
+        catch {
+            Write-Host "`nError al instalar componentes RSAT localmente: $($_.Exception.Message)" -ForegroundColor Red
+        }
+    }
+
+    function Invoke-HabilitarServiciosRSATLocal {
+        cabecera
+        menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: 11.1"
+        Write-Host "`n==========================================================================" -ForegroundColor Cyan
+        Write-Host "       HABILITACION Y CONFIGURACION DE SERVICIOS RSAT (PC LOCAL)          " -ForegroundColor White -BackgroundColor DarkBlue
+        Write-Host "==========================================================================" -ForegroundColor Cyan
+
+        $isAdmin = Test-IsProcessAdmin
+        $modoAuditoria = $false
+
+        if (-not $isAdmin) {
+            Write-Host "`n[AVISO DE PRIVILEGIOS DE ADMINISTRADOR]" -ForegroundColor Yellow
+            Write-Host "El proceso actual se esta ejecutando como USUARIO ESTANDAR (No Elevado)." -ForegroundColor White
+            Write-Host "Para iniciar servicios del sistema, configurar el Firewall y WinRM," -ForegroundColor Gray
+            Write-Host "se requieren privilegios de Administrador local (Token Elevado)." -ForegroundColor Gray
+            Write-Host ""
+            Write-Host "  [1] Auto-elevar con UAC (Abrir consola como Administrador)" -ForegroundColor Cyan
+            Write-Host "  [2] Proporcionar credenciales de Administrador (Dominio / Local)" -ForegroundColor Cyan
+            Write-Host "  [3] Continuar en Modo AUDITORIA / DIAGNOSTICO (Solo Lectura)" -ForegroundColor Gray
+            Write-Host "  [0] Cancelar y regresar al menu" -ForegroundColor Yellow
+            Write-Host ""
+
+            $opEle = Read-Host "Seleccione una alternativa [3]"
+            if ([string]::IsNullOrWhiteSpace($opEle)) { $opEle = "3" }
+
+            switch ($opEle.Trim()) {
+                "1" {
+                    $scriptFile = if ($env:SCRIPT_PATH -and (Test-Path $env:SCRIPT_PATH)) { 
+                        $env:SCRIPT_PATH 
+                    } elseif (Test-Path "E:\shellWil\ShellSW.bat") { 
+                        "E:\shellWil\ShellSW.bat" 
+                    } else { 
+                        Join-Path $PSScriptRoot "..\ShellSW.bat" 
+                    }
+
+                    Write-Host "`n[*] Solicitando elevacion UAC de Windows..." -ForegroundColor Cyan
+                    try {
+                        Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$scriptFile`"" -Verb RunAs -ErrorAction Stop
+                        Write-Host "[OK] Solicitud de elevacion enviada. Se abrira una nueva consola con privilegios." -ForegroundColor Green
+                        return
+                    } catch {
+                        Write-Host "[-] Elevacion cancelada o rechazada: $($_.Exception.Message)" -ForegroundColor Yellow
+                        Write-Host "Continuando en Modo Auditoria..." -ForegroundColor Gray
+                        $modoAuditoria = $true
+                    }
+                }
+                "2" {
+                    Write-Host "`nIngrese credenciales con permisos de Administrador (ej: DOMINIO\Usuario o .\Administrador):" -ForegroundColor Cyan
+                    $admCred = Get-Credential
+                    if ($admCred) {
+                        Write-Host "[*] Credenciales recibidas para $($admCred.UserName)." -ForegroundColor Green
+                        Write-Host "[*] Iniciando proceso elevado con credenciales administrativas..." -ForegroundColor Cyan
+                        try {
+                            $scriptFile = if ($env:SCRIPT_PATH -and (Test-Path $env:SCRIPT_PATH)) { $env:SCRIPT_PATH } else { "E:\shellWil\ShellSW.bat" }
+                            Start-Process -FilePath "powershell.exe" -Credential $admCred -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"& { (Get-Content '$scriptFile') | iex; subMenu25 }`"" -ErrorAction Stop
+                            Write-Host "[OK] Proceso iniciado con las credenciales suministradas." -ForegroundColor Green
+                            return
+                        } catch {
+                            Write-Host "[-] No se pudo iniciar el proceso delegado: $($_.Exception.Message)" -ForegroundColor Yellow
+                            Write-Host "Continuando en Modo Auditoria..." -ForegroundColor Gray
+                            $modoAuditoria = $true
+                        }
+                    } else {
+                        Write-Host "Operacion cancelada por el usuario." -ForegroundColor Yellow
+                        return
+                    }
+                }
+                "3" {
+                    Write-Host "`n[*] Continuando en Modo Auditoria (Solo Lectura)..." -ForegroundColor Yellow
+                    $modoAuditoria = $true
+                }
+                "0" {
+                    Write-Host "Operacion cancelada." -ForegroundColor Yellow
+                    return
+                }
+                default {
+                    Write-Host "Opcion no reconocida. Continuando en Modo Auditoria..." -ForegroundColor Yellow
+                    $modoAuditoria = $true
+                }
+            }
+        }
+
+        # -------------------------------------------------------------------------
+        # FASE 1: DIRECTIVA DE EJECUCION DE SCRIPTS (Manejo inteligente de GPO)
+        # -------------------------------------------------------------------------
+        Write-Host "`n--- [1/5] DIRECTIVA DE EJECUCION DE SCRIPTS ---" -ForegroundColor Yellow
+        try {
+            $polList = Get-ExecutionPolicy -List
+            $mPol = ($polList | Where-Object { $_.Scope -eq 'MachinePolicy' }).ExecutionPolicy
+            $uPol = ($polList | Where-Object { $_.Scope -eq 'UserPolicy' }).ExecutionPolicy
+            $hasGpo = ($mPol -ne 'Undefined' -or $uPol -ne 'Undefined')
+
+            if ($hasGpo) {
+                $gpoName = if ($mPol -ne 'Undefined') { "MachinePolicy: $mPol" } else { "UserPolicy: $uPol" }
+                Write-Host "[INFO] Directiva de Dominio (GPO) detectada activa ($gpoName)." -ForegroundColor Cyan
+                Write-Host "[*] Aplicando ambito 'Process' (Bypass) para garantizar ejecucion sin alterar GPO..." -ForegroundColor Gray
+                Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force -ErrorAction SilentlyContinue
+                Write-Host "[OK] Politica temporal 'Bypass' aplicada con exito a este proceso (GPO respetada)." -ForegroundColor Green
+            }
+            else {
+                $effectivePol = Get-ExecutionPolicy
+                if ($effectivePol -in @('RemoteSigned', 'Unrestricted', 'Bypass')) {
+                    Write-Host "[OK] Directiva efectiva actual ya permite ejecucion de scripts: $effectivePol" -ForegroundColor Green
+                }
+                else {
+                    if ($isAdmin -and -not $modoAuditoria) {
+                        try {
+                            Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force -ErrorAction Stop
+                            Write-Host "[OK] Directiva establecida a RemoteSigned para LocalMachine." -ForegroundColor Green
+                        } catch {
+                            try {
+                                Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force -ErrorAction Stop
+                                Write-Host "[OK] Directiva establecida a RemoteSigned para CurrentUser." -ForegroundColor Green
+                            } catch {
+                                Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force -ErrorAction SilentlyContinue
+                                Write-Host "[OK] Directiva establecida a Bypass para el proceso actual." -ForegroundColor Green
+                            }
+                        }
+                    } else {
+                        Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force -ErrorAction SilentlyContinue
+                        Write-Host "[OK] Directiva establecida a Bypass para el proceso actual." -ForegroundColor Green
+                    }
+                }
+            }
+        } catch {
+            Write-Host "[-] Aviso en directiva de ejecucion: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+
+        # -------------------------------------------------------------------------
+        # FASE 2: SERVICIOS DEL SISTEMA PARA RSAT Y ADMINISTRACION
+        # -------------------------------------------------------------------------
+        Write-Host "`n--- [2/5] SERVICIOS DEL SISTEMA PARA RSAT ---" -ForegroundColor Yellow
+        $rsatServices = @(
+            @{ Name = "WinRM"; Display = "Administracion remota de Windows (WinRM)"; DesiredMode = "Automatic"; Required = $true },
+            @{ Name = "RemoteRegistry"; Display = "Registro remoto (RemoteRegistry)"; DesiredMode = "Manual"; Required = $false },
+            @{ Name = "LanmanWorkstation"; Display = "Estacion de trabajo (LanmanWorkstation / SMB)"; DesiredMode = "Automatic"; Required = $true },
+            @{ Name = "LanmanServer"; Display = "Servidor (LanmanServer / Comparticion)"; DesiredMode = "Automatic"; Required = $false },
+            @{ Name = "RpcSs"; Display = "Llamada a procedimiento remoto (RPC)"; DesiredMode = "Automatic"; Required = $true },
+            @{ Name = "wuauserv"; Display = "Windows Update (Descarga/FOD de componentes RSAT)"; DesiredMode = "Manual"; Required = $false }
+        )
+
+        foreach ($s in $rsatServices) {
+            $svcName = $s.Name
+            $svcDisp = $s.Display
+            $svc = Get-Service -Name $svcName -ErrorAction SilentlyContinue
+
+            if (-not $svc) {
+                Write-Host "[-] Servicio $svcDisp no encontrado en este sistema." -ForegroundColor DarkYellow
+                continue
+            }
+
+            $currentStatus = $svc.Status
+            $startType = $svc.StartType
+
+            if ($isAdmin -and -not $modoAuditoria) {
+                if ($startType -eq "Disabled") {
+                    try {
+                        Set-Service -Name $svcName -StartupType $s.DesiredMode -ErrorAction SilentlyContinue
+                        Write-Host "[*] $($svcName): Modo de inicio cambiado de Disabled a $($s.DesiredMode)." -ForegroundColor Gray
+                    } catch {}
+                }
+
+                if ($currentStatus -ne "Running" -and ($s.Required -or $svcName -eq "RemoteRegistry")) {
+                    try {
+                        Write-Host "[*] Iniciando servicio $($svcName)..." -ForegroundColor Gray
+                        Start-Service -Name $svcName -ErrorAction Stop
+                        $currentStatus = "Running"
+                        Write-Host "[OK] $($svcDisp): INICIADO correctamente." -ForegroundColor Green
+                    } catch {
+                        Write-Host "[-] No se pudo iniciar $($svcName): $($_.Exception.Message)" -ForegroundColor Yellow
+                    }
+                } else {
+                    $color = if ($currentStatus -eq "Running") { "Green" } else { "Gray" }
+                    Write-Host "[OK] $($svcDisp): $currentStatus (Inicio: $startType)" -ForegroundColor $color
+                }
+            } else {
+                $color = if ($currentStatus -eq "Running") { "Green" } else { "Yellow" }
+                Write-Host "    $($svcDisp): $currentStatus (Inicio: $startType)" -ForegroundColor $color
+            }
+        }
+
+        # -------------------------------------------------------------------------
+        # FASE 3: WINRM (PSREMOTING) Y TRUSTEDHOSTS
+        # -------------------------------------------------------------------------
+        Write-Host "`n--- [3/5] WINRM (PSREMOTING) Y TRUSTEDHOSTS ---" -ForegroundColor Yellow
+        if ($isAdmin -and -not $modoAuditoria) {
+            try {
+                Write-Host "[*] Verificando y habilitando WinRM (Enable-PSRemoting)..." -ForegroundColor Gray
+                Enable-PSRemoting -SkipNetworkProfileCheck -Force -ErrorAction Stop
+                Write-Host "[OK] PSRemoting habilitado localmente." -ForegroundColor Green
+            } catch {
+                Write-Host "[-] Aviso en Enable-PSRemoting: $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+
+            try {
+                $thVal = (Get-Item WSMan:\localhost\Client\TrustedHosts -ErrorAction SilentlyContinue).Value
+                if ([string]::IsNullOrWhiteSpace($thVal) -or $thVal -ne "*") {
+                    Set-Item WSMan:\localhost\Client\TrustedHosts -Value "*" -Force -ErrorAction SilentlyContinue
+                    Write-Host "[OK] TrustedHosts configurado a '*' (Permite gestion remota en cualquier host)." -ForegroundColor Green
+                } else {
+                    Write-Host "[OK] TrustedHosts ya configurado a '*'." -ForegroundColor Green
+                }
+            } catch {
+                Write-Host "[-] Aviso al configurar TrustedHosts: $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+        } else {
+            $thVal = (Get-Item WSMan:\localhost\Client\TrustedHosts -ErrorAction SilentlyContinue).Value
+            Write-Host "    TrustedHosts actual: $(if ($thVal) { $thVal } else { 'No configurado o restringido' })" -ForegroundColor Gray
+        }
+
+        # -------------------------------------------------------------------------
+        # FASE 4: REGLAS DE FIREWALL PARA ADMINISTRACION
+        # -------------------------------------------------------------------------
+        Write-Host "`n--- [4/5] REGLAS DE FIREWALL DE WINDOWS ---" -ForegroundColor Yellow
+        if ($isAdmin -and -not $modoAuditoria) {
+            $fwGroups = @(
+                "Windows Remote Management",
+                "Administracion remota de Windows",
+                "Windows Management Instrumentation (WMI)",
+                "Instrumentacion de administracion de Windows (WMI)",
+                "File and Printer Sharing",
+                "Compartir archivos e impresoras"
+            )
+            foreach ($grp in $fwGroups) {
+                try {
+                    netsh advfirewall firewall set rule group="$grp" new enable=yes 2>$null | Out-Null
+                } catch {}
+            }
+            Write-Host "[OK] Reglas de Firewall habilitadas para WinRM, WMI y Comparticion de archivos." -ForegroundColor Green
+        } else {
+            Write-Host "[*] Modo diagnostico: No se modificaron reglas de firewall (requiere permisos de administrador)." -ForegroundColor Gray
+        }
+
+        # -------------------------------------------------------------------------
+        # FASE 5: AUDITORIA DE COMPONENTES Y MODULOS RSAT LOCALES
+        # -------------------------------------------------------------------------
+        Write-Host "`n--- [5/5] AUDITORIA DE HERRAMIENTAS RSAT EN ESTA PC ---" -ForegroundColor Yellow
+
+        $rsatModulos = @(
+            @{ Modulo = "ActiveDirectory"; Desc = "Active Directory (Usuarios, Equipos, PowerShell)"; MSC = "dsa.msc" },
+            @{ Modulo = "DnsServer"; Desc = "Herramientas de Servidor DNS"; MSC = "dnsmgmt.msc" },
+            @{ Modulo = "DhcpServer"; Desc = "Herramientas de Servidor DHCP"; MSC = "dhcpmgmt.msc" },
+            @{ Modulo = "GroupPolicy"; Desc = "Administracion de Directivas de Grupo (GPMC)"; MSC = "gpmc.msc" },
+            @{ Modulo = "ServerManager"; Desc = "Administrador del Servidor (Server Manager)"; MSC = "ServerManager.exe" }
+        )
+
+        $hayFaltantes = $false
+        Write-Host ("{0,-20} {1,-14} {2,-35}" -f "COMPONENTE", "ESTADO", "DESCRIPCION") -ForegroundColor DarkGray
+        Write-Host ("{0,-20} {1,-14} {2,-35}" -f "----------", "------", "-----------") -ForegroundColor DarkGray
+
+        foreach ($rm in $rsatModulos) {
+            $modAvailable = [bool](Get-Module -ListAvailable -Name $rm.Modulo -ErrorAction SilentlyContinue)
+            $mscAvailable = Test-Path "$env:SystemRoot\System32\$($rm.MSC)"
+            $instalado = ($modAvailable -or $mscAvailable)
+
+            if ($instalado) {
+                Write-Host ("{0,-20} " -f $rm.Modulo) -NoNewline
+                Write-Host "[INSTALADO]   " -ForegroundColor Green -NoNewline
+                Write-Host $rm.Desc -ForegroundColor Gray
+            } else {
+                $hayFaltantes = $true
+                Write-Host ("{0,-20} " -f $rm.Modulo) -NoNewline
+                Write-Host "[NO PRESENTE] " -ForegroundColor Yellow -NoNewline
+                Write-Host $rm.Desc -ForegroundColor Gray
+            }
+        }
+
+        Write-Host "`n--------------------------------------------------------------------------" -ForegroundColor Cyan
+        if ($hayFaltantes) {
+            Write-Host "[AVISO] Se detectaron herramientas RSAT pendientes de instalacion en esta PC." -ForegroundColor Yellow
+            Write-Host "Puede instalarlas utilizando la opcion 11.3 de este mismo submenu." -ForegroundColor Cyan
+            $instDirecta = Read-Host "¿Desea iniciar la instalacion de los componentes RSAT ahora? (S/N) [N]"
+            if ($instDirecta -and $instDirecta.Trim().ToUpper() -eq "S") {
+                if (-not $isAdmin) {
+                    Write-Host "[-] La instalacion de RSAT requiere privilegios de Administrador. Ejecute la opcion como Administrador." -ForegroundColor Red
+                } else {
+                    Write-Host "`n[*] Redirigiendo a la instalacion de componentes RSAT (Opcion 11.3)..." -ForegroundColor Cyan
+                    Invoke-InstalarRSATLocal
+                }
+            }
+        } else {
+            Write-Host "[TODO OK] Todos los componentes RSAT principales y servicios se encuentran activos." -ForegroundColor Green
+        }
+        Write-Host "==========================================================================" -ForegroundColor Cyan
+    }
+
+    function Invoke-HabilitarServiciosRSATRemoto {
+        cabecera
+        menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: 12.1"
+        Write-Host "`n==========================================================================" -ForegroundColor Cyan
+        Write-Host "       HABILITACION Y CONFIGURACION DE SERVICIOS RSAT (PC REMOTA)         " -ForegroundColor White -BackgroundColor DarkBlue
+        Write-Host "==========================================================================" -ForegroundColor Cyan
+
+        $targetInput = Get-StandardIPPrompt -Mensaje "Ingrese la IP completa (ej: 192.168.176.50) o los 2 ultimos octetos"
+        if ([string]::IsNullOrWhiteSpace($targetInput)) {
+            Write-Host "Operacion cancelada." -ForegroundColor Red
+            return
+        }
+
+        # 1. Resolver Hostname y evaluar conectividad
+        $targetMachine = $targetInput
+        $ipRemota = $targetInput
+        Write-Host "`n[*] Verificando enlace de red con $targetInput (Ping)..." -ForegroundColor Yellow
+        $pingOk = Test-Connection -ComputerName $targetInput -Count 1 -Quiet -ErrorAction SilentlyContinue
+        if ($pingOk) {
+            Write-Host "[+] Ping respondido por $targetInput." -ForegroundColor Green
+        } else {
+            Write-Host "[-] El equipo no responde a Ping (posible firewall o equipo apagado)." -ForegroundColor Yellow
+        }
+
+        try {
+            $dns = [System.Net.Dns]::GetHostEntry($targetInput)
+            if ($dns -and $dns.HostName) {
+                $targetMachine = $dns.HostName.Split('.')[0]
+                Write-Host "[+] Hostname resuelto via DNS: $targetMachine" -ForegroundColor Green
+            }
+        } catch {
+            try {
+                $nbt = nbtstat -a $targetInput
+                $linea = $nbt | Where-Object { $_ -match "<\x00>.*UNIQUE" } | Select-Object -First 1
+                if ($linea -and $linea -match "^\s*([A-Za-z0-9\-]+)") {
+                    $targetMachine = $Matches[1].Trim()
+                    Write-Host "[+] Hostname resuelto via NetBIOS: $targetMachine" -ForegroundColor Green
+                }
+            } catch {}
+        }
+
+        # 2. Selección de Credenciales Administrativas
+        Write-Host "`n--- AUTENTICACION ADMINISTRATIVA REMOTA ---" -ForegroundColor Yellow
+        Write-Host " [1] Usuario actual de Windows (Inicio de sesion unico / Integrado)"
+        Write-Host " [2] Usuario de Dominio (ej: DOMINIO\Usuario)"
+        Write-Host " [3] Usuario Local de la PC Remota (ej: .\Administrador)"
+        $authOpt = Read-Host "Seleccione una opcion [1-3] (Por defecto: 1)"
+        if ([string]::IsNullOrWhiteSpace($authOpt)) { $authOpt = "1" }
+
+        $cred = $null
+        $usu = ""
+        $claTexto = ""
+        if ($authOpt -eq "2") {
+            $domDefecto = $env:USERDOMAIN
+            $dom = Read-Host "Ingrese Dominio [Presione Enter para '$domDefecto']"
+            if ([string]::IsNullOrWhiteSpace($dom)) { $dom = $domDefecto }
+            $uName = Read-Host "Ingrese nombre de usuario de Dominio"
+            if (-not [string]::IsNullOrWhiteSpace($uName)) {
+                $usu = "$dom\$uName"
+                $cla = Read-Host "Ingrese contrasena" -AsSecureString
+                $cred = New-Object System.Management.Automation.PSCredential ($usu, $cla)
+                $claTexto = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($cla))
+            }
+        } elseif ($authOpt -eq "3") {
+            $uName = Read-Host "Ingrese nombre de usuario local (ej: Administrador)"
+            if (-not [string]::IsNullOrWhiteSpace($uName)) {
+                $usu = if ($uName -match "\\|\@") { $uName } else { ".\$uName" }
+                $cla = Read-Host "Ingrese contrasena local" -AsSecureString
+                $cred = New-Object System.Management.Automation.PSCredential ($usu, $cla)
+                $claTexto = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($cla))
+            }
+        }
+
+        # 3. Comprobación de puertos de administración
+        $port445 = $false
+        $port5985 = $false
+        try {
+            $tSMB = New-Object System.Net.Sockets.TcpClient
+            $cSMB = $tSMB.BeginConnect($targetMachine, 445, $null, $null)
+            if ($cSMB.AsyncWaitHandle.WaitOne(1000, $false)) { $tSMB.EndConnect($cSMB); $port445 = $true }
+            $tSMB.Close()
+        } catch {}
+        try {
+            $tRM = New-Object System.Net.Sockets.TcpClient
+            $cRM = $tRM.BeginConnect($targetMachine, 5985, $null, $null)
+            if ($cRM.AsyncWaitHandle.WaitOne(1000, $false)) { $tRM.EndConnect($cRM); $port5985 = $true }
+            $tRM.Close()
+        } catch {}
+
+        Write-Host "  Puerto 445 (SMB)   : $(if ($port445) { '[ABIERTO]' } else { '[CERRADO]' })" -ForegroundColor $(if ($port445) { 'Green' } else { 'Yellow' })
+        Write-Host "  Puerto 5985 (WinRM): $(if ($port5985) { '[ABIERTO]' } else { '[CERRADO]' })" -ForegroundColor $(if ($port5985) { 'Green' } else { 'Yellow' })
+
+        # 4. Script de configuración integral en la PC Remota
+        $setupRemoteScript = @'
+try {
+    # A. Habilitar WinRM y PSRemoting
+    try {
+        Enable-PSRemoting -SkipNetworkProfileCheck -Force -ErrorAction SilentlyContinue
+    } catch {}
+
+    # B. Configurar servicios requeridos para RSAT
+    $svcs = @(
+        @{ Name = "WinRM"; Mode = "Automatic" },
+        @{ Name = "RemoteRegistry"; Mode = "Manual" },
+        @{ Name = "wuauserv"; Mode = "Manual" },
+        @{ Name = "bits"; Mode = "Manual" },
+        @{ Name = "cryptsvc"; Mode = "Automatic" },
+        @{ Name = "TrustedInstaller"; Mode = "Manual" },
+        @{ Name = "LanmanWorkstation"; Mode = "Automatic" },
+        @{ Name = "LanmanServer"; Mode = "Automatic" },
+        @{ Name = "RpcSs"; Mode = "Automatic" }
+    )
+    foreach ($item in $svcs) {
+        $n = $item.Name
+        try {
+            $svc = Get-Service -Name $n -ErrorAction SilentlyContinue
+            if ($svc) {
+                if ($svc.StartType -eq "Disabled") {
+                    Set-Service -Name $n -StartupType $item.Mode -ErrorAction SilentlyContinue
+                }
+                if ($svc.Status -ne "Running" -and $n -in @("WinRM","RemoteRegistry","wuauserv","bits","cryptsvc","LanmanWorkstation","LanmanServer","RpcSs")) {
+                    Start-Service -Name $n -ErrorAction SilentlyContinue
+                }
+            }
+        } catch {}
+    }
+
+    # C. Reglas de Firewall
+    $groups = @(
+        "Windows Remote Management",
+        "Administracion remota de Windows",
+        "Windows Management Instrumentation (WMI)",
+        "Instrumentacion de administracion de Windows (WMI)",
+        "File and Printer Sharing",
+        "Compartir archivos e impresoras",
+        "Remote Administration",
+        "Administracion remota"
+    )
+    foreach ($g in $groups) {
+        netsh advfirewall firewall set rule group="$g" new enable=yes 2>$null | Out-Null
+    }
+
+    # D. Directiva de Servicing para Windows Update (Bypass WSUS para FOD)
+    $servReg = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Servicing"
+    if (-not (Test-Path $servReg)) { New-Item -Path $servReg -Force | Out-Null }
+    Set-ItemProperty -Path $servReg -Name "RepairContentServerSource" -Value 2 -Force -ErrorAction SilentlyContinue
+    Set-ItemProperty -Path $servReg -Name "UseWindowsUpdate" -Value 1 -Force -ErrorAction SilentlyContinue
+
+    reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f 2>$null | Out-Null
+
+    # E. ExecutionPolicy
+    try {
+        Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force -ErrorAction SilentlyContinue
+    } catch {}
+
+    return "OK"
+} catch {
+    return $_.Exception.Message
+}
+'@
+
+        Write-Host "`n[*] Aplicando configuracion de servicios RSAT en $targetMachine..." -ForegroundColor Cyan
+        $metodoExitoso = ""
+
+        # Método A: WinRM
+        if ($port5985) {
+            try {
+                Write-Host "[*] Intentando configuracion via WinRM..." -ForegroundColor Gray
+                $sb = [ScriptBlock]::Create($setupRemoteScript)
+                $res = if ($cred) {
+                    Invoke-Command -ComputerName $targetMachine -Credential $cred -ScriptBlock $sb -ErrorAction Stop
+                } else {
+                    Invoke-Command -ComputerName $targetMachine -ScriptBlock $sb -ErrorAction Stop
+                }
+                if ($res -eq "OK") { $metodoExitoso = "WinRM" }
+            } catch {
+                Write-Host "[-] WinRM aviso: $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+        }
+
+        # Método B: WMI
+        if (-not $metodoExitoso) {
+            try {
+                Write-Host "[*] Intentando configuracion via WMI..." -ForegroundColor Gray
+                $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($setupRemoteScript))
+                $cmdLine = "powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"
+                $procClass = if ($cred) {
+                    Get-WmiObject -List -ComputerName $targetMachine -Credential $cred -Class Win32_Process -ErrorAction Stop
+                } else {
+                    Get-WmiObject -List -ComputerName $targetMachine -Class Win32_Process -ErrorAction Stop
+                }
+                if ($procClass) {
+                    $r = $procClass.Create($cmdLine)
+                    if ($r.ReturnValue -eq 0) {
+                        $metodoExitoso = "WMI"
+                        Write-Host "[OK] Proceso iniciado via WMI. Esperando 5 segundos..." -ForegroundColor Green
+                        Start-Sleep -Seconds 5
+                    }
+                }
+            } catch {
+                Write-Host "[-] WMI aviso: $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+        }
+
+        # Método C: PsExec
+        if (-not $metodoExitoso -and $port445) {
+            $psexecPath = "C:\PSTools\PsExec.exe"
+            if (-not (Test-Path $psexecPath)) {
+                $where = Get-Command psexec -ErrorAction SilentlyContinue
+                if ($where) { $psexecPath = $where.Definition }
+            }
+            if (Test-Path $psexecPath) {
+                Write-Host "[*] Intentando configuracion via PsExec..." -ForegroundColor Gray
+                $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($setupRemoteScript))
+                $argBase = "-accepteula -s -h powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"
+                $argExec = if ($usu -ne "") { "\\$targetMachine -u `"$usu`" -p `"$claTexto`" $argBase" } else { "\\$targetMachine $argBase" }
+                $p = Start-Process -FilePath $psexecPath -ArgumentList $argExec -Wait -NoNewWindow -PassThru -ErrorAction SilentlyContinue
+                if ($p -and $p.ExitCode -eq 0) {
+                    $metodoExitoso = "PsExec"
+                }
+            }
+        }
+
+        Write-Host "`n--------------------------------------------------------------------------" -ForegroundColor Cyan
+        if ($metodoExitoso) {
+            Write-Host "[EXITO] Servicios y entorno RSAT habilitados en $targetMachine (Via $metodoExitoso)." -ForegroundColor Green
+            Write-Host "  * WinRM y PSRemoting activos" -ForegroundColor Gray
+            Write-Host "  * Servicios Windows Update, BITS, CryptSvc y TrustedInstaller configurados" -ForegroundColor Gray
+            Write-Host "  * Reglas de Firewall habilitadas para administracion" -ForegroundColor Gray
+            Write-Host "  * Directiva Servicing configurada para descarga directa de FOD" -ForegroundColor Gray
+            Write-Host "`nEl equipo $targetMachine se encuentra PREPARADO para la instalacion (Opcion 12.3)." -ForegroundColor Green
+        } else {
+            Write-Host "[ERROR] No se pudo completar la habilitacion en $targetMachine." -ForegroundColor Red
+            Write-Host "Verifique conectividad, puertos de firewall y credenciales de administrador." -ForegroundColor Yellow
+        }
+        Write-Host "==========================================================================" -ForegroundColor Cyan
+        Write-Host " "
+        Read-Host "Presione ENTER para continuar..."
+    }
+
+    function Invoke-InstalarRSATRemoto {
+        cabecera
+        menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: 12.3"
+        Write-Host "`n==========================================================================" -ForegroundColor Cyan
+        Write-Host "        INSTALACION DE COMPONENTES RSAT EN PC REMOTA                      " -ForegroundColor White -BackgroundColor DarkBlue
+        Write-Host "==========================================================================" -ForegroundColor Cyan
+
+        $targetInput = Get-StandardIPPrompt -Mensaje "Ingrese la IP completa (ej: 192.168.176.131) o Nombre de Equipo"
+        if ([string]::IsNullOrWhiteSpace($targetInput)) {
+            Write-Host "Operacion cancelada." -ForegroundColor Red
+            return
+        }
+
+        # 1. Enlace y Resolucion Canonica de Nombre de Equipo (WMI -> DNS -> NetBIOS)
+        $targetMachine = $targetInput.Trim()
+        $ipRemota = $targetInput.Trim()
+        Write-Host "`n[*] Verificando enlace de red con $targetInput (Ping)..." -ForegroundColor Yellow
+        $pingOk = Test-Connection -ComputerName $targetInput -Count 1 -Quiet -ErrorAction SilentlyContinue
+        if ($pingOk) {
+            Write-Host "[+] Ping respondido por $targetInput." -ForegroundColor Green
+        } else {
+            Write-Host "[-] El equipo no responde a Ping (posible cortafuegos o equipo apagado)." -ForegroundColor Yellow
+        }
+
+        Write-Host "[*] Resolviendo identidad y CSName de $targetInput..." -ForegroundColor Gray
+        try {
+            $sys = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $targetInput -ErrorAction Stop
+            if ($sys -and $sys.CSName) {
+                $targetMachine = $sys.CSName.Trim()
+                Write-Host "[+] Nombre canonico resuelto via WMI: $targetMachine" -ForegroundColor Green
+            }
+        } catch {
+            try {
+                $dns = [System.Net.Dns]::GetHostEntry($targetInput)
+                if ($dns -and $dns.HostName) {
+                    $targetMachine = $dns.HostName.Split('.')[0]
+                    Write-Host "[+] Hostname resuelto via DNS: $targetMachine" -ForegroundColor Green
+                }
+            } catch {
+                try {
+                    $nbt = nbtstat -a $targetInput
+                    $linea = $nbt | Where-Object { $_ -match "<\x00>.*UNIQUE" } | Select-Object -First 1
+                    if ($linea -and $linea -match "^\s*([A-Za-z0-9\-]+)") {
+                        $targetMachine = $Matches[1].Trim()
+                        Write-Host "[+] Hostname resuelto via NetBIOS: $targetMachine" -ForegroundColor Green
+                    }
+                } catch {}
+            }
+        }
+
+        # 2. Diagnostico de Puertos
+        $port445 = $false
+        $port5985 = $false
+        try {
+            $tSMB = New-Object System.Net.Sockets.TcpClient
+            $cSMB = $tSMB.BeginConnect($targetMachine, 445, $null, $null)
+            if ($cSMB.AsyncWaitHandle.WaitOne(1000, $false)) { $tSMB.EndConnect($cSMB); $port445 = $true }
+            $tSMB.Close()
+        } catch {}
+        try {
+            $tRM = New-Object System.Net.Sockets.TcpClient
+            $cRM = $tRM.BeginConnect($targetMachine, 5985, $null, $null)
+            if ($cRM.AsyncWaitHandle.WaitOne(1000, $false)) { $tRM.EndConnect($cRM); $port5985 = $true }
+            $tRM.Close()
+        } catch {}
+
+        Write-Host "  Puerto 445 (SMB)   : $(if ($port445) { '[ABIERTO]' } else { '[CERRADO]' })" -ForegroundColor $(if ($port445) { 'Green' } else { 'Yellow' })
+        Write-Host "  Puerto 5985 (WinRM): $(if ($port5985) { '[ABIERTO]' } else { '[CERRADO]' })" -ForegroundColor $(if ($port5985) { 'Green' } else { 'Yellow' })
+
+        # 3. Autenticacion
+        Write-Host "`n--- OPCIONES DE AUTENTICACION ---" -ForegroundColor Yellow
+        Write-Host " [1] Usuario actual de Windows (Inicio de sesion unico / Integrado)"
+        Write-Host " [2] Usuario de Dominio (ej: DOMINIO\Usuario)"
+        Write-Host " [3] Usuario Local de la PC Remota (ej: .\Administrador)"
+        $authOpt = Read-Host "Seleccione una opcion [1-3] (Por defecto: 1)"
+        if ([string]::IsNullOrWhiteSpace($authOpt)) { $authOpt = "1" }
+
+        $cred = $null
+        $usu = ""
+        $claTexto = ""
+        if ($authOpt -eq "2") {
+            $domDefecto = $env:USERDOMAIN
+            $dom = Read-Host "Ingrese Dominio [Presione Enter para '$domDefecto']"
+            if ([string]::IsNullOrWhiteSpace($dom)) { $dom = $domDefecto }
+            $uName = Read-Host "Ingrese usuario de Dominio"
+            if (-not [string]::IsNullOrWhiteSpace($uName)) {
+                $usu = "$dom\$uName"
+                $cla = Read-Host "Ingrese contrasena" -AsSecureString
+                $cred = New-Object System.Management.Automation.PSCredential ($usu, $cla)
+                $claTexto = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($cla))
+            }
+        } elseif ($authOpt -eq "3") {
+            $uName = Read-Host "Ingrese Administrador Local (ej: Administrador)"
+            if (-not [string]::IsNullOrWhiteSpace($uName)) {
+                $usu = if ($uName -match "\\|\@") { $uName } else { ".\$uName" }
+                $cla = Read-Host "Ingrese contrasena local" -AsSecureString
+                $cred = New-Object System.Management.Automation.PSCredential ($usu, $cla)
+                $claTexto = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($cla))
+            }
+        }
+
+        # Conectar sesion de red administrativa IPC$ localmente si hay credenciales explicitas
+        if ($usu -ne "" -and $claTexto -ne "") {
+            cmd.exe /c "net use \\$targetMachine\IPC$ /user:`"$usu`" `"$claTexto`"" 2>&1 | Out-Null
+        }
+
+        # 4. FASE DE AUDITORIA PREVIA EN VIVO (Verificar que tiene descargado/instalado)
+        Write-Host "`n[*] Consultando catalogo e inventario de herramientas RSAT en $targetMachine..." -ForegroundColor Cyan
+        $remoteCaps = $null
+        if ($port5985) {
+            try {
+                $sbAudit = {
+                    Get-WindowsCapability -Online -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "Rsat.*" } | Select-Object Name, State
+                }
+                if ($cred -ne $null) {
+                    $remoteCaps = Invoke-Command -ComputerName $targetMachine -Credential $cred -ScriptBlock $sbAudit -ErrorAction Stop
+                } else {
+                    $remoteCaps = Invoke-Command -ComputerName $targetMachine -ScriptBlock $sbAudit -ErrorAction Stop
+                }
+            } catch {
+                Write-Host "[-] Aviso en consulta WinRM: $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+        }
+
+        $rsatCatalog = @(
+            @{ Key = "Rsat.ActiveDirectory.DS-LDS.Tools"; Display = "Herramientas de Active Directory DS y LDS (ADUC)" },
+            @{ Key = "Rsat.Dns.Tools"; Display = "Herramientas del Servidor DNS" },
+            @{ Key = "Rsat.DHCP.Tools"; Display = "Herramientas de Administracion de DHCP" },
+            @{ Key = "Rsat.GroupPolicy.Management.Tools"; Display = "Consola de Administracion de Directivas de Grupo (GPMC)" },
+            @{ Key = "Rsat.ServerManager.Tools"; Display = "Consola Administrador del Servidor (Server Manager)" },
+            @{ Key = "Rsat.FileServices.Tools"; Display = "Herramientas de Servicios de Archivos y Almacenamiento" },
+            @{ Key = "Rsat.CertificateServices.Tools"; Display = "Herramientas de Servicios de Certificados (AD CS)" },
+            @{ Key = "Rsat.BitLocker.Recovery.Tools"; Display = "Visor de Recuperacion de Contrasenas de BitLocker" },
+            @{ Key = "Rsat.FailoverCluster.Management.Tools"; Display = "Administrador de Clustered de Conmutacion por Error" },
+            @{ Key = "Rsat.RemoteAccess.Management.Tools"; Display = "Herramientas de Administracion de Acceso Remoto" },
+            @{ Key = "Rsat.RemoteDesktop.Services.Tools"; Display = "Herramientas de Servicios de Escritorio Remoto (RDS)" },
+            @{ Key = "Rsat.VolumeActivation.Tools"; Display = "Herramientas de Activacion por Volumen" },
+            @{ Key = "Rsat.WSUS.Tools"; Display = "Herramientas de Windows Server Update Services (WSUS)" },
+            @{ Key = "Rsat.IPAM.Client.Tools"; Display = "Cliente de Administracion de Direcciones IP (IPAM)" },
+            @{ Key = "Rsat.StorageReplica.Tools"; Display = "Modulo de Replica de Almacenamiento" },
+            @{ Key = "Rsat.Shielded.VM.Tools"; Display = "Herramientas para Maquinas Virtuales Blindadas" }
+        )
+
+        $installedCount = 0
+        $pendingCount = 0
+        $pendingCapsList = @()
+
+        if ($remoteCaps) {
+            Write-Host "`n==========================================================================" -ForegroundColor Cyan
+            Write-Host "       ESTADO ACTUAL DE COMPONENTES RSAT EN: $targetMachine               " -ForegroundColor White -BackgroundColor DarkBlue
+            Write-Host "==========================================================================" -ForegroundColor Cyan
+            foreach ($item in $rsatCatalog) {
+                $capObj = $remoteCaps | Where-Object { $_.Name -like "$($item.Key)*" } | Select-Object -First 1
+                $dispName = $item.Display.PadRight(58)
+                if ($capObj -and ($capObj.State -eq "Installed" -or $capObj.State -eq 4 -or "$($capObj.State)" -match "Installed|4")) {
+                    $installedCount++
+                    Write-Host " [OK] $dispName : " -NoNewline -ForegroundColor Gray
+                    Write-Host "INSTALADO" -ForegroundColor Green
+                } else {
+                    $pendingCount++
+                    $capFullName = if ($capObj) { $capObj.Name } else { "$($item.Key)~~~~0.0.1.0" }
+                    $pendingCapsList += $capFullName
+                    Write-Host " [!]  $dispName : " -NoNewline -ForegroundColor Gray
+                    Write-Host "NO INSTALADO" -ForegroundColor Yellow
+                }
+            }
+            Write-Host "--------------------------------------------------------------------------" -ForegroundColor Cyan
+            Write-Host "  Resumen: $installedCount instaladas | $pendingCount pendientes (Total catalogo: $($remoteCaps.Count))" -ForegroundColor White
+            Write-Host "==========================================================================" -ForegroundColor Cyan
+
+            if ($pendingCount -eq 0) {
+                Write-Host "`n[TODO OK] ¡Todos los componentes de RSAT ya se encuentran instalados en $targetMachine!" -ForegroundColor Green
+                Write-Host "El equipo remoto ya cuenta con el paquete completo de herramientas administrativas." -ForegroundColor Gray
+                Write-Host "`nOpciones disponibles:" -ForegroundColor Yellow
+                Write-Host " [1] Volver al menu principal (Recomendado - No requiere ninguna instalacion)" -ForegroundColor Cyan
+                Write-Host " [2] Forzar reinstalacion / reparacion de componentes RSAT" -ForegroundColor White
+                $optYaInst = Read-Host "Seleccione una opcion [1-2] (Por defecto: 1)"
+                if ([string]::IsNullOrWhiteSpace($optYaInst) -or $optYaInst.Trim() -eq "1") {
+                    Write-Host "`nOperacion finalizada. Regresando al menu principal..." -ForegroundColor Green
+                    Write-Host " "
+                    Read-Host "Presione ENTER para continuar..."
+                    return
+                }
+            }
+        } else {
+            Write-Host "[!] No se pudo obtener el inventario previo en vivo via WinRM. Se continuara con el asistente." -ForegroundColor Yellow
+        }
+
+        # 5. Seleccion de Componentes a Instalar
+        Write-Host "`n--- SELECCION DE COMPONENTES RSAT A INSTALAR ---" -ForegroundColor Yellow
+        if ($pendingCount -gt 0) {
+            Write-Host " [1] Instalar unicamente los $pendingCount componentes PENDIENTES detectados [Recomendado]" -ForegroundColor Cyan
+        } else {
+            Write-Host " [1] Paquete Esencial (Active Directory DS/LDS, DNS, DHCP, GPMC) [Recomendado - Rapido]" -ForegroundColor Cyan
+        }
+        Write-Host " [2] Paquete Esencial de Administracion (AD, DNS, DHCP, GPMC)" -ForegroundColor White
+        Write-Host " [3] Todos los componentes RSAT disponibles (~21)" -ForegroundColor White
+        Write-Host " [4] Personalizado (Ingresar patron, ej: Rsat.ActiveDirectory* o Rsat.Dns*)" -ForegroundColor White
+        $compOpt = Read-Host "Seleccione una opcion [1-4] (Por defecto: 1)"
+        if ([string]::IsNullOrWhiteSpace($compOpt)) { $compOpt = "1" }
+
+        $targetPatterns = @()
+        $criterioLabel = ""
+        if ($compOpt -eq "1" -and $pendingCount -gt 0) {
+            $targetPatterns = $pendingCapsList
+            $criterioLabel = "Componentes Pendientes ($pendingCount)"
+        } elseif ($compOpt -eq "3") {
+            $targetPatterns = @("Rsat.*")
+            $criterioLabel = "Todos los componentes RSAT"
+        } elseif ($compOpt -eq "4") {
+            $customPat = Read-Host "Ingrese el patron a buscar (ej: Rsat.ActiveDirectory*)"
+            $targetPatterns = if ([string]::IsNullOrWhiteSpace($customPat)) { @("Rsat.*") } else { @($customPat.Trim()) }
+            $criterioLabel = "Personalizado ($($targetPatterns -join ', '))"
+        } else {
+            $targetPatterns = @(
+                "Rsat.ActiveDirectory.DS-LDS.Tools*",
+                "Rsat.Dns.Tools*",
+                "Rsat.DHCP.Tools*",
+                "Rsat.GroupPolicy.Management.Tools*"
+            )
+            $criterioLabel = "Paquete Esencial de Administracion"
+        }
+        Write-Host "[*] Criterio de instalacion: $criterioLabel" -ForegroundColor Cyan
+
+        # 6. Seleccion del Origen de Instalacion (Internet / Archivos Locales / Red)
+        Write-Host "`n--- ORIGEN DE ARCHIVOS DE INSTALACION (FOD / RSAT) ---" -ForegroundColor Yellow
+        Write-Host " [1] Microsoft Update por Internet (Descarga directa automatica) [Por defecto]" -ForegroundColor Cyan
+        Write-Host " [2] Carpeta local en la PC remota (ej: C:\FOD o C:\Instaladores\RSAT)" -ForegroundColor White
+        Write-Host " [3] Carpeta compartida en la red UNC (ej: \\SERVIDOR\Software\RSAT_FOD)" -ForegroundColor White
+        Write-Host " [4] Copiar paquetes FOD desde esta PC hacia la PC remota" -ForegroundColor White
+        $origOpt = Read-Host "Seleccione origen [1-4] (Por defecto: 1)"
+        if ([string]::IsNullOrWhiteSpace($origOpt)) { $origOpt = "1" }
+
+        $sourcePath = ""
+        if ($origOpt -eq "2") {
+            $pLocal = Read-Host "Ingrese la ruta de la carpeta FOD en la PC remota (ej: C:\FOD)"
+            $sourcePath = if ([string]::IsNullOrWhiteSpace($pLocal)) { "" } else { $pLocal.Trim() }
+        } elseif ($origOpt -eq "3") {
+            $pUNC = Read-Host "Ingrese la ruta UNC compartida de red (ej: \\SERVIDOR\Share\FOD)"
+            $sourcePath = if ([string]::IsNullOrWhiteSpace($pUNC)) { "" } else { $pUNC.Trim() }
+        } elseif ($origOpt -eq "4") {
+            $pMyPC = Read-Host "Ingrese la ruta de la carpeta FOD en ESTA PC local (ej: D:\FOD)"
+            if (Test-Path $pMyPC) {
+                $destRemote = "\\$targetMachine\C$\Windows\Temp\FOD"
+                Write-Host "[*] Copiando archivos FOD desde $pMyPC hacia $destRemote..." -ForegroundColor Cyan
+                if (-not (Test-Path $destRemote)) { New-Item -Path $destRemote -ItemType Directory -Force | Out-Null }
+                Copy-Item -Path "$pMyPC\*" -Destination $destRemote -Recurse -Force -ErrorAction SilentlyContinue
+                Write-Host "[+] Archivos FOD transferidos con exito a la PC remota." -ForegroundColor Green
+                $sourcePath = "C:\Windows\Temp\FOD"
+            } else {
+                Write-Host "[-] Ruta local $pMyPC no encontrada. Se continuara con Microsoft Update." -ForegroundColor Yellow
+            }
+        }
+
+        # 7. Worker Script Remoto (Contexto SYSTEM)
+        $workerBody = @'
+$logFile = "C:\Windows\Temp\Install-RSAT.log"
+$statFile = "C:\Windows\Temp\Install-RSAT.status"
+
+function Write-WorkerLog {
+    param([string]$msg, [string]$type = "INFO")
+    $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $line = "[$ts] [$type] $msg"
+    Add-Content -Path $logFile -Value $line -Encoding UTF8 -Force -ErrorAction SilentlyContinue
+}
+
+try {
+    "IN_PROGRESS|0|0" | Out-File -FilePath $statFile -Encoding UTF8 -Force
+    Write-WorkerLog ("Iniciando instalacion remota de RSAT en contexto SYSTEM (" + $env:USERNAME + ")...") "INFO"
+
+    # A. Verificacion y configuracion de servicios criticos
+    $services = @("wuauserv", "bits", "cryptsvc", "TrustedInstaller")
+    foreach ($s in $services) {
+        try {
+            $svc = Get-Service -Name $s -ErrorAction SilentlyContinue
+            if ($svc) {
+                if ($svc.StartType -eq "Disabled") {
+                    Set-Service -Name $s -StartupType Manual -ErrorAction SilentlyContinue
+                    Write-WorkerLog ("Servicio " + $s + " cambiado de Disabled a Manual.") "INFO"
+                }
+                if ($svc.Status -ne "Running") {
+                    Start-Service -Name $s -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+                    Write-WorkerLog ("Servicio " + $s + " iniciado.") "INFO"
+                } else {
+                    Write-WorkerLog ("Servicio " + $s + " verificado y activo.") "INFO"
+                }
+            }
+        } catch {
+            Write-WorkerLog ("Aviso en servicio " + $s + ": " + $_.Exception.Message) "WARN"
+        }
+    }
+
+    # B. Bypass de WSUS y directiva Servicing (Descarga directa desde Microsoft Update)
+    $wsusReg = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
+    $servicingReg = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Servicing"
+    $origUseWUServer = $null
+    $origRepairSource = $null
+    $wsusModified = $false
+    $servicingModified = $false
+
+    if ([string]::IsNullOrEmpty($offlineSource)) {
+        try {
+            if (Test-Path $wsusReg) {
+                $p = Get-ItemProperty -Path $wsusReg -Name "UseWUServer" -ErrorAction SilentlyContinue
+                if ($p -and $p.UseWUServer -eq 1) {
+                    $origUseWUServer = 1
+                    Set-ItemProperty -Path $wsusReg -Name "UseWUServer" -Value 0 -Force -ErrorAction SilentlyContinue
+                    $wsusModified = $true
+                    Write-WorkerLog "Bypass WSUS: UseWUServer establecido a 0 temporalmente." "INFO"
+                }
+            }
+
+            if (-not (Test-Path $servicingReg)) {
+                New-Item -Path $servicingReg -Force | Out-Null
+            }
+            $pServ = Get-ItemProperty -Path $servicingReg -Name "RepairContentServerSource" -ErrorAction SilentlyContinue
+            if ($pServ) {
+                $origRepairSource = $pServ.RepairContentServerSource
+            }
+            Set-ItemProperty -Path $servicingReg -Name "RepairContentServerSource" -Value 2 -Force -ErrorAction SilentlyContinue
+            Set-ItemProperty -Path $servicingReg -Name "UseWindowsUpdate" -Value 1 -Force -ErrorAction SilentlyContinue
+            $servicingModified = $true
+            Write-WorkerLog "Directiva Servicing configurada para descarga directa de Windows Update." "INFO"
+
+            Stop-Service -Name "wuauserv" -Force -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+            Start-Service -Name "wuauserv" -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            Write-WorkerLog "Servicio Windows Update reiniciado correctamente." "INFO"
+        } catch {
+            Write-WorkerLog ("Aviso en directivas de Windows Update: " + $_.Exception.Message) "WARN"
+        }
+    } else {
+        Write-WorkerLog ("Utilizando repositorio de archivos FOD local/red: " + $offlineSource) "INFO"
+    }
+
+    # C. Escaneo de Componentes RSAT a instalar
+    Import-Module Dism -ErrorAction SilentlyContinue
+    Write-WorkerLog "Consultando catalogo de capacidades DISM en Windows..." "INFO"
+    $allCaps = Get-WindowsCapability -Online -ErrorAction Stop | Where-Object { $_.Name -like "Rsat.*" }
+    
+    $toInstall = @()
+    foreach ($cap in $allCaps) {
+        if ($cap.State -ne "Installed") {
+            foreach ($pat in $targetPatterns) {
+                if ($cap.Name -like $pat) {
+                    $toInstall += $cap
+                    break
+                }
+            }
+        }
+    }
+
+    $successCount = 0
+    $failCount = 0
+
+    if ($toInstall.Count -eq 0) {
+        Write-WorkerLog "Todos los componentes solicitados ya se encuentran instalados en el equipo." "INFO"
+        "COMPLETED_NOTHING_TODO" | Out-File -FilePath $statFile -Encoding UTF8 -Force
+    }
+    else {
+        Write-WorkerLog ("Se encontraron " + $toInstall.Count + " componentes para instalar.") "INFO"
+        $idx = 0
+        foreach ($cap in $toInstall) {
+            $idx++
+            ("INSTALLING:" + $cap.Name + "|" + $idx + "|" + $toInstall.Count) | Out-File -FilePath $statFile -Encoding UTF8 -Force
+            Write-WorkerLog ("[" + $idx + "/" + $toInstall.Count + "] Iniciando descarga e instalacion de " + $cap.Name + "...") "START"
+            try {
+                if (-not [string]::IsNullOrEmpty($offlineSource)) {
+                    Add-WindowsCapability -Online -Name $cap.Name -Source $offlineSource -LimitAccess -ErrorAction Stop | Out-Null
+                } else {
+                    Add-WindowsCapability -Online -Name $cap.Name -ErrorAction Stop | Out-Null
+                }
+
+                $chk = Get-WindowsCapability -Online -Name $cap.Name -ErrorAction SilentlyContinue
+                if ($chk -and $chk.State -eq "Installed") {
+                    Write-WorkerLog ("[" + $idx + "/" + $toInstall.Count + "] Instalado con EXITO: " + $cap.Name) "SUCCESS"
+                    $successCount++
+                } else {
+                    Write-WorkerLog ("[" + $idx + "/" + $toInstall.Count + "] Estado no confirmado para: " + $cap.Name) "FAIL"
+                    $failCount++
+                }
+            } catch {
+                Write-WorkerLog ("[" + $idx + "/" + $toInstall.Count + "] ERROR al instalar " + $cap.Name + ": " + $_.Exception.Message) "FAIL"
+                $failCount++
+            }
+        }
+
+        if ($failCount -eq 0 -and $successCount -gt 0) {
+            ("COMPLETED_SUCCESS:" + $successCount) | Out-File -FilePath $statFile -Encoding UTF8 -Force
+        } elseif ($successCount -gt 0 -and $failCount -gt 0) {
+            ("COMPLETED_PARTIAL:OK=" + $successCount + ",FAIL=" + $failCount) | Out-File -FilePath $statFile -Encoding UTF8 -Force
+        } else {
+            ("COMPLETED_FAILED:" + $failCount) | Out-File -FilePath $statFile -Encoding UTF8 -Force
+        }
+    }
+} catch {
+    Write-WorkerLog ("Error critico general: " + $_.Exception.Message) "ERROR"
+    ("COMPLETED_FATAL:" + $_.Exception.Message) | Out-File -FilePath $statFile -Encoding UTF8 -Force
+} finally {
+    Write-WorkerLog "Restaurando directivas y servicios originales..." "INFO"
+    try {
+        if ($wsusModified -and $origUseWUServer -ne $null) {
+            Set-ItemProperty -Path $wsusReg -Name "UseWUServer" -Value $origUseWUServer -Force -ErrorAction SilentlyContinue
+        }
+        if ($servicingModified) {
+            if ($origRepairSource -ne $null) {
+                Set-ItemProperty -Path $servicingReg -Name "RepairContentServerSource" -Value $origRepairSource -Force -ErrorAction SilentlyContinue
+            } else {
+                Remove-ItemProperty -Path $servicingReg -Name "RepairContentServerSource" -ErrorAction SilentlyContinue
+            }
+            Remove-ItemProperty -Path $servicingReg -Name "UseWindowsUpdate" -ErrorAction SilentlyContinue
+        }
+        Stop-Service -Name "wuauserv" -Force -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 1
+        Start-Service -Name "wuauserv" -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+    } catch {}
+
+    Write-WorkerLog "Operacion de instalacion de RSAT concluida." "DONE"
+}
+'@
+
+        $patternsFormatted = ($targetPatterns | ForEach-Object { "`"$_`"" }) -join ", "
+        $workerHeader = "`$targetPatterns = @($patternsFormatted)`n`$offlineSource = `"$sourcePath`"`n"
+        $fullWorkerScript = $workerHeader + $workerBody
+
+        # 8. Despliegue e Inicio de Tarea Programada en la PC Remota
+        Write-Host "`n[*] Desplegando tarea programada bajo NT AUTHORITY\SYSTEM en $targetMachine..." -ForegroundColor Yellow
+        $initScriptBlock = {
+            param($scriptContent)
+            if (-not (Test-Path "C:\Windows\Temp")) {
+                New-Item -Path "C:\Windows\Temp" -ItemType Directory -Force | Out-Null
+            }
+            Remove-Item "C:\Windows\Temp\Install-RSAT.log" -Force -ErrorAction SilentlyContinue
+            Remove-Item "C:\Windows\Temp\Install-RSAT.status" -Force -ErrorAction SilentlyContinue
+            Remove-Item "C:\Windows\Temp\Install-RSAT-Worker.ps1" -Force -ErrorAction SilentlyContinue
+
+            [System.IO.File]::WriteAllText("C:\Windows\Temp\Install-RSAT-Worker.ps1", $scriptContent, [System.Text.Encoding]::UTF8)
+
+            $taskName = "Install-RSAT-Task"
+            try {
+                Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+            } catch {}
+
+            $registered = $false
+            try {
+                $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File C:\Windows\Temp\Install-RSAT-Worker.ps1"
+                $principal = New-ScheduledTaskPrincipal -UserId "NT AUTHORITY\SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+                $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+                Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings -Force | Out-Null
+                Start-ScheduledTask -TaskName $taskName | Out-Null
+                $registered = $true
+            } catch {
+                $cmdCreate = "schtasks.exe /create /f /tn `"$taskName`" /ru `"SYSTEM`" /rl HIGHEST /tr `"powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Windows\Temp\Install-RSAT-Worker.ps1`" /sc ONCE /st 00:00"
+                cmd.exe /c $cmdCreate 2>&1 | Out-Null
+                cmd.exe /c "schtasks.exe /run /tn `"$taskName`"" 2>&1 | Out-Null
+                $registered = $true
+            }
+            return $registered
+        }
+
+        $lanzado = $false
+        if ($port5985) {
+            try {
+                if ($cred -ne $null) {
+                    $lanzado = Invoke-Command -ComputerName $targetMachine -Credential $cred -ScriptBlock $initScriptBlock -ArgumentList $fullWorkerScript -ErrorAction Stop
+                } else {
+                    $lanzado = Invoke-Command -ComputerName $targetMachine -ScriptBlock $initScriptBlock -ArgumentList $fullWorkerScript -ErrorAction Stop
+                }
+            } catch {
+                Write-Host "[-] WinRM error al desplegar: $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+        }
+
+        if (-not $lanzado -and $port445) {
+            $psexecPath = "C:\PSTools\PsExec.exe"
+            if (-not (Test-Path $psexecPath)) {
+                $where = Get-Command psexec -ErrorAction SilentlyContinue
+                if ($where) { $psexecPath = $where.Definition }
+            }
+            if (Test-Path $psexecPath) {
+                Write-Host "[*] Intentando despliegue de tarea via PsExec..." -ForegroundColor Gray
+                try {
+                    $remoteTemp = "\\$targetMachine\C$\Windows\Temp"
+                    if (Test-Path $remoteTemp) {
+                        [System.IO.File]::WriteAllText("$remoteTemp\Install-RSAT-Worker.ps1", $fullWorkerScript, [System.Text.Encoding]::UTF8)
+                        $cmdTask = "schtasks.exe /create /f /tn `"Install-RSAT-Task`" /ru `"SYSTEM`" /rl HIGHEST /tr `"powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Windows\Temp\Install-RSAT-Worker.ps1`" /sc ONCE /st 00:00 & schtasks.exe /run /tn `"Install-RSAT-Task`""
+                        $argBase = "-accepteula -s cmd.exe /c `"$cmdTask`""
+                        $argExec = if ($usu -ne "") { "\\$targetMachine -u `"$usu`" -p `"$claTexto`" $argBase" } else { "\\$targetMachine $argBase" }
+                        $p = Start-Process -FilePath $psexecPath -ArgumentList $argExec -Wait -NoNewWindow -PassThru -ErrorAction SilentlyContinue
+                        if ($p -and $p.ExitCode -eq 0) { $lanzado = $true }
+                    }
+                } catch {}
+            }
+        }
+
+        if (-not $lanzado) {
+            Write-Host "[ERROR] No se pudo desplegar ni iniciar la tarea en $targetMachine." -ForegroundColor Red
+            Write-Host "Verifique conectividad, cortafuegos o credenciales de administrador." -ForegroundColor Yellow
+            Write-Host " "
+            Read-Host "Presione ENTER para continuar..."
+            return
+        }
+
+        Write-Host "[+] Tarea iniciada con exito en $targetMachine." -ForegroundColor Green
+
+        # 9. Seleccion de Modalidad de Monitoreo
+        Write-Host "`n--- MODALIDAD DE MONITOREO DEL PROGRESO ---" -ForegroundColor Yellow
+        Write-Host " [1] Monitorear en NUEVA VENTANA (Recomendado - Libera esta consola de inmediato)" -ForegroundColor Cyan
+        Write-Host " [2] Monitorear en ESTA CONSOLA (En linea - Bloqueante)" -ForegroundColor White
+        $monOpt = Read-Host "Seleccione una modalidad [1-2] (Por defecto: 1)"
+        if ([string]::IsNullOrWhiteSpace($monOpt)) { $monOpt = "1" }
+
+        # Script de Monitoreo Detallado (en nueva ventana o en consola)
+        $monitorScriptCode = @"
+`$Host.UI.RawUI.WindowTitle = "MONITOR RSAT: $targetMachine | shellWil"
+try {
+    if (`$Host.UI.RawUI.BufferSize.Width -lt 115) {
+        `$Host.UI.RawUI.BufferSize = New-Object Management.Automation.Host.Size(115, 3000)
+        `$Host.UI.RawUI.WindowSize = New-Object Management.Automation.Host.Size(115, 42)
+    }
+} catch {}
+
+Clear-Host
+Write-Host "==========================================================================================" -ForegroundColor Cyan
+Write-Host "                MONITOR DE INSTALACION DE COMPONENTES RSAT REMOTO                         " -ForegroundColor White -BackgroundColor DarkBlue
+Write-Host "==========================================================================================" -ForegroundColor Cyan
+Write-Host "  Equipo Destino : $targetMachine" -ForegroundColor Yellow
+Write-Host "  Criterio       : $criterioLabel" -ForegroundColor White
+Write-Host "  Hora de Inicio : `$((Get-Date).ToString('HH:mm:ss'))" -ForegroundColor Gray
+Write-Host "==========================================================================================`n" -ForegroundColor Cyan
+
+# Autenticacion IPC si hay credenciales explicitas
+if ("$usu" -ne "" -and "$claTexto" -ne "") {
+    cmd.exe /c "net use \\$targetMachine\IPC$ /user:`"$usu`" `"$claTexto`"" 2>&1 | Out-Null
+}
+
+Write-Host "[*] Conectando con $targetMachine y transmitiendo progreso en tiempo real...`n" -ForegroundColor Gray
+
+`$startTime = Get-Date
+`$lastLine = 0
+`$terminado = `$false
+`$maxMinutes = 35
+`$lastActivityTime = Get-Date
+`$finalStatus = ""
+`$ultimoComponente = ""
+
+while (-not `$terminado) {
+    Start-Sleep -Seconds 3
+    `$elapsed = "{0:mm\:ss}" -f ((Get-Date) - `$startTime)
+
+    `$newLines = @()
+    `$status = "RUNNING"
+
+    # 1. Lectura directa via SMB
+    `$logSMB = "\\$targetMachine\C$\Windows\Temp\Install-RSAT.log"
+    `$statSMB = "\\$targetMachine\C$\Windows\Temp\Install-RSAT.status"
+    `$smbOk = `$false
+
+    if (Test-Path `$logSMB) {
+        try {
+            `$all = Get-Content `$logSMB -Encoding UTF8 -ErrorAction SilentlyContinue
+            if (`$all) {
+                `$total = `$all.Count
+                if (`$total -gt `$lastLine) {
+                    `$newLines = `$all[`$lastLine..(`$total - 1)]
+                    `$lastLine = `$total
+                    `$lastActivityTime = Get-Date
+                }
+            }
+            `$smbOk = `$true
+        } catch {}
+    }
+    if (Test-Path `$statSMB) {
+        try {
+            `$stVal = (Get-Content `$statSMB -Raw -ErrorAction SilentlyContinue).Trim()
+            if (-not [string]::IsNullOrWhiteSpace(`$stVal)) { `$status = `$stVal }
+        } catch {}
+    }
+
+    # 2. Fallback WinRM si SMB no estuvo accesible
+    if (-not `$smbOk) {
+        try {
+            `$pollRes = Invoke-Command -ComputerName "$targetMachine" -ScriptBlock {
+                param(`$from)
+                `$l = "C:\Windows\Temp\Install-RSAT.log"
+                `$s = "C:\Windows\Temp\Install-RSAT.status"
+                `$lines = @()
+                `$tot = 0
+                if (Test-Path `$l) {
+                    try {
+                        `$a = Get-Content `$l -Encoding UTF8 -ErrorAction SilentlyContinue
+                        if (`$a) {
+                            `$tot = `$a.Count
+                            if (`$tot -gt `$from) { `$lines = `$a[`$from..(`$tot - 1)] }
+                        }
+                    } catch {}
+                }
+                `$st = "RUNNING"
+                if (Test-Path `$s) {
+                    try { `$st = (Get-Content `$s -Raw -ErrorAction SilentlyContinue).Trim() } catch {}
+                }
+                return @{ Lines = `$lines; Total = `$tot; Status = `$st }
+            } -ArgumentList `$lastLine -ErrorAction SilentlyContinue
+
+            if (`$pollRes) {
+                if (`$pollRes.Total -gt `$lastLine) {
+                    `$newLines = `$pollRes.Lines
+                    `$lastLine = `$pollRes.Total
+                    `$lastActivityTime = Get-Date
+                }
+                if (`$pollRes.Status) { `$status = `$pollRes.Status }
+            }
+        } catch {}
+    }
+
+    # 3. Procesar y colorear lineas de log
+    if (`$newLines -and `$newLines.Count -gt 0) {
+        foreach (`$l in `$newLines) {
+            if (`$l -match "\[SUCCESS\]") {
+                Write-Host "  [`$elapsed] `$l" -ForegroundColor Green
+            } elseif (`$l -match "\[FAIL\]|\[ERROR\]") {
+                Write-Host "  [`$elapsed] `$l" -ForegroundColor Red
+            } elseif (`$l -match "\[START\]") {
+                Write-Host "  [`$elapsed] `$l" -ForegroundColor Cyan
+            } elseif (`$l -match "\[WARN\]") {
+                Write-Host "  [`$elapsed] `$l" -ForegroundColor Yellow
+            } else {
+                Write-Host "  [`$elapsed] `$l" -ForegroundColor Gray
+            }
+        }
+    } else {
+        # Latido dinamico con detalle del componente actual
+        `$inactiveSec = ((Get-Date) - `$lastActivityTime).TotalSeconds
+        if (`$inactiveSec -ge 10) {
+            if (`$status -match "^INSTALLING:(.+?)\|(\d+)\|(\d+)") {
+                `$cName = `$Matches[1]
+                `$cIdx = `$Matches[2]
+                `$cTot = `$Matches[3]
+                Write-Host "   >>> [`$elapsed] [DESCARGANDO/INSTALANDO] `$cName (Progreso: `$cIdx de `$cTot)..." -ForegroundColor DarkCyan
+            } elseif (`$status -like "IN_PROGRESS*") {
+                Write-Host "   >>> [`$elapsed] [INICIALIZANDO] Preparando servicios del sistema y catalogo DISM en $targetMachine..." -ForegroundColor DarkCyan
+            } else {
+                Write-Host "   >>> [`$elapsed] [EN PROGRESO] Operacion activa en PC remota..." -ForegroundColor DarkCyan
+            }
+            `$lastActivityTime = Get-Date
+        }
+    }
+
+    # 4. Evaluacion de fin de proceso
+    if (`$status -like "COMPLETED_*") {
+        `$terminado = `$true
+        `$finalStatus = `$status
+    }
+
+    # 5. Deteccion de fallo prematuro de la tarea programada
+    if (-not `$terminado -and ((Get-Date) - `$startTime).TotalSeconds -gt 15) {
+        try {
+            `$tChk = schtasks.exe /query /s "$targetMachine" /tn "Install-RSAT-Task" /fo CSV -ErrorAction SilentlyContinue 2>`$null | ConvertFrom-Csv
+            if (`$tChk) {
+                `$stTask = `$tChk.Status -or `$tChk.Estado
+                if (`$stTask -and `$stTask -notmatch "Running|Ejecutando" -and `$status -notlike "COMPLETED_*") {
+                    # Tarea finalizo inesperadamente
+                    `$terminado = `$true
+                    `$finalStatus = "TASK_STOPPED_UNEXPECTEDLY"
+                }
+            }
+        } catch {}
+    }
+
+    if (((Get-Date) - `$startTime).TotalMinutes -gt `$maxMinutes) {
+        Write-Host "`n[-] Se supero el tiempo limite de `$maxMinutes minutos." -ForegroundColor Red
+        break
+    }
+}
+
+Write-Host "`n==========================================================================================" -ForegroundColor Cyan
+if (`$finalStatus -like "COMPLETED_SUCCESS*" -or `$finalStatus -eq "COMPLETED_NOTHING_TODO") {
+    Write-Host "[EXITO] Instalacion de RSAT completada correctamente en $targetMachine." -ForegroundColor Green
+} elseif (`$finalStatus -like "COMPLETED_PARTIAL*") {
+    Write-Host "[AVISO] Instalacion finalizada con algunos componentes instalados y otros con advertencia." -ForegroundColor Yellow
+} elseif (`$finalStatus -eq "TASK_STOPPED_UNEXPECTEDLY") {
+    Write-Host "[-] La tarea remota se detuvo de forma imprevista." -ForegroundColor Red
+    Write-Host "Revise el registro en la PC remota: C:\Windows\Temp\Install-RSAT.log" -ForegroundColor Yellow
+} else {
+    Write-Host "[-] Instalacion finalizada con estado: `$finalStatus." -ForegroundColor Red
+    Write-Host "Revise el registro en la PC remota: C:\Windows\Temp\Install-RSAT.log" -ForegroundColor Yellow
+}
+Write-Host "Tiempo total transcurrido: `$elapsed" -ForegroundColor Gray
+Write-Host "==========================================================================================" -ForegroundColor Cyan
+
+# Limpieza remota
+try {
+    Invoke-Command -ComputerName "$targetMachine" -ScriptBlock {
+        Unregister-ScheduledTask -TaskName "Install-RSAT-Task" -Confirm:`$false -ErrorAction SilentlyContinue | Out-Null
+        Remove-Item "C:\Windows\Temp\Install-RSAT-Worker.ps1" -Force -ErrorAction SilentlyContinue
+    } -ErrorAction SilentlyContinue | Out-Null
+} catch {}
+
+Write-Host "`nPresione cualquier tecla para continuar..." -ForegroundColor Gray
+try { [void][System.Console]::ReadKey(`$true) } catch {}
+"@
+
+        if ($monOpt.Trim() -eq "1") {
+            # Modalidad 1: Nueva Ventana Independiente (Consola Libre)
+            $monitorFile = Join-Path $env:TEMP "shellWil_MonitorRSAT_${targetMachine}.ps1"
+            [System.IO.File]::WriteAllText($monitorFile, $monitorScriptCode, [System.Text.Encoding]::UTF8)
+
+            Write-Host "`n[*] Abriendo monitor de progreso en una NUEVA VENTANA..." -ForegroundColor Green
+            Start-Process powershell.exe -ArgumentList "-NoExit", "-ExecutionPolicy", "Bypass", "-File", "`"$monitorFile`""
+
+            Write-Host "`n==========================================================================" -ForegroundColor Cyan
+            Write-Host "  [OK] PROCESO DESPLEGADO Y MONITOR INICIADO EN NUEVA VENTANA INDEPENDIENTE" -ForegroundColor Green
+            Write-Host "==========================================================================" -ForegroundColor Cyan
+            Write-Host "  Equipo Destino : $targetMachine" -ForegroundColor White
+            Write-Host "  Componentes    : $criterioLabel" -ForegroundColor White
+            Write-Host "  Estado         : Tarea programada iniciada en contexto SYSTEM" -ForegroundColor Gray
+            Write-Host "  Monitoreo      : Se abrio una ventana secundaria para seguir el avance en vivo." -ForegroundColor Gray
+            Write-Host "                   Esta consola queda completamente LIBRE para su uso." -ForegroundColor Green
+            Write-Host "==========================================================================" -ForegroundColor Cyan
+            Write-Host " "
+            Read-Host "Presione ENTER para continuar..."
+        } else {
+            # Modalidad 2: Monitoreo en Esta Misma Consola (Bloqueante)
+            Write-Host "`n[*] Iniciando monitoreo en esta consola..." -ForegroundColor Cyan
+            $sbExec = [ScriptBlock]::Create($monitorScriptCode)
+            & $sbExec
+        }
+    }
+
+
     function Get-NativeSnmpSummary {
         param(
             [string]$TargetIP,
@@ -1642,14 +2986,14 @@ Write-Output "Proceso de optimizacion completado con exito."
             Write-Host "    10.2 Mostrar Impresoras con P.S. en PC Remota."
             Write-Host "  ----------------------------------------"
             Write-Host "  11. Habilitacion de RSAT - LOCAL"
-            Write-Host "    11.1 Habilitar ejecucion remota y de scripts (Local)" -ForegroundColor Cyan
+            Write-Host "    11.1 Habilitar servicios RSAT y ejecucion remota (Local)" -ForegroundColor Cyan
             Write-Host "    11.2 Denegar/Deshabilitar ejecucion remota (Local)" -ForegroundColor Yellow
             Write-Host "    11.3 Instalar todos los componentes de RSAT (Local)" -ForegroundColor Green
             Write-Host "  ----------------------------------------"
             Write-Host "  12. Habilitacion de RSAT - REMOTO"
-            Write-Host "    12.1 Habilitar ejecucion de scripts (Remoto)" -ForegroundColor Cyan
+            Write-Host "    12.1 Habilitar servicios RSAT y ejecucion remota (Remoto)" -ForegroundColor Cyan
             Write-Host "    12.2 Denegar/Deshabilitar ejecucion de scripts (Remoto)" -ForegroundColor Yellow
-            Write-Host "    12.3 Instalar todos los componentes de RSAT (Remoto)" -ForegroundColor Green
+            Write-Host "    12.3 Instalar componentes de RSAT (Remoto)" -ForegroundColor Green
             Write-Host "  ----------------------------------------"
             Write-Host "  13. OPTIMIZACION Y LIMPIEZA DE SISTEMA REMOTO:" -ForegroundColor Green
             Write-Host "    13.1. Eliminar Archivos TEMPORALES CARPETAS Remoto" -ForegroundColor DarkCyan
@@ -4084,41 +5428,7 @@ try {
                 }
 
                 "11.1" {
-                    cabecera
-                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
-                    Write-Host "Habilitando ejecucion remota y de scripts localmente..." -ForegroundColor Cyan
-                    
-                    # 1. Habilitar PSRemoting sin verificación de red pública
-                    try {
-                        Write-Host "Iniciando servicio WinRM (PSRemoting)..." -ForegroundColor Gray
-                        Enable-PSRemoting -SkipNetworkProfileCheck -Force -ErrorAction Stop
-                        Write-Host "[OK] PSRemoting habilitado localmente." -ForegroundColor Green
-                    }
-                    catch {
-                        Write-Host "ADVERTENCIA: No se pudo habilitar PSRemoting localmente." -ForegroundColor Yellow
-                        Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
-                    }
-
-                    # 2. Configurar ExecutionPolicy con escalamiento de ámbitos
-                    try {
-                        Write-Host "Estableciendo politica de ejecucion a RemoteSigned (LocalMachine)..." -ForegroundColor Gray
-                        Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force -ErrorAction Stop
-                        Write-Host "[OK] Politica establecida a RemoteSigned para LocalMachine." -ForegroundColor Green
-                    }
-                    catch {
-                        Write-Host "Restriccion detectada para LocalMachine. Intentando para CurrentUser..." -ForegroundColor Yellow
-                        try {
-                            Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force -ErrorAction Stop
-                            Write-Host "[OK] Politica establecida a RemoteSigned para CurrentUser." -ForegroundColor Green
-                        }
-                        catch {
-                            Write-Host "GPO bloquea cambios de politica de ejecucion persistentes." -ForegroundColor Red
-                            Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
-                            Write-Host "Intentando habilitar temporalmente para este proceso..." -ForegroundColor Cyan
-                            Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
-                            Write-Host "[OK] Politica establecida a Bypass para el proceso actual." -ForegroundColor Green
-                        }
-                    }
+                    Invoke-HabilitarServiciosRSATLocal
                 }
 
                 "11.2" {
@@ -4126,97 +5436,47 @@ try {
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
                     Write-Host "Deshabilitando ejecucion remota y de scripts localmente..." -ForegroundColor Cyan
                     
-                    # 1. Deshabilitar PSRemoting
-                    try {
-                        Write-Host "Deteniendo y deshabilitando servicio WinRM..." -ForegroundColor Gray
-                        Disable-PSRemoting -Force -ErrorAction Stop
-                        Write-Host "[OK] PSRemoting deshabilitado localmente." -ForegroundColor Green
-                    }
-                    catch {
-                        Write-Host "ADVERTENCIA: No se pudo deshabilitar PSRemoting localmente." -ForegroundColor Yellow
-                        Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
-                    }
-
-                    # 2. Configurar ExecutionPolicy a Restricted
-                    try {
-                        Write-Host "Estableciendo politica de ejecucion a Restricted (LocalMachine)..." -ForegroundColor Gray
-                        Set-ExecutionPolicy -ExecutionPolicy Restricted -Scope LocalMachine -Force -ErrorAction Stop
-                        Write-Host "[OK] Politica establecida a Restricted para LocalMachine." -ForegroundColor Green
-                    }
-                    catch {
-                        Write-Host "Restriccion detectada para LocalMachine. Intentando para CurrentUser..." -ForegroundColor Yellow
+                    $isAdmin = Test-IsProcessAdmin
+                    if (-not $isAdmin) {
+                        Write-Host "`n[ERROR] Esta accion requiere privilegios de Administrador (Token Elevado)." -ForegroundColor Red
+                        Write-Host "Por favor ejecute la consola como Administrador." -ForegroundColor Yellow
+                    } else {
+                        # 1. Deshabilitar PSRemoting
                         try {
-                            Set-ExecutionPolicy -ExecutionPolicy Restricted -Scope CurrentUser -Force -ErrorAction Stop
-                            Write-Host "[OK] Politica establecida a Restricted para CurrentUser." -ForegroundColor Green
+                            Write-Host "Deteniendo y deshabilitando servicio WinRM..." -ForegroundColor Gray
+                            Disable-PSRemoting -Force -ErrorAction Stop
+                            Write-Host "[OK] PSRemoting deshabilitado localmente." -ForegroundColor Green
                         }
                         catch {
-                            Write-Host "GPO bloquea cambios de politica de ejecucion." -ForegroundColor Red
-                            Write-Host "Detalle: $($_.Exception.Message)" -ForegroundColor Gray
+                            Write-Host "ADVERTENCIA: No se pudo deshabilitar PSRemoting localmente: $($_.Exception.Message)" -ForegroundColor Yellow
+                        }
+
+                        # 2. Configurar ExecutionPolicy con deteccion de GPO
+                        try {
+                            $polList = Get-ExecutionPolicy -List
+                            $mPol = ($polList | Where-Object { $_.Scope -eq 'MachinePolicy' }).ExecutionPolicy
+                            $uPol = ($polList | Where-Object { $_.Scope -eq 'UserPolicy' }).ExecutionPolicy
+                            if ($mPol -ne 'Undefined' -or $uPol -ne 'Undefined') {
+                                Write-Host "[INFO] Directiva de Dominio (GPO) presente. No se modifican directivas corporativas persistentes." -ForegroundColor Cyan
+                            } else {
+                                Set-ExecutionPolicy -ExecutionPolicy Restricted -Scope LocalMachine -Force -ErrorAction Stop
+                                Write-Host "[OK] Politica establecida a Restricted para LocalMachine." -ForegroundColor Green
+                            }
+                        }
+                        catch {
+                            try {
+                                Set-ExecutionPolicy -ExecutionPolicy Restricted -Scope CurrentUser -Force -ErrorAction Stop
+                                Write-Host "[OK] Politica establecida a Restricted para CurrentUser." -ForegroundColor Green
+                            }
+                            catch {
+                                Write-Host "[-] Aviso al restringir directiva: $($_.Exception.Message)" -ForegroundColor Yellow
+                            }
                         }
                     }
                 }
 
                 "11.3" {
-                    cabecera
-                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
-                    Write-Host "Buscando componentes de RSAT localmente..." -ForegroundColor Cyan
-                    try {
-                        # Importar explícitamente Dism
-                        Import-Module -Name Dism -ErrorAction SilentlyContinue
-
-                        if (-not (Get-Command -Name Get-WindowsCapability -ErrorAction SilentlyContinue)) {
-                            throw "El cmdlet 'Get-WindowsCapability' no está disponible en este equipo."
-                        }
-
-                        $capabilities = Get-WindowsCapability -Online | Where-Object { $_.Name -like "Rsat.*" -and $_.State -eq "NotPresent" }
-                        if ($capabilities.Count -eq 0) {
-                            Write-Host "Todos los componentes de RSAT ya estan instalados." -ForegroundColor Green
-                        }
-                        else {
-                            Write-Host "Se encontraron $($capabilities.Count) componentes para instalar." -ForegroundColor Cyan
-                            
-                            # Bypass temporal de WSUS si aplica localmente
-                            $regPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
-                            $wsusBypassed = $false
-                            $originalUseWUServer = $null
-                            
-                            if (Test-Path $regPath) {
-                                $val = Get-ItemProperty -Path $regPath -Name "UseWUServer" -ErrorAction SilentlyContinue
-                                if ($val -and $val.UseWUServer -eq 1) {
-                                    Write-Host "Detectado WSUS activo. Desactivando temporalmente para descargar directamente de Windows Update..." -ForegroundColor Yellow
-                                    $originalUseWUServer = 1
-                                    Set-ItemProperty -Path $regPath -Name "UseWUServer" -Value 0 -Force -ErrorAction SilentlyContinue
-                                    Restart-Service -Name "wuauserv" -Force -ErrorAction SilentlyContinue
-                                    $wsusBypassed = $true
-                                }
-                            }
-
-                            try {
-                                foreach ($cap in $capabilities) {
-                                    Write-Host "Instalando $($cap.Name)..." -ForegroundColor Yellow
-                                    try {
-                                        Add-WindowsCapability -Online -Name $cap.Name -ErrorAction Stop | Out-Null
-                                        Write-Host "Instalado con éxito: $($cap.Name)" -ForegroundColor Green
-                                    }
-                                    catch {
-                                        Write-Host "ERROR al instalar $($cap.Name): $($_.Exception.Message)" -ForegroundColor Red
-                                    }
-                                }
-                            }
-                            finally {
-                                # Restaurar configuración original de WSUS
-                                if ($wsusBypassed -and $originalUseWUServer -ne $null) {
-                                    Write-Host "Restaurando configuracion original de WSUS..." -ForegroundColor Gray
-                                    Set-ItemProperty -Path $regPath -Name "UseWUServer" -Value $originalUseWUServer -Force -ErrorAction SilentlyContinue
-                                    Restart-Service -Name "wuauserv" -Force -ErrorAction SilentlyContinue
-                                }
-                            }
-                            Write-Host "Instalacion de RSAT completada." -ForegroundColor Green
-                        }
-                    }
-                    catch {
-                        Write-Host "Error al instalar RSAT localmente: $($_.Exception.Message)" -ForegroundColor Red
-                    }
+                    Invoke-InstalarRSATLocal
                 }
 
                 "12" { 
@@ -4226,40 +5486,7 @@ try {
                 }
 
                 "12.1" {
-                    cabecera
-                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
-                    $ipRemota = Get-StandardIPPrompt
-                    if ([string]::IsNullOrWhiteSpace($ipRemota)) { 
-                        Write-Host "Operacion cancelada." -ForegroundColor Red
-                    }
-                    else {
-                        
-                        Write-Host "Habilitando ejecucion remota en $ipRemota..." -ForegroundColor Cyan
-                        $process = Get-WmiObject -List -ComputerName $ipRemota -Class Win32_Process -ErrorAction SilentlyContinue
-                        if ($process) {
-                            $cmd = "powershell.exe -NoProfile -Command `"try { Enable-PSRemoting -SkipNetworkProfileCheck -Force } catch {}; try { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force } catch { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force }`""
-                            $result = $process.Create($cmd)
-                            if ($result.ReturnValue -eq 0) {
-                                Write-Host "Comando de habilitacion enviado correctamente via WMI. Esperando 5 segundos..." -ForegroundColor Green
-                                Start-Sleep -Seconds 5
-                            }
-                            else {
-                                Write-Host "Error al crear proceso via WMI (Codigo: $($result.ReturnValue))." -ForegroundColor Red
-                            }
-                        }
-                        else {
-                            Write-Host "WMI no responde. Intentando via PsExec si esta disponible..." -ForegroundColor Yellow
-                            $psexecPath = "C:\PSTools\PsExec.exe"
-                            if (Test-Path $psexecPath) {
-                                $arg = "\\$ipRemota -accepteula -s powershell.exe -NoProfile -Command `"try { Enable-PSRemoting -SkipNetworkProfileCheck -Force } catch {}; try { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force } catch { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force }`""
-                                Start-Process -FilePath $psexecPath -ArgumentList $arg -Wait -NoNewWindow
-                                Write-Host "Comando enviado via PsExec." -ForegroundColor Green
-                            }
-                            else {
-                                Write-Host "ERROR: No se pudo conectar via WMI ni se encontro PsExec en C:\PSTools\PsExec.exe" -ForegroundColor Red
-                            }
-                        }
-                    }
+                    Invoke-HabilitarServiciosRSATRemoto
                 }
 
                 "12.2" {
@@ -4300,649 +5527,7 @@ try {
                 }
 
                 "12.3" {
-                    cabecera
-                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
-                    $targetInput = Get-StandardIPPrompt
-                    if ([string]::IsNullOrWhiteSpace($targetInput)) { 
-                        Write-Host "Operacion cancelada." -ForegroundColor Red
-                    }
-                    else {
-                        # Determinar si es IP o Hostname directamente
-                        $targetMachine = ""
-                        $ipRemota = ""
-                        
-                        if ($targetInput -match "^[a-zA-Z]") {
-                            $targetMachine = $targetInput.Trim()
-                            Write-Host "Usando Nombre de Equipo proporcionado: $targetMachine" -ForegroundColor Green
-                        }
-                        else {
-                            $ipRemota = $targetInput.Trim()
-                            Write-Host "Direccion IP de destino: $ipRemota" -ForegroundColor Cyan
-                            
-                            Write-Host "Resolviendo nombre de equipo (Hostname) necesario para la conexion..." -ForegroundColor Cyan
-                            try {
-                                $sys = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $ipRemota -ErrorAction Stop
-                                $targetMachine = $sys.CSName
-                                Write-Host "[+] Nombre de equipo resuelto exitosamente via WMI: $targetMachine" -ForegroundColor Green
-                            }
-                            catch {
-                                try {
-                                    $targetMachine = [System.Net.Dns]::GetHostEntry($ipRemota).HostName.Split('.')[0]
-                                    Write-Host "[+] Nombre de equipo resuelto via DNS: $targetMachine" -ForegroundColor Green
-                                }
-                                catch {
-                                    try {
-                                        # Intento por NetBIOS/nbtstat
-                                        $nbt = nbtstat -a $ipRemota
-                                        $lineaName = $nbt | Where-Object { $_ -match "<\x00>.*UNIQUE" } | Select-Object -First 1
-                                        if ($lineaName -and $lineaName -match "^\s*([A-Za-z0-9\-]+)") {
-                                            $targetMachine = $Matches[1].Trim()
-                                            Write-Host "[+] Nombre de equipo resuelto via NetBIOS: $targetMachine" -ForegroundColor Green
-                                        } else {
-                                            throw "No se pudo resolver via NetBIOS"
-                                        }
-                                    }
-                                    catch {
-                                        Write-Host "ADVERTENCIA: No se pudo resolver la IP a un Nombre de Equipo automaticamente." -ForegroundColor Yellow
-                                        $manualHost = Read-Host "Ingrese el NOMBRE DE EQUIPO (Hostname) del equipo remoto manualmente (Deje vacio para usar IP)"
-                                        if (-not [string]::IsNullOrWhiteSpace($manualHost)) {
-                                            $targetMachine = $manualHost.Trim()
-                                        } else {
-                                            $targetMachine = $ipRemota
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        
-                        if ([string]::IsNullOrWhiteSpace($targetMachine)) {
-                            Write-Host "ERROR: Se requiere un nombre de equipo o IP para continuar." -ForegroundColor Red
-                        }
-                        else {
-                            # --- 1. SELECCION DE COMPONENTES RSAT ---
-                            Write-Host "`n--- SELECCION DE COMPONENTES RSAT A INSTALAR ---" -ForegroundColor Yellow
-                            Write-Host " [1] Paquete Esencial (Active Directory DS/LDS, DNS, DHCP, GPMC) [Recomendado - Rapido]" -ForegroundColor Cyan
-                            Write-Host "     * Herramientas prioritarias para administracion de Dominio y Red" -ForegroundColor Gray
-                            Write-Host " [2] Todos los componentes RSAT disponibles [Completo - Mayor tiempo]" -ForegroundColor White
-                            Write-Host "     * Instala todas las herramientas de administracion remota (~18)" -ForegroundColor Gray
-                            Write-Host " [3] Personalizado (Ingresar patron, ej: Rsat.ActiveDirectory* o Rsat.Dns*)" -ForegroundColor White
-                            $compOpt = Read-Host "Seleccione una opcion [1-3] (Por defecto: 1)"
-                            if ([string]::IsNullOrWhiteSpace($compOpt)) { $compOpt = "1" }
-
-                            $targetPatterns = @()
-                            if ($compOpt -eq "2") {
-                                $targetPatterns = @("Rsat.*")
-                                Write-Host "[*] Criterio: Todos los componentes RSAT." -ForegroundColor Cyan
-                            }
-                            elseif ($compOpt -eq "3") {
-                                $customPat = Read-Host "Ingrese el patron a buscar (ej: Rsat.ActiveDirectory*)"
-                                if ([string]::IsNullOrWhiteSpace($customPat)) {
-                                    $targetPatterns = @("Rsat.*")
-                                } else {
-                                    $targetPatterns = @($customPat.Trim())
-                                }
-                                Write-Host "[*] Criterio personalizado: $($targetPatterns -join ', ')" -ForegroundColor Cyan
-                            }
-                            else {
-                                $targetPatterns = @(
-                                    "Rsat.ActiveDirectory.DS-LDS.Tools*",
-                                    "Rsat.Dns.Tools*",
-                                    "Rsat.DHCP.Tools*",
-                                    "Rsat.GroupPolicy.Management.Tools*"
-                                )
-                                Write-Host "[*] Criterio: Paquete Esencial de Administracion." -ForegroundColor Cyan
-                            }
-
-                            # --- 2. SELECCION DE AUTENTICACION ---
-                            Write-Host "`n--- OPCIONES DE AUTENTICACION ---" -ForegroundColor Yellow
-                            Write-Host " [1] Usuario actual de Windows (Inicio de sesion unico / Integrado)"
-                            Write-Host " [2] Usuario de Dominio (Active Directory - ej: DOMINIO\usuario)"
-                            Write-Host " [3] Usuario Local de la PC Remota (ej: .\Administrador o NOMBREPC\Administrador)"
-                            $authOpt = Read-Host "Seleccione una opcion [1-3] (Por defecto: 1)"
-                            if ([string]::IsNullOrWhiteSpace($authOpt)) { $authOpt = "1" }
-                            
-                            $cred = $null
-                            $usu = ""
-                            $claTexto = ""
-                            
-                            if ($authOpt -eq "2") {
-                                $domDefecto = $env:USERDOMAIN
-                                Write-Host "Dominio detectado: $domDefecto" -ForegroundColor Cyan
-                                $dom = Read-Host "Ingrese el nombre del Dominio (Presione Enter para usar '$domDefecto')"
-                                if ([string]::IsNullOrWhiteSpace($dom)) { $dom = $domDefecto }
-                                $usuSimple = Read-Host "Ingrese el nombre de usuario de Dominio"
-                                if (-not [string]::IsNullOrWhiteSpace($usuSimple)) {
-                                    $usu = "$dom\$usuSimple"
-                                    $cla = Read-Host "Ingrese la contrasena del usuario" -AsSecureString
-                                    $cred = New-Object System.Management.Automation.PSCredential ($usu, $cla)
-                                    $claTexto = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($cla))
-                                }
-                            }
-                            elseif ($authOpt -eq "3") {
-                                $usuSimple = Read-Host "Ingrese el nombre del Administrador Local (ej: Administrador)"
-                                if (-not [string]::IsNullOrWhiteSpace($usuSimple)) {
-                                    if ($usuSimple -notmatch "^([^\\]+)\\" -and $usuSimple -notmatch "^\.\\") {
-                                        $usu = ".\$usuSimple"
-                                    } else {
-                                        $usu = $usuSimple
-                                    }
-                                    $cla = Read-Host "Ingrese la contrasena local" -AsSecureString
-                                    $cred = New-Object System.Management.Automation.PSCredential ($usu, $cla)
-                                    $claTexto = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($cla))
-                                }
-                            }
-
-                            # --- 3. SELECCION DE METODO DE CONEXION ---
-                            Write-Host "`n--- METODOS DE CONEXION DISPONIBLES ---" -ForegroundColor Yellow
-                            Write-Host " [1] Auto-detectar (WinRM via Tarea SYSTEM; si falla usar PsExec)" -ForegroundColor Cyan
-                            Write-Host " [2] Forzar WinRM (PowerShell Remoting - Tarea SYSTEM)"
-                            Write-Host " [3] Forzar PsExec (Microsoft Sysinternals - SYSTEM -s)"
-                            $connOpt = Read-Host "Seleccione una opcion [1-3] (Por defecto: 1)"
-                            if ([string]::IsNullOrWhiteSpace($connOpt)) { $connOpt = "1" }
-
-                            # --- 4. RUTA DE ORIGEN OFFLINE (OPCIONAL) ---
-                            Write-Host "`n--- ORIGEN DE INSTALACION (OPCIONAL) ---" -ForegroundColor Yellow
-                            $sourcePath = Read-Host "Ingrese ruta local o de red (Source) de archivos FOD/RSAT (Enter para descargar de Internet)"
-                            if (-not [string]::IsNullOrWhiteSpace($sourcePath)) {
-                                $sourcePath = $sourcePath.Trim()
-                            } else {
-                                $sourcePath = ""
-                            }
-
-                            # --- 5. DIAGNOSTICO DE RED Y PUERTOS ---
-                            Write-Host "`n[*] Verificando conexion de red con $targetMachine..." -ForegroundColor Cyan
-                            $pingOk = Test-Connection -ComputerName $targetMachine -Count 1 -Quiet
-                            if ($pingOk) {
-                                Write-Host "[+] Ping respondido por $targetMachine." -ForegroundColor Green
-                            } else {
-                                Write-Host "[-] El equipo no responde a Ping (ICMP bloqueado en firewall o equipo apagado)." -ForegroundColor Yellow
-                            }
-
-                            $port445 = $false
-                            $port5985 = $false
-                            
-                            Write-Host "[*] Comprobando puerto 445 (SMB/PsExec)..." -ForegroundColor Yellow
-                            try {
-                                $tcpSMB = New-Object System.Net.Sockets.TcpClient
-                                $connectionSMB = $tcpSMB.BeginConnect($targetMachine, 445, $null, $null)
-                                $waitSMB = $connectionSMB.AsyncWaitHandle.WaitOne(1000, $false)
-                                if ($waitSMB) {
-                                    $tcpSMB.EndConnect($connectionSMB)
-                                    $port445 = $true
-                                    Write-Host "[+] Puerto 445 (SMB) ABIERTO." -ForegroundColor Green
-                                } else {
-                                    Write-Host "[-] Puerto 445 (SMB) CERRADO o bloqueado." -ForegroundColor Yellow
-                                }
-                                $tcpSMB.Close()
-                            } catch {
-                                Write-Host "[-] Error al verificar puerto 445: $($_.Exception.Message)" -ForegroundColor Red
-                            }
-
-                            Write-Host "[*] Comprobando puerto 5985 (WinRM HTTP)..." -ForegroundColor Yellow
-                            try {
-                                $tcpRM = New-Object System.Net.Sockets.TcpClient
-                                $connectionRM = $tcpRM.BeginConnect($targetMachine, 5985, $null, $null)
-                                $waitRM = $connectionRM.AsyncWaitHandle.WaitOne(1000, $false)
-                                if ($waitRM) {
-                                    $tcpRM.EndConnect($connectionRM)
-                                    $port5985 = $true
-                                    Write-Host "[+] Puerto 5985 (WinRM) ABIERTO." -ForegroundColor Green
-                                } else {
-                                    Write-Host "[-] Puerto 5985 (WinRM) CERRADO o bloqueado." -ForegroundColor Yellow
-                                }
-                                $tcpRM.Close()
-                            } catch {
-                                Write-Host "[-] Error al verificar puerto 5985: $($_.Exception.Message)" -ForegroundColor Red
-                            }
-
-                            # --- 6. DETERMINAR METODO A USAR ---
-                            $usarWinRM = $false
-                            $usarPsExec = $false
-
-                            if ($connOpt -eq "2") {
-                                $usarWinRM = $true
-                            }
-                            elseif ($connOpt -eq "3") {
-                                $usarPsExec = $true
-                            }
-                            else {
-                                if ($port5985) {
-                                    $usarWinRM = $true
-                                    Write-Host "[*] Metodo seleccionado: WinRM (Puerto 5985 abierto)." -ForegroundColor Cyan
-                                }
-                                elseif ($port445) {
-                                    $usarPsExec = $true
-                                    Write-Host "[*] Metodo seleccionado: PsExec (Puerto 445 abierto, WinRM cerrado)." -ForegroundColor Cyan
-                                }
-                                else {
-                                    $usarWinRM = $true
-                                    Write-Host "[*] Advertencia: Ningun puerto estandar respondio. Se intentara WinRM..." -ForegroundColor Yellow
-                                }
-                            }
-
-                            $psexecPath = "C:\PSTools\PsExec.exe"
-                            $psexecFound = $false
-                            if (Test-Path $psexecPath) {
-                                $psexecFound = $true
-                            } else {
-                                if (Test-Path ".\PsExec.exe") {
-                                    $psexecPath = (Resolve-Path ".\PsExec.exe").Path
-                                    $psexecFound = $true
-                                } else {
-                                    $where = Get-Command psexec -ErrorAction SilentlyContinue
-                                    if ($where) {
-                                        $psexecPath = $where.Definition
-                                        $psexecFound = $true
-                                    }
-                                }
-                            }
-
-                            # --- 7. WORKER SCRIPT REMOTO (Contexto NT AUTHORITY\SYSTEM) ---
-                            # Este script se ejecuta en la PC remota con maximos privilegios locales
-                            $workerBody = @'
-$logFile = "C:\Windows\Temp\Install-RSAT.log"
-$statFile = "C:\Windows\Temp\Install-RSAT.status"
-
-function Write-WorkerLog {
-    param([string]$msg, [string]$type = "INFO")
-    $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $line = "[$ts] [$type] $msg"
-    Add-Content -Path $logFile -Value $line -Encoding UTF8 -Force -ErrorAction SilentlyContinue
-}
-
-try {
-    "IN_PROGRESS" | Out-File -FilePath $statFile -Encoding UTF8 -Force
-    Write-WorkerLog "Iniciando instalacion remota de RSAT en contexto SYSTEM ($env:USERNAME)..." "INFO"
-
-    # A. Verificacion y configuracion de servicios criticos
-    $services = @("wuauserv", "bits", "cryptsvc", "TrustedInstaller")
-    foreach ($s in $services) {
-        try {
-            $svc = Get-Service -Name $s -ErrorAction SilentlyContinue
-            if ($svc) {
-                $wmiSvc = Get-WmiObject -Class Win32_Service -Filter "Name='$s'" -ErrorAction SilentlyContinue
-                if ($wmiSvc -and $wmiSvc.StartMode -eq "Disabled") {
-                    $wmiSvc.ChangeStartMode("Manual") | Out-Null
-                    Write-WorkerLog "Servicio $s cambiado de Disabled a Manual." "INFO"
-                }
-                if ($svc.Status -ne "Running") {
-                    Start-Service -Name $s -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
-                    Write-WorkerLog "Servicio $s iniciado." "INFO"
-                }
-            }
-        } catch {
-            Write-WorkerLog "Aviso en servicio $s: $($_.Exception.Message)" "WARN"
-        }
-    }
-
-    # B. Bypass de WSUS y directiva Servicing (Descarga directa desde Microsoft Update)
-    $wsusReg = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
-    $servicingReg = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Servicing"
-    $origUseWUServer = $null
-    $origRepairSource = $null
-    $wsusModified = $false
-    $servicingModified = $false
-
-    if ([string]::IsNullOrEmpty($offlineSource)) {
-        try {
-            if (Test-Path $wsusReg) {
-                $p = Get-ItemProperty -Path $wsusReg -Name "UseWUServer" -ErrorAction SilentlyContinue
-                if ($p -and $p.UseWUServer -eq 1) {
-                    $origUseWUServer = 1
-                    Set-ItemProperty -Path $wsusReg -Name "UseWUServer" -Value 0 -Force -ErrorAction SilentlyContinue
-                    $wsusModified = $true
-                    Write-WorkerLog "Bypass WSUS: UseWUServer establecido a 0 temporalmente." "INFO"
-                }
-            }
-
-            if (-not (Test-Path $servicingReg)) {
-                New-Item -Path $servicingReg -Force | Out-Null
-            }
-            $pServ = Get-ItemProperty -Path $servicingReg -Name "RepairContentServerSource" -ErrorAction SilentlyContinue
-            if ($pServ) {
-                $origRepairSource = $pServ.RepairContentServerSource
-            }
-            Set-ItemProperty -Path $servicingReg -Name "RepairContentServerSource" -Value 2 -Force -ErrorAction SilentlyContinue
-            Set-ItemProperty -Path $servicingReg -Name "UseWindowsUpdate" -Value 1 -Force -ErrorAction SilentlyContinue
-            $servicingModified = $true
-            Write-WorkerLog "Directiva Servicing configurada para descarga directa de Windows Update." "INFO"
-
-            # Reinicio limpio de wuauserv sin saturar alertas
-            Stop-Service -Name "wuauserv" -Force -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 2
-            Start-Service -Name "wuauserv" -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
-            Write-WorkerLog "Servicio Windows Update reiniciado correctamente." "INFO"
-        } catch {
-            Write-WorkerLog "Aviso al configurar directivas de Windows Update: $($_.Exception.Message)" "WARN"
-        }
-    }
-
-    # C. Escaneo de Componentes RSAT
-    Import-Module Dism -ErrorAction SilentlyContinue
-    Write-WorkerLog "Escaneando componentes RSAT pendientes..." "INFO"
-    $allNotPresent = Get-WindowsCapability -Online | Where-Object { $_.Name -like "Rsat.*" -and $_.State -eq "NotPresent" }
-    
-    $toInstall = @()
-    foreach ($cap in $allNotPresent) {
-        foreach ($pat in $targetPatterns) {
-            if ($cap.Name -like $pat) {
-                $toInstall += $cap
-                break
-            }
-        }
-    }
-
-    $successCount = 0
-    $failCount = 0
-
-    if ($toInstall.Count -eq 0) {
-        Write-WorkerLog "Todos los componentes solicitados ya se encuentran instalados." "INFO"
-        "COMPLETED_NOTHING_TODO" | Out-File -FilePath $statFile -Encoding UTF8 -Force
-    }
-    else {
-        Write-WorkerLog "Se encontraron $($toInstall.Count) componentes para instalar." "INFO"
-        $idx = 0
-        foreach ($cap in $toInstall) {
-            $idx++
-            Write-WorkerLog "[$idx/$($toInstall.Count)] Iniciando instalacion de $($cap.Name)..." "START"
-            try {
-                if (-not [string]::IsNullOrEmpty($offlineSource)) {
-                    Add-WindowsCapability -Online -Name $cap.Name -Source $offlineSource -LimitAccess -ErrorAction Stop | Out-Null
-                } else {
-                    Add-WindowsCapability -Online -Name $cap.Name -ErrorAction Stop | Out-Null
-                }
-
-                $chk = Get-WindowsCapability -Online -Name $cap.Name -ErrorAction SilentlyContinue
-                if ($chk -and $chk.State -eq "Installed") {
-                    Write-WorkerLog "[$idx/$($toInstall.Count)] Instalado con EXITO: $($cap.Name)" "SUCCESS"
-                    $successCount++
-                } else {
-                    Write-WorkerLog "[$idx/$($toInstall.Count)] No se pudo confirmar estado instalado para: $($cap.Name)" "FAIL"
-                    $failCount++
-                }
-            } catch {
-                Write-WorkerLog "[$idx/$($toInstall.Count)] ERROR al instalar $($cap.Name): $($_.Exception.Message)" "FAIL"
-                $failCount++
-            }
-        }
-
-        # Estado final
-        if ($failCount -eq 0 -and $successCount -gt 0) {
-            "COMPLETED_SUCCESS:$successCount" | Out-File -FilePath $statFile -Encoding UTF8 -Force
-        } elseif ($successCount -gt 0 -and $failCount -gt 0) {
-            "COMPLETED_PARTIAL:OK=$successCount,FAIL=$failCount" | Out-File -FilePath $statFile -Encoding UTF8 -Force
-        } else {
-            "COMPLETED_FAILED:$failCount" | Out-File -FilePath $statFile -Encoding UTF8 -Force
-        }
-    }
-} catch {
-    Write-WorkerLog "Error critico general: $($_.Exception.Message)" "ERROR"
-    "COMPLETED_FATAL:$($_.Exception.Message)" | Out-File -FilePath $statFile -Encoding UTF8 -Force
-} finally {
-    # D. Restauracion de directivas originales
-    Write-WorkerLog "Restaurando directivas y servicios originales..." "INFO"
-    try {
-        if ($wsusModified -and $origUseWUServer -ne $null) {
-            Set-ItemProperty -Path $wsusReg -Name "UseWUServer" -Value $origUseWUServer -Force -ErrorAction SilentlyContinue
-        }
-        if ($servicingModified) {
-            if ($origRepairSource -ne $null) {
-                Set-ItemProperty -Path $servicingReg -Name "RepairContentServerSource" -Value $origRepairSource -Force -ErrorAction SilentlyContinue
-            } else {
-                Remove-ItemProperty -Path $servicingReg -Name "RepairContentServerSource" -ErrorAction SilentlyContinue
-            }
-            Remove-ItemProperty -Path $servicingReg -Name "UseWindowsUpdate" -ErrorAction SilentlyContinue
-        }
-        Stop-Service -Name "wuauserv" -Force -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 1
-        Start-Service -Name "wuauserv" -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
-    } catch {}
-
-    Write-WorkerLog "Operacion de instalacion de RSAT concluida." "DONE"
-}
-'@
-
-                            # Ensamblado del worker script con parámetros incrustados
-                            $patternsFormatted = ($targetPatterns | ForEach-Object { "`"$_`"" }) -join ", "
-                            $workerHeader = "`$targetPatterns = @($patternsFormatted)`n`$offlineSource = `"$sourcePath`"`n"
-                            $fullWorkerScript = $workerHeader + $workerBody
-
-                            $exitoEjecucion = $false
-
-                            # --- 8. EJECUCION VIA WINRM (TAREA PROGRAMADA SYSTEM) ---
-                            if ($usarWinRM) {
-                                Write-Host "`n[*] Desplegando tarea remota bajo NT AUTHORITY\SYSTEM via WinRM..." -ForegroundColor Yellow
-                                if ($usu -ne "") {
-                                    Write-Host "    Autenticacion: $usu" -ForegroundColor Cyan
-                                } else {
-                                    Write-Host "    Autenticacion: Usuario actual de Windows" -ForegroundColor Cyan
-                                }
-
-                                $initScriptBlock = {
-                                    param($scriptContent)
-                                    
-                                    # Asegurar C:\Windows\Temp
-                                    if (-not (Test-Path "C:\Windows\Temp")) {
-                                        New-Item -Path "C:\Windows\Temp" -ItemType Directory -Force | Out-Null
-                                    }
-
-                                    # Limpiar logs y estado anteriores
-                                    Remove-Item "C:\Windows\Temp\Install-RSAT.log" -Force -ErrorAction SilentlyContinue
-                                    Remove-Item "C:\Windows\Temp\Install-RSAT.status" -Force -ErrorAction SilentlyContinue
-                                    Remove-Item "C:\Windows\Temp\Install-RSAT-Worker.ps1" -Force -ErrorAction SilentlyContinue
-
-                                    # Escribir el worker script en disco
-                                    [System.IO.File]::WriteAllText("C:\Windows\Temp\Install-RSAT-Worker.ps1", $scriptContent, [System.Text.Encoding]::UTF8)
-
-                                    $taskName = "Install-RSAT-Task"
-                                    try {
-                                        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
-                                    } catch {}
-
-                                    $registered = $false
-                                    try {
-                                        $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File C:\Windows\Temp\Install-RSAT-Worker.ps1"
-                                        $principal = New-ScheduledTaskPrincipal -UserId "NT AUTHORITY\SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-                                        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 2)
-                                        Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings -Force | Out-Null
-                                        Start-ScheduledTask -TaskName $taskName | Out-Null
-                                        $registered = $true
-                                    }
-                                    catch {
-                                        # Fallback con schtasks.exe si el modulo ScheduledTasks tuviera restricciones
-                                        $cmdCreate = "schtasks.exe /create /f /tn `"$taskName`" /ru `"SYSTEM`" /rl HIGHEST /tr `"powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Windows\Temp\Install-RSAT-Worker.ps1`" /sc ONCE /st 00:00"
-                                        cmd.exe /c $cmdCreate 2>&1 | Out-Null
-                                        cmd.exe /c "schtasks.exe /run /tn `"$taskName`"" 2>&1 | Out-Null
-                                        $registered = $true
-                                    }
-
-                                    return $registered
-                                }
-
-                                try {
-                                    $lanzado = $false
-                                    if ($cred -ne $null) {
-                                        $lanzado = Invoke-Command -ComputerName $targetMachine -Credential $cred -ScriptBlock $initScriptBlock -ArgumentList $fullWorkerScript -ErrorAction Stop
-                                    } else {
-                                        $lanzado = Invoke-Command -ComputerName $targetMachine -ScriptBlock $initScriptBlock -ArgumentList $fullWorkerScript -ErrorAction Stop
-                                    }
-
-                                    if ($lanzado) {
-                                        Write-Host "[+] Tarea iniciada en $targetMachine. Transmitiendo progreso en vivo:`n" -ForegroundColor Green
-                                        
-                                        $lastLine = 0
-                                        $terminado = $false
-                                        $maxMinutes = 35
-                                        $startWait = Get-Date
-                                        $finalStatus = ""
-
-                                        $pollBlock = {
-                                            param($fromIndex)
-                                            $log = "C:\Windows\Temp\Install-RSAT.log"
-                                            $st = "C:\Windows\Temp\Install-RSAT.status"
-                                            $lines = @()
-                                            $total = 0
-                                            if (Test-Path $log) {
-                                                try {
-                                                    $all = Get-Content $log -Encoding UTF8 -ErrorAction SilentlyContinue
-                                                    if ($all) {
-                                                        $total = $all.Count
-                                                        if ($total -gt $fromIndex) {
-                                                            $lines = $all[$fromIndex..($total - 1)]
-                                                        }
-                                                    }
-                                                } catch {}
-                                            }
-                                            $status = "RUNNING"
-                                            if (Test-Path $st) {
-                                                try {
-                                                    $status = (Get-Content $st -Raw -ErrorAction SilentlyContinue).Trim()
-                                                } catch {}
-                                            }
-                                            return @{ Lines = $lines; Total = $total; Status = $status }
-                                        }
-
-                                        while (-not $terminado) {
-                                            Start-Sleep -Seconds 3
-                                            
-                                            $pollRes = $null
-                                            try {
-                                                if ($cred -ne $null) {
-                                                    $pollRes = Invoke-Command -ComputerName $targetMachine -Credential $cred -ScriptBlock $pollBlock -ArgumentList $lastLine -ErrorAction SilentlyContinue
-                                                } else {
-                                                    $pollRes = Invoke-Command -ComputerName $targetMachine -ScriptBlock $pollBlock -ArgumentList $lastLine -ErrorAction SilentlyContinue
-                                                }
-                                            } catch {}
-
-                                            if ($pollRes) {
-                                                $lastLine = $pollRes.Total
-                                                if ($pollRes.Lines) {
-                                                    foreach ($l in $pollRes.Lines) {
-                                                        if ($l -match "\[SUCCESS\]") {
-                                                            Write-Host "  $l" -ForegroundColor Green
-                                                        }
-                                                        elseif ($l -match "\[FAIL\]" -or $l -match "\[ERROR\]") {
-                                                            Write-Host "  $l" -ForegroundColor Red
-                                                        }
-                                                        elseif ($l -match "\[START\]") {
-                                                            Write-Host "  $l" -ForegroundColor Cyan
-                                                        }
-                                                        elseif ($l -match "\[WARN\]") {
-                                                            Write-Host "  $l" -ForegroundColor Yellow
-                                                        }
-                                                        else {
-                                                            Write-Host "  $l" -ForegroundColor Gray
-                                                        }
-                                                    }
-                                                }
-
-                                                if ($pollRes.Status -like "COMPLETED_*") {
-                                                    $terminado = $true
-                                                    $finalStatus = $pollRes.Status
-                                                }
-                                            }
-
-                                            # Timeout de seguridad
-                                            if (((Get-Date) - $startWait).TotalMinutes -gt $maxMinutes) {
-                                                Write-Host "`n[-] Se supero el tiempo limite de espera ($maxMinutes minutos)." -ForegroundColor Red
-                                                break
-                                            }
-                                        }
-
-                                        # Limpieza en la PC remota
-                                        $cleanupBlock = {
-                                            try {
-                                                Unregister-ScheduledTask -TaskName "Install-RSAT-Task" -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
-                                            } catch {}
-                                            cmd.exe /c "schtasks.exe /delete /f /tn \`"Install-RSAT-Task\`"" 2>&1 | Out-Null
-                                            Remove-Item "C:\Windows\Temp\Install-RSAT-Worker.ps1" -Force -ErrorAction SilentlyContinue
-                                        }
-                                        try {
-                                            if ($cred -ne $null) {
-                                                Invoke-Command -ComputerName $targetMachine -Credential $cred -ScriptBlock $cleanupBlock -ErrorAction SilentlyContinue | Out-Null
-                                            } else {
-                                                Invoke-Command -ComputerName $targetMachine -ScriptBlock $cleanupBlock -ErrorAction SilentlyContinue | Out-Null
-                                            }
-                                        } catch {}
-
-                                        # Evaluar resultado final
-                                        if ($finalStatus -like "COMPLETED_SUCCESS*" -or $finalStatus -eq "COMPLETED_NOTHING_TODO") {
-                                            $exitoEjecucion = $true
-                                        }
-                                        elseif ($finalStatus -like "COMPLETED_PARTIAL*") {
-                                            $exitoEjecucion = $true
-                                            Write-Host "`n[!] La instalacion finalizo con algunos componentes pendientes o fallidos." -ForegroundColor Yellow
-                                        }
-                                        else {
-                                            Write-Host "`n[-] La instalacion no concluyo exitosamente ($finalStatus)." -ForegroundColor Red
-                                        }
-                                    }
-                                }
-                                catch {
-                                    Write-Host "[-] Error al ejecutar via WinRM: $($_.Exception.Message)" -ForegroundColor Red
-                                    if ($connOpt -eq "1" -and $port445 -and $psexecFound) {
-                                        Write-Host "[*] Fallback: Intentando instalacion con PsExec como SYSTEM..." -ForegroundColor Yellow
-                                        $usarPsExec = $true
-                                    } else {
-                                        Write-Host "Asegurese de que la PC destino tenga habilitado WinRM y el firewall permita el puerto 5985." -ForegroundColor Yellow
-                                    }
-                                }
-                            }
-
-                            # --- 9. EJECUCION VIA PSEXEC (-s SYSTEM) ---
-                            if ($usarPsExec -and -not $exitoEjecucion) {
-                                if (-not $psexecFound) {
-                                    Write-Host "`n[ERROR] Se requiere PsExec pero no se encontro PsExec.exe en C:\PSTools, en el PATH, ni en la carpeta actual." -ForegroundColor Red
-                                }
-                                else {
-                                    Write-Host "`n[*] Iniciando instalacion remota via PsExec como SYSTEM (-s -h)..." -ForegroundColor Yellow
-                                    
-                                    # Codificar el worker script en Base64
-                                    $bytes = [System.Text.Encoding]::Unicode.GetBytes($fullWorkerScript)
-                                    $encoded = [Convert]::ToBase64String($bytes)
-                                    
-                                    $argsBase = "-accepteula -h -s powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"
-                                    
-                                    if ($usu -ne "") {
-                                        Write-Host "Usando credenciales de: $usu" -ForegroundColor Cyan
-                                        $argsFull = "\\$targetMachine -u `"$usu`" -p `"$claTexto`" $argsBase"
-                                    } else {
-                                        Write-Host "Usando credenciales del usuario actual..." -ForegroundColor Cyan
-                                        $argsFull = "\\$targetMachine $argsBase"
-                                    }
-
-                                    try {
-                                        Write-Host "Ejecutando PsExec en: $psexecPath" -ForegroundColor Gray
-                                        $p = Start-Process -FilePath $psexecPath -ArgumentList $argsFull -Wait -NoNewWindow -PassThru -ErrorAction Stop
-                                        if ($p -and $p.ExitCode -eq 0) {
-                                            Write-Host "[OK] Proceso de instalacion finalizado via PsExec con exito!" -ForegroundColor Green
-                                            $exitoEjecucion = $true
-                                        } else {
-                                            $code = if ($p) { $p.ExitCode } else { "N/A" }
-                                            Write-Host "[-] PsExec retorno codigo de salida: $code" -ForegroundColor Red
-                                        }
-                                    } catch {
-                                        Write-Host "[-] Error al ejecutar PsExec: $($_.Exception.Message)" -ForegroundColor Red
-                                    }
-                                }
-                            }
-
-                            # --- 10. MENSAJE FINAL DE ESTADO ---
-                            if ($exitoEjecucion) {
-                                Write-Host "`n========================================================" -ForegroundColor Green
-                                Write-Host "   PROCESO DE INSTALACION DE RSAT REMOTO COMPLETADO" -ForegroundColor White -BackgroundColor DarkGreen
-                                Write-Host "========================================================" -ForegroundColor Green
-                            } else {
-                                Write-Host "`n========================================================" -ForegroundColor Red
-                                Write-Host "      ERROR: NO SE PUDO INSTALAR RSAT EN LA PC REMOTA" -ForegroundColor White -BackgroundColor DarkRed
-                                Write-Host "========================================================" -ForegroundColor Red
-                                Write-Host "Revise los registros en la PC remota: C:\Windows\Temp\Install-RSAT.log" -ForegroundColor Yellow
-                            }
-
-                            Write-Host " "
-                            Read-Host "Presione ENTER para continuar..."
-                        }
-                    }
+                    Invoke-InstalarRSATRemoto
                 }
 
                 "13" { 

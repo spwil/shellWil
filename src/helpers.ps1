@@ -104,6 +104,21 @@ function psReconstruirSiDesarrollo {
     }
 }
 
+function Test-IsProcessAdmin {
+    <#
+    .SYNOPSIS
+        Verifica si el proceso actual se ejecuta con privilegios elevados de Administrador (Token Elevado / UAC).
+    #>
+    try {
+        $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+        return [bool]$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    }
+    catch {
+        return $false
+    }
+}
+
 function psHabilitarAdministracionRemota {
     param(
         [string]$targetInput,
