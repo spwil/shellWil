@@ -1083,3 +1083,214 @@ function psMostrarInformacionUsuarioActivo {
 # Alias modular para compatibilidad con convenciones alternativas
 Set-Alias -Name Show-ActiveUserSessionInfo -Value psMostrarInformacionUsuarioActivo -ErrorAction SilentlyContinue
 
+# ==============================================================================
+#   HELPERS GRUPO 101: CREDENCIALES NAVEGADORES (AUDITORIA Y SEGURIDAD)
+# ==============================================================================
+
+function Initialize-WinSqliteHelper {
+    <#
+    .SYNOPSIS
+        Inicializa en memoria el lector SQLite nativo (WinSqliteReader) utilizando
+        la librería winsqlite3.dll incorporada en Windows sin dependencias externas.
+    #>
+    if (-not ([System.Management.Automation.PSTypeName]"WinSqliteReader").Type) {
+        $cCode = @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+
+public class SqliteLoginEntry {
+    public string OriginUrl { get; set; }
+    public string ActionUrl { get; set; }
+    public string Username { get; set; }
+    public long DateLastUsed { get; set; }
+}
+
+public class WinSqliteReader {
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_open16", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+    public static extern int sqlite3_open16(string filename, out IntPtr db);
+
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_prepare16_v2", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+    public static extern int sqlite3_prepare16_v2(IntPtr db, string zSql, int nByte, out IntPtr ppStmt, IntPtr pzTail);
+
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_step", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int sqlite3_step(IntPtr pStmt);
+
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_column_text16", CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr sqlite3_column_text16(IntPtr pStmt, int iCol);
+
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_column_int64", CallingConvention = CallingConvention.Cdecl)]
+    public static extern long sqlite3_column_int64(IntPtr pStmt, int iCol);
+
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_finalize", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int sqlite3_finalize(IntPtr pStmt);
+
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_close", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int sqlite3_close(IntPtr db);
+
+    public static List<SqliteLoginEntry> ReadLogins(string dbPath) {
+        var list = new List<SqliteLoginEntry>();
+        IntPtr db = IntPtr.Zero;
+        if (sqlite3_open16(dbPath, out db) != 0) {
+            return list;
+        }
+
+        IntPtr stmt = IntPtr.Zero;
+        // CONSULTA ESTRICTA: Se omiten por diseno campos de claves o hashes (cero extraccion de secretos)
+        string sql = "SELECT origin_url, action_url, username_value, date_last_used FROM logins";
+        try {
+            if (sqlite3_prepare16_v2(db, sql, -1, out stmt, IntPtr.Zero) == 0) {
+                while (sqlite3_step(stmt) == 100) { // SQLITE_ROW = 100
+                    IntPtr pOrigin = sqlite3_column_text16(stmt, 0);
+                    IntPtr pAction = sqlite3_column_text16(stmt, 1);
+                    IntPtr pUser = sqlite3_column_text16(stmt, 2);
+                    long lastUsed = sqlite3_column_int64(stmt, 3);
+
+                    string origin = pOrigin != IntPtr.Zero ? Marshal.PtrToStringUni(pOrigin) : "";
+                    string action = pAction != IntPtr.Zero ? Marshal.PtrToStringUni(pAction) : "";
+                    string user = pUser != IntPtr.Zero ? Marshal.PtrToStringUni(pUser) : "";
+
+                    list.Add(new SqliteLoginEntry {
+                        OriginUrl = origin,
+                        ActionUrl = action,
+                        Username = user,
+                        DateLastUsed = lastUsed
+                    });
+                }
+            }
+        }
+        finally {
+            if (stmt != IntPtr.Zero) sqlite3_finalize(stmt);
+            if (db != IntPtr.Zero) sqlite3_close(db);
+        }
+        return list;
+    }
+}
+'@
+        try {
+            Add-Type -TypeDefinition $cCode -ErrorAction SilentlyContinue
+        } catch {}
+    }
+}
+
+function Get-DomainClassification {
+    <#
+    .SYNOPSIS
+        Analiza una URL o dominio y devuelve su clasificación sugerida para
+        políticas de administración de red (Listas Blancas, Listas Negras, Ocio, etc.).
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$UrlOrDomain
+    )
+
+    $raw = $UrlOrDomain.Trim()
+    $domain = ""
+
+    try {
+        if ($raw -match '^[a-zA-Z]+://') {
+            $uri = [System.Uri]$raw
+            $domain = $uri.Host.ToLower()
+        } else {
+            $domain = ($raw -split '/')[0].ToLower()
+        }
+    } catch {
+        $domain = $raw.ToLower()
+    }
+
+    $categoria = "[EXTERNO / Auditoria]"
+    $color = "Gray"
+    $sugerencia = "Monitorear"
+
+    # 1. Sitios Institucionales / Estatales / Educativos (Lista Blanca)
+    if ($domain -match '\.gob\.bo|\.gov|\.edu|gmsantacruz|santacruz\.gob|sigep|impuestos|aduana|ruat|justicia') {
+        $categoria = "[LISTA BLANCA - Institucional]"
+        $color = "Green"
+        $sugerencia = "Permitir / Confianza"
+    }
+    # 2. Productividad / Servicios Cloud Empresariales
+    elseif ($domain -match 'microsoft|office|live\.com|azure|sharepoint|outlook|google\.com|gmail|drive\.google|github|gitlab') {
+        $categoria = "[PRODUCTIVIDAD / Cloud]"
+        $color = "Cyan"
+        $sugerencia = "Permitir Corporativo"
+    }
+    # 3. Redes Sociales / Ocio / Streaming (Lista Negra)
+    elseif ($domain -match 'facebook|instagram|tiktok|twitter|x\.com|youtube|netflix|spotify|twitch|disney|primevideo|pinterest|reddit') {
+        $categoria = "[LISTA NEGRA - Ocio / Red Social]"
+        $color = "Red"
+        $sugerencia = "Bloquear / Restringir"
+    }
+    # 4. Mensajería Instantánea
+    elseif ($domain -match 'whatsapp|telegram|discord|slack|skype') {
+        $categoria = "[RESTRINGIDO - Mensajeria]"
+        $color = "Yellow"
+        $sugerencia = "Controlar Politica"
+    }
+    # 5. Servicios Financieros / Bancarios
+    elseif ($domain -match 'banco|bnb|bisa|mercantil|union|fassil|sol|bcp|ganadero|ecofuturo|fie|prodem') {
+        $categoria = "[SENSIBLE - Financiero]"
+        $color = "Magenta"
+        $sugerencia = "Auditar Acceso"
+    }
+    # 6. Almacenamiento Personal / Compartición de archivos
+    elseif ($domain -match 'mega\.nz|mediafire|dropbox|wetransfer|rapidgator') {
+        $categoria = "[RIESGO - Exfiltracion]"
+        $color = "DarkYellow"
+        $sugerencia = "Restringir Transferencia"
+    }
+
+    return [PSCustomObject]@{
+        Domain           = $domain
+        Category         = $categoria
+        Color            = $color
+        ActionSuggestion = $sugerencia
+    }
+}
+
+function Write-AuditAccess101 {
+    <#
+    .SYNOPSIS
+        Asienta el registro de auditoría de acceso al Grupo 101 tanto en el
+        Visor de Eventos de Windows (EventLog) como en una bitácora local dedicada.
+    #>
+    param(
+        [string]$Target = "Localhost",
+        [string]$Action = "Auditoria de Navegadores",
+        [string]$Status = "AUTORIZADO",
+        [string]$Details = ""
+    )
+
+    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $fechaStr = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $mensajeLog = "[$fechaStr] | OPERADOR: $currentUser | DESTINO: $Target | ACCION: $Action | ESTADO: $Status"
+    if (-not [string]::IsNullOrWhiteSpace($Details)) {
+        $mensajeLog += " | DETALLES: $Details"
+    }
+
+    # 1. Bitácora en archivo de texto (Modo anexo)
+    try {
+        $logDir = "C:\shellWil\logs"
+        if (-not (Test-Path $logDir)) {
+            New-Item -ItemType Directory -Path $logDir -Force -ErrorAction SilentlyContinue | Out-Null
+        }
+        $logFile = Join-Path $logDir "audit_101.log"
+        $mensajeLog | Out-File -FilePath $logFile -Append -Encoding UTF8 -ErrorAction SilentlyContinue
+    } catch {}
+
+    # 2. Visor de Eventos de Windows (Application / ShellSW)
+    try {
+        $sourceName = "ShellSW"
+        if (-not [System.Diagnostics.EventLog]::SourceExists($sourceName)) {
+            [System.Diagnostics.EventLog]::CreateEventSource($sourceName, "Application")
+        }
+        $entryType = if ($Status -like "*DENEGADO*") { 
+            [System.Diagnostics.EventLogEntryType]::Warning 
+        } else { 
+            [System.Diagnostics.EventLogEntryType]::Information 
+        }
+        $eventId = if ($Status -like "*DENEGADO*") { 10102 } else { 10101 }
+        [System.Diagnostics.EventLog]::WriteEntry($sourceName, $mensajeLog, $entryType, $eventId)
+    } catch {}
+}
+
+

@@ -1090,6 +1090,1158 @@ function psMostrarInformacionUsuarioActivo {
 # Alias modular para compatibilidad con convenciones alternativas
 Set-Alias -Name Show-ActiveUserSessionInfo -Value psMostrarInformacionUsuarioActivo -ErrorAction SilentlyContinue
 
+# ==============================================================================
+#   HELPERS GRUPO 101: CREDENCIALES NAVEGADORES (AUDITORIA Y SEGURIDAD)
+# ==============================================================================
+
+function Initialize-WinSqliteHelper {
+    <#
+    .SYNOPSIS
+        Inicializa en memoria el lector SQLite nativo (WinSqliteReader) utilizando
+        la librería winsqlite3.dll incorporada en Windows sin dependencias externas.
+    #>
+    if (-not ([System.Management.Automation.PSTypeName]"WinSqliteReader").Type) {
+        $cCode = @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+
+public class SqliteLoginEntry {
+    public string OriginUrl { get; set; }
+    public string ActionUrl { get; set; }
+    public string Username { get; set; }
+    public long DateLastUsed { get; set; }
+}
+
+public class WinSqliteReader {
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_open16", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+    public static extern int sqlite3_open16(string filename, out IntPtr db);
+
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_prepare16_v2", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+    public static extern int sqlite3_prepare16_v2(IntPtr db, string zSql, int nByte, out IntPtr ppStmt, IntPtr pzTail);
+
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_step", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int sqlite3_step(IntPtr pStmt);
+
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_column_text16", CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr sqlite3_column_text16(IntPtr pStmt, int iCol);
+
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_column_int64", CallingConvention = CallingConvention.Cdecl)]
+    public static extern long sqlite3_column_int64(IntPtr pStmt, int iCol);
+
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_finalize", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int sqlite3_finalize(IntPtr pStmt);
+
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_close", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int sqlite3_close(IntPtr db);
+
+    public static List<SqliteLoginEntry> ReadLogins(string dbPath) {
+        var list = new List<SqliteLoginEntry>();
+        IntPtr db = IntPtr.Zero;
+        if (sqlite3_open16(dbPath, out db) != 0) {
+            return list;
+        }
+
+        IntPtr stmt = IntPtr.Zero;
+        // CONSULTA ESTRICTA: Se omiten por diseno campos de claves o hashes (cero extraccion de secretos)
+        string sql = "SELECT origin_url, action_url, username_value, date_last_used FROM logins";
+        try {
+            if (sqlite3_prepare16_v2(db, sql, -1, out stmt, IntPtr.Zero) == 0) {
+                while (sqlite3_step(stmt) == 100) { // SQLITE_ROW = 100
+                    IntPtr pOrigin = sqlite3_column_text16(stmt, 0);
+                    IntPtr pAction = sqlite3_column_text16(stmt, 1);
+                    IntPtr pUser = sqlite3_column_text16(stmt, 2);
+                    long lastUsed = sqlite3_column_int64(stmt, 3);
+
+                    string origin = pOrigin != IntPtr.Zero ? Marshal.PtrToStringUni(pOrigin) : "";
+                    string action = pAction != IntPtr.Zero ? Marshal.PtrToStringUni(pAction) : "";
+                    string user = pUser != IntPtr.Zero ? Marshal.PtrToStringUni(pUser) : "";
+
+                    list.Add(new SqliteLoginEntry {
+                        OriginUrl = origin,
+                        ActionUrl = action,
+                        Username = user,
+                        DateLastUsed = lastUsed
+                    });
+                }
+            }
+        }
+        finally {
+            if (stmt != IntPtr.Zero) sqlite3_finalize(stmt);
+            if (db != IntPtr.Zero) sqlite3_close(db);
+        }
+        return list;
+    }
+}
+'@
+        try {
+            Add-Type -TypeDefinition $cCode -ErrorAction SilentlyContinue
+        } catch {}
+    }
+}
+
+function Get-DomainClassification {
+    <#
+    .SYNOPSIS
+        Analiza una URL o dominio y devuelve su clasificación sugerida para
+        políticas de administración de red (Listas Blancas, Listas Negras, Ocio, etc.).
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$UrlOrDomain
+    )
+
+    $raw = $UrlOrDomain.Trim()
+    $domain = ""
+
+    try {
+        if ($raw -match '^[a-zA-Z]+://') {
+            $uri = [System.Uri]$raw
+            $domain = $uri.Host.ToLower()
+        } else {
+            $domain = ($raw -split '/')[0].ToLower()
+        }
+    } catch {
+        $domain = $raw.ToLower()
+    }
+
+    $categoria = "[EXTERNO / Auditoria]"
+    $color = "Gray"
+    $sugerencia = "Monitorear"
+
+    # 1. Sitios Institucionales / Estatales / Educativos (Lista Blanca)
+    if ($domain -match '\.gob\.bo|\.gov|\.edu|gmsantacruz|santacruz\.gob|sigep|impuestos|aduana|ruat|justicia') {
+        $categoria = "[LISTA BLANCA - Institucional]"
+        $color = "Green"
+        $sugerencia = "Permitir / Confianza"
+    }
+    # 2. Productividad / Servicios Cloud Empresariales
+    elseif ($domain -match 'microsoft|office|live\.com|azure|sharepoint|outlook|google\.com|gmail|drive\.google|github|gitlab') {
+        $categoria = "[PRODUCTIVIDAD / Cloud]"
+        $color = "Cyan"
+        $sugerencia = "Permitir Corporativo"
+    }
+    # 3. Redes Sociales / Ocio / Streaming (Lista Negra)
+    elseif ($domain -match 'facebook|instagram|tiktok|twitter|x\.com|youtube|netflix|spotify|twitch|disney|primevideo|pinterest|reddit') {
+        $categoria = "[LISTA NEGRA - Ocio / Red Social]"
+        $color = "Red"
+        $sugerencia = "Bloquear / Restringir"
+    }
+    # 4. Mensajería Instantánea
+    elseif ($domain -match 'whatsapp|telegram|discord|slack|skype') {
+        $categoria = "[RESTRINGIDO - Mensajeria]"
+        $color = "Yellow"
+        $sugerencia = "Controlar Politica"
+    }
+    # 5. Servicios Financieros / Bancarios
+    elseif ($domain -match 'banco|bnb|bisa|mercantil|union|fassil|sol|bcp|ganadero|ecofuturo|fie|prodem') {
+        $categoria = "[SENSIBLE - Financiero]"
+        $color = "Magenta"
+        $sugerencia = "Auditar Acceso"
+    }
+    # 6. Almacenamiento Personal / Compartición de archivos
+    elseif ($domain -match 'mega\.nz|mediafire|dropbox|wetransfer|rapidgator') {
+        $categoria = "[RIESGO - Exfiltracion]"
+        $color = "DarkYellow"
+        $sugerencia = "Restringir Transferencia"
+    }
+
+    return [PSCustomObject]@{
+        Domain           = $domain
+        Category         = $categoria
+        Color            = $color
+        ActionSuggestion = $sugerencia
+    }
+}
+
+function Write-AuditAccess101 {
+    <#
+    .SYNOPSIS
+        Asienta el registro de auditoría de acceso al Grupo 101 tanto en el
+        Visor de Eventos de Windows (EventLog) como en una bitácora local dedicada.
+    #>
+    param(
+        [string]$Target = "Localhost",
+        [string]$Action = "Auditoria de Navegadores",
+        [string]$Status = "AUTORIZADO",
+        [string]$Details = ""
+    )
+
+    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $fechaStr = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $mensajeLog = "[$fechaStr] | OPERADOR: $currentUser | DESTINO: $Target | ACCION: $Action | ESTADO: $Status"
+    if (-not [string]::IsNullOrWhiteSpace($Details)) {
+        $mensajeLog += " | DETALLES: $Details"
+    }
+
+    # 1. Bitácora en archivo de texto (Modo anexo)
+    try {
+        $logDir = "C:\shellWil\logs"
+        if (-not (Test-Path $logDir)) {
+            New-Item -ItemType Directory -Path $logDir -Force -ErrorAction SilentlyContinue | Out-Null
+        }
+        $logFile = Join-Path $logDir "audit_101.log"
+        $mensajeLog | Out-File -FilePath $logFile -Append -Encoding UTF8 -ErrorAction SilentlyContinue
+    } catch {}
+
+    # 2. Visor de Eventos de Windows (Application / ShellSW)
+    try {
+        $sourceName = "ShellSW"
+        if (-not [System.Diagnostics.EventLog]::SourceExists($sourceName)) {
+            [System.Diagnostics.EventLog]::CreateEventSource($sourceName, "Application")
+        }
+        $entryType = if ($Status -like "*DENEGADO*") { 
+            [System.Diagnostics.EventLogEntryType]::Warning 
+        } else { 
+            [System.Diagnostics.EventLogEntryType]::Information 
+        }
+        $eventId = if ($Status -like "*DENEGADO*") { 10102 } else { 10101 }
+        [System.Diagnostics.EventLog]::WriteEntry($sourceName, $mensajeLog, $entryType, $eventId)
+    } catch {}
+}
+
+
+# =========================================================================================
+# FUNCIONES AUXILIARES Y MODULARES PARA EL GRUPO 19: FORMATEO Y PREPARACION DE DISCOS / USB
+# =========================================================================================
+
+function Get-SafeDiskList {
+    <#
+    .SYNOPSIS
+        Obtiene la lista de discos físicos conectados con detección segura del disco del sistema.
+    #>
+    $systemDiskNum = -1
+    try {
+        $sysDrive = $env:SystemDrive.Replace(":", "")
+        if (Get-Command Get-Partition -ErrorAction SilentlyContinue) {
+            $sysPart = Get-Partition -DriveLetter $sysDrive -ErrorAction SilentlyContinue
+            if ($sysPart) { $systemDiskNum = $sysPart.DiskNumber }
+        }
+    } catch {}
+
+    $list = @()
+    if (Get-Command Get-Disk -ErrorAction SilentlyContinue) {
+        try {
+            $disks = Get-Disk | Sort-Object Number
+            foreach ($d in $disks) {
+                $isSys = ($d.Number -eq $systemDiskNum)
+                $sizeGB = [Math]::Round($d.Size / 1GB, 2)
+                $bus = if ($d.BusType) { $d.BusType.ToString() } else { "Desconocido" }
+                $media = if ($bus -eq "USB") { "USB/Extraible" } else { "Fijo" }
+                $list += [PSCustomObject]@{
+                    Number            = $d.Number
+                    FriendlyName      = $d.FriendlyName
+                    BusType           = $bus
+                    MediaType         = $media
+                    SizeGB            = $sizeGB
+                    PartitionStyle    = $d.PartitionStyle.ToString()
+                    HealthStatus      = $d.HealthStatus.ToString()
+                    OperationalStatus = $d.OperationalStatus.ToString()
+                    IsSystem          = $isSys
+                }
+            }
+            return $list
+        } catch {}
+    }
+
+    # Fallback WMI Win32_DiskDrive (Compatibilidad Win 7)
+    try {
+        $wmiDisks = Get-WmiObject Win32_DiskDrive | Sort-Object Index
+        foreach ($wd in $wmiDisks) {
+            $idx = [int]$wd.Index
+            $isSys = ($idx -eq $systemDiskNum)
+            $sizeGB = if ($wd.Size) { [Math]::Round($wd.Size / 1GB, 2) } else { 0 }
+            $bus = if ($wd.InterfaceType) { $wd.InterfaceType } else { "Desconocido" }
+            $list += [PSCustomObject]@{
+                Number            = $idx
+                FriendlyName      = $wd.Caption
+                BusType           = $bus
+                MediaType         = (if ($bus -match "USB") { "USB/Extraible" } else { "Fijo" })
+                SizeGB            = $sizeGB
+                PartitionStyle    = "N/D"
+                HealthStatus      = $wd.Status
+                OperationalStatus = "Online"
+                IsSystem          = $isSys
+            }
+        }
+    } catch {}
+    return $list
+}
+
+function Invoke-DiskpartBatch {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string[]]$Commands
+    )
+    $tempFile = [System.IO.Path]::GetTempFileName()
+    try {
+        $Commands | Out-File -FilePath $tempFile -Encoding ascii
+        Write-Host "`n[DISKPART] Procesando directivas de particionado y formateo..." -ForegroundColor Cyan
+        $proc = Start-Process -FilePath "diskpart.exe" -ArgumentList "/s `"$tempFile`"" -NoNewWindow -PassThru -Wait
+        return $proc.ExitCode
+    }
+    catch {
+        Write-Host "`n[ERROR DISKPART]: $_" -ForegroundColor Red
+        return 1
+    }
+    finally {
+        if (Test-Path $tempFile) {
+            Remove-Item -Path $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Show-FormatBootMatrix {
+    cabecera
+    Write-Header "OPCION 19.0: TABLA DE RELACION - FILESYSTEM vs PARTICION vs MODO DE ARRANQUE"
+
+    Write-Host "`n==========================================================================================" -ForegroundColor Cyan
+    Write-Host "               MATRIZ DE COMPATIBILIDAD PARA INSTALACION DE SISTEMAS OPERATIVOS            " -ForegroundColor Yellow
+    Write-Host "==========================================================================================" -ForegroundColor Cyan
+
+    $matrix = @(
+        [PSCustomObject]@{
+            "Modo Arranque"  = "Legacy BIOS (CSM)"
+            "Particion"      = "MBR"
+            "FS Arranque"    = "NTFS / FAT32"
+            "FS Sistema(C:)" = "NTFS"
+            "Activa?"        = "SI (Req.)"
+            "Max Disco"      = "<= 2.0 TB"
+            "Lim. Archivo"   = "NTFS: Ilim. | FAT: 4GB"
+            "Sec.Boot"       = "NO"
+        },
+        [PSCustomObject]@{
+            "Modo Arranque"  = "UEFI Nativo"
+            "Particion"      = "GPT"
+            "FS Arranque"    = "FAT32 (ESP/EFI)"
+            "FS Sistema(C:)" = "NTFS"
+            "Activa?"        = "NO (Usa GUID)"
+            "Max Disco"      = "> 2TB (18 EB)"
+            "Lim. Archivo"   = "NTFS: Ilim. | FAT: 4GB"
+            "Sec.Boot"       = "SI"
+        },
+        [PSCustomObject]@{
+            "Modo Arranque"  = "USB Inst. BIOS"
+            "Particion"      = "MBR"
+            "FS Arranque"    = "NTFS / FAT32"
+            "FS Sistema(C:)" = "N/A (Medio)"
+            "Activa?"        = "SI (bootsect)"
+            "Max Disco"      = "<= 2.0 TB"
+            "Lim. Archivo"   = "NTFS soporta wim > 4GB"
+            "Sec.Boot"       = "NO"
+        },
+        [PSCustomObject]@{
+            "Modo Arranque"  = "USB Inst. UEFI"
+            "Particion"      = "GPT o MBR"
+            "FS Arranque"    = "FAT32 (UEFI)"
+            "FS Sistema(C:)" = "N/A (Medio)"
+            "Activa?"        = "NO (No req.)"
+            "Max Disco"      = "Cualquiera"
+            "Lim. Archivo"   = "FAT32 max 4GB (split)"
+            "Sec.Boot"       = "SI"
+        },
+        [PSCustomObject]@{
+            "Modo Arranque"  = "Almacen. exFAT"
+            "Particion"      = "MBR o GPT"
+            "FS Arranque"    = "No Booteable"
+            "FS Sistema(C:)" = "No Windows"
+            "Activa?"        = "No Aplica"
+            "Max Disco"      = "Hasta 128PB"
+            "Lim. Archivo"   = "16 EB (Ideal datos)"
+            "Sec.Boot"       = "N/A"
+        }
+    )
+
+    $matrix | Format-Table -AutoSize
+
+    Write-Host "------------------------------------------------------------------------------------------" -ForegroundColor DarkGray
+    Write-Host "[REGLAS DE ORO PARA EL TECNICO / ADMINISTRADOR DE SISTEMAS]:" -ForegroundColor White
+    Write-Host " 1. LEGACY BIOS (MBR):" -ForegroundColor Cyan
+    Write-Host "    - Windows requiere obligatoriamente que la particion donde reside BOOTMGR este marcada como ACTIVA." -ForegroundColor Gray
+    Write-Host "    - En discos MBR, si la particion no es 'Active' o no tiene codigo MBR ('bootsect /nt60 X: /mbr'), la BIOS dira 'No bootable device'." -ForegroundColor Gray
+    Write-Host "    - El limite maximo de direccionamiento de sectores en MBR es de 2 TB (con sectores de 512 bytes)." -ForegroundColor Gray
+
+    Write-Host "`n 2. UEFI NATIVO (GPT):" -ForegroundColor Cyan
+    Write-Host "    - No existe el concepto de particion 'Activa' en tablas GPT. El firmware busca la particion EFI System (ESP) formateada en FAT32." -ForegroundColor Gray
+    Write-Host "    - Requiere archivos en \EFI\BOOT\BOOTX64.EFI. Soporta discos de mas de 2 TB y arranque seguro (Secure Boot)." -ForegroundColor Gray
+    Write-Host "    - Windows 11 exige obligatoriamente UEFI + GPT + TPM 2.0 + Secure Boot." -ForegroundColor Gray
+
+    Write-Host "`n 3. PROBLEMA FRECUENTE CON USB UEFI Y FAT32 (install.wim > 4 GB):" -ForegroundColor Cyan
+    Write-Host "    - Como el estandar UEFI exige FAT32 para arrancar, y Windows 10/11 moderno incluye 'install.wim' de mas de 4 GB:" -ForegroundColor Gray
+    Write-Host "      a) Solucion oficial: Dividir el WIM con: dism /Split-Image /ImageFile:install.wim /SWMFile:install.swm /FileSize:3800" -ForegroundColor Yellow
+    Write-Host "      b) Solucion de particion dual: 1 particion pequena FAT32 (arranque UEFI) + 1 particion NTFS (imagen completa)." -ForegroundColor Yellow
+    Write-Host "      c) Driver UEFI:NTFS (Rufus): Carga un driver NTFS firmado en memoria para arrancar directamente en NTFS." -ForegroundColor Yellow
+
+    Write-Host "`n 4. SISTEMA DE ARCHIVOS exFAT:" -ForegroundColor Cyan
+    Write-Host "    - Disenado para pendrives y discos externos de alta capacidad. Supera el limite de 4 GB de FAT32 sin permisos complejos NTFS." -ForegroundColor Gray
+    Write-Host "    - Maxima compatibilidad entre Windows, macOS, Linux, Smart TVs y consolas. NO permite instalar Windows C: sobre el." -ForegroundColor Gray
+    Write-Host "==========================================================================================`n" -ForegroundColor Cyan
+}
+
+function Show-DiskTechnicalDetails {
+    cabecera
+    Write-Header "OPCION 19.1: INFORMACION TECNICA DETALLADA DE LA UNIDAD DE ALMACENAMIENTO"
+
+    $discos = Get-SafeDiskList
+    if ($null -eq $discos -or $discos.Count -eq 0) {
+        Write-Host "[ERROR] No se detectaron unidades de almacenamiento en el equipo." -ForegroundColor Red
+        return
+    }
+
+    Write-Host "`n--- UNIDADES DETECTADAS EN EL SISTEMA ---" -ForegroundColor Cyan
+    foreach ($d in $discos) {
+        $etiquetaSys = if ($d.IsSystem) { " [SISTEMA OPERATIVO C:]" } else { "" }
+        $color = if ($d.IsSystem) { "Magenta" } elseif ($d.MediaType -match "USB") { "Green" } else { "White" }
+        Write-Host ("  [Disco {0}] {1} | Bus: {2} | Tipo: {3} | Tamano: {4} GB | Particion: {5}{6}" -f $d.Number, $d.FriendlyName, $d.BusType, $d.MediaType, $d.SizeGB, $d.PartitionStyle, $etiquetaSys) -ForegroundColor $color
+    }
+
+    Write-Host ""
+    $sel = Read-Host "Ingrese el numero de Disco para ver su ficha tecnica completa (o '0' para volver)"
+    if ($null -eq $sel -or $sel -notmatch '^\d+$' -or $sel -eq "0") {
+        Write-Host "Operacion cancelada." -ForegroundColor Yellow
+        return
+    }
+    $discoIndex = [int]$sel
+    $targetDisk = $discos | Where-Object { $_.Number -eq $discoIndex }
+    if ($null -eq $targetDisk) {
+        Write-Host "[ERROR] El disco $discoIndex no existe en la lista." -ForegroundColor Red
+        return
+    }
+
+    Write-Host "`n==========================================================================================" -ForegroundColor Cyan
+    Write-Host "                     FICHA TECNICA DETALLADA: DISCO FISICO $discoIndex                     " -ForegroundColor Yellow
+    Write-Host "==========================================================================================" -ForegroundColor Cyan
+
+    # 1. Datos físicos vía WMI / Storage
+    $wmiDisk = Get-WmiObject Win32_DiskDrive | Where-Object { $_.Index -eq $discoIndex }
+    if ($wmiDisk) {
+        Write-Host " [DATOS DE FABRICANTE Y HARDWARE]" -ForegroundColor White -BackgroundColor DarkBlue
+        Write-Host "  Modelo/Caption       : $($wmiDisk.Caption)"
+        Write-Host "  Fabricante           : $($wmiDisk.Manufacturer)"
+        Write-Host "  Numero de Serie      : $(if ($wmiDisk.SerialNumber) { $wmiDisk.SerialNumber.Trim() } else { 'N/D' })"
+        Write-Host "  Firmware Revision    : $($wmiDisk.FirmwareRevision)"
+        Write-Host "  Interfaz / Bus       : $($targetDisk.BusType)"
+        Write-Host "  Tipo de Medio        : $($targetDisk.MediaType)"
+        Write-Host "  Capacidad Total      : $([Math]::Round($wmiDisk.Size / 1GB, 2)) GB ($($wmiDisk.Size) bytes)"
+        Write-Host "  Sectores Logicos/Fis.: $($wmiDisk.BytesPerSector) bytes / sector"
+        Write-Host "  Total Cilindros/Cab. : Cilindros: $($wmiDisk.TotalCylinders) | Cabezas: $($wmiDisk.TotalHeads) | Sectores: $($wmiDisk.TotalSectors)"
+    }
+
+    # 2. S.M.A.R.T. y Fiabilidad (PowerShell 8+)
+    if (Get-Command Get-PhysicalDisk -ErrorAction SilentlyContinue) {
+        $pDisk = Get-PhysicalDisk | Where-Object { $_.DeviceId -eq "$discoIndex" }
+        if ($pDisk) {
+            Write-Host "`n [ESTADO DE SALUD Y METRICAS S.M.A.R.T.]" -ForegroundColor White -BackgroundColor DarkBlue
+            Write-Host "  Estado Operativo     : $($pDisk.OperationalStatus)"
+            Write-Host "  Salud S.M.A.R.T.      : $($pDisk.HealthStatus)"
+            try {
+                $counter = $pDisk | Get-StorageReliabilityCounter -ErrorAction SilentlyContinue
+                if ($counter) {
+                    Write-Host "  Temperatura          : $(if ($counter.Temperature) { "$($counter.Temperature) C" } else { 'N/D' })"
+                    Write-Host "  Desgaste (Wear %)    : $(if ($counter.Wear -ne $null) { "$($counter.Wear) %" } else { 'N/D' })"
+                    Write-Host "  Horas de Uso (POH)   : $(if ($counter.PowerOnHours) { "$($counter.PowerOnHours) hrs" } else { 'N/D' })"
+                    Write-Host "  Errores de Lectura   : $($counter.ReadErrorsTotal)"
+                    Write-Host "  Errores de Escritura : $($counter.WriteErrorsTotal)"
+                }
+            } catch {}
+        }
+    }
+
+    # 3. Topología de Particiones
+    Write-Host "`n [TOPOLOGIA DE PARTICIONES DETECTADAS]" -ForegroundColor White -BackgroundColor DarkBlue
+    if (Get-Command Get-Partition -ErrorAction SilentlyContinue) {
+        $particiones = Get-Partition -DiskNumber $discoIndex -ErrorAction SilentlyContinue
+        if ($particiones) {
+            foreach ($p in $particiones) {
+                $tamMB = [Math]::Round($p.Size / 1MB, 2)
+                $letra = if ($p.DriveLetter) { "$($p.DriveLetter):" } else { "Sin Letra" }
+                $activa = if ($p.IsActive -ne $null) { $p.IsActive } else { "N/A" }
+                Write-Host ("  -> Particion #{0} | Tipo: {1} | Tamano: {2} MB | Letra: {3} | Activa: {4}" -f $p.PartitionNumber, $p.Type, $tamMB, $letra, $activa) -ForegroundColor Cyan
+            }
+        } else {
+            Write-Host "  No se detectaron particiones estructuradas en este disco." -ForegroundColor Gray
+        }
+    } else {
+        $wmiParts = Get-WmiObject Win32_DiskPartition | Where-Object { $_.DiskIndex -eq $discoIndex }
+        if ($wmiParts) {
+            foreach ($wp in $wmiParts) {
+                Write-Host ("  -> Particion #{0} | Tipo: {1} | Tamano: {2} MB | Bootable: {3}" -f $wp.Index, $wp.Type, [Math]::Round($wp.Size / 1MB, 2), $wp.Bootable) -ForegroundColor Cyan
+            }
+        }
+    }
+
+    # 4. Volúmenes y Sistemas de Archivos
+    Write-Host "`n [VOLUMENES LOGICOS ASOCIADOS]" -ForegroundColor White -BackgroundColor DarkBlue
+    $volFound = $false
+    if (Get-Command Get-Partition -ErrorAction SilentlyContinue) {
+        $partsConLetra = Get-Partition -DiskNumber $discoIndex -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter }
+        foreach ($pcl in $partsConLetra) {
+            $vol = Get-Volume -DriveLetter $pcl.DriveLetter -ErrorAction SilentlyContinue
+            if ($vol) {
+                $volFound = $true
+                $tGB = [Math]::Round($vol.Size / 1GB, 2)
+                $rGB = [Math]::Round($vol.SizeRemaining / 1GB, 2)
+                $pctLibre = if ($vol.Size -gt 0) { [Math]::Round(($vol.SizeRemaining / $vol.Size) * 100, 1) } else { 0 }
+                Write-Host ("  Unidad [{0}:] Etiqueta: '{1}' | FS: {2} | Capacidad: {3} GB | Libre: {4} GB ({5}%)" -f $vol.DriveLetter, $vol.FileSystemLabel, $vol.FileSystem, $tGB, $rGB, $pctLibre) -ForegroundColor Green
+            }
+        }
+    }
+    if (-not $volFound) {
+        Write-Host "  No hay letras de volumen montadas actualmente para este disco." -ForegroundColor Gray
+    }
+
+    Write-Host "==========================================================================================`n" -ForegroundColor Cyan
+}
+
+function Invoke-DiskSurfaceCheck {
+    cabecera
+    Write-Header "OPCION 19.2: VERIFICACION Y REVISION DE SUPERFICIE / SECTORES DE DISCO"
+
+    Write-Host "`n--- UNIDADES LOGICAS DETECTADAS ---" -ForegroundColor Cyan
+    $unidades = Get-WmiObject -Class Win32_LogicalDisk | Where-Object { $_.DriveType -eq 2 -or $_.DriveType -eq 3 }
+    if ($null -eq $unidades) {
+        Write-Host "[ERROR] No se encontraron unidades de almacenamiento validas." -ForegroundColor Red
+        return
+    }
+
+    foreach ($u in $unidades) {
+        $tamanoGB = if ($u.Size) { [Math]::Round($u.Size / 1GB, 2) } else { "N/D" }
+        $libreGB = if ($u.FreeSpace) { [Math]::Round($u.FreeSpace / 1GB, 2) } else { "N/D" }
+        $tipo = if ($u.DriveType -eq 2) { "USB/Extraible" } else { "Disco Local" }
+        $esC = if ($u.DeviceID -eq $env:SystemDrive) { " [SISTEMA OPERATIVO]" } else { "" }
+        Write-Host ("  -> Unidad: [{0}] | Tipo: {1} | FS: {2} | Etiqueta: {3} | Tamano: {4} GB | Libre: {5} GB{6}" -f $u.DeviceID, $tipo, $u.FileSystem, $u.VolumeName, $tamanoGB, $libreGB, $esC) -ForegroundColor Green
+    }
+
+    Write-Host "`n------------------------------------------------------------------------------------------" -ForegroundColor DarkGray
+    Write-Host " [0] DESCARTAR / CANCELAR (Volver al menu anterior)" -ForegroundColor Yellow
+    Write-Host "------------------------------------------------------------------------------------------" -ForegroundColor DarkGray
+
+    $entrada = (Read-Host "Ingrese la letra de la unidad a examinar (Ej: D o D:) o '0' para descartar").Trim().ToUpper()
+
+    if ($entrada -eq "0" -or $entrada -eq "C" -or $entrada -eq "CANCELAR" -or $entrada -eq "") {
+        Write-Host "`n[INFO] Operacion descartada por el usuario. Regresando al menu anterior..." -ForegroundColor Yellow
+        return
+    }
+
+    $letra = if ($entrada -match '^[A-Z]:$') { $entrada } elseif ($entrada -match '^[A-Z]$') { "$entrada" + ":" } else { "" }
+    if ($letra -eq "") {
+        Write-Host "[ERROR] Formato de letra no valido." -ForegroundColor Red
+        return
+    }
+
+    $unidadSel = $unidades | Where-Object { $_.DeviceID -eq $letra }
+    if ($null -eq $unidadSel) {
+        Write-Host "[ERROR] La unidad $letra no existe en el sistema." -ForegroundColor Red
+        return
+    }
+
+    Write-Host "`n--- SELECCIONE EL TIPO DE REVISION PARA LA UNIDAD $letra ---" -ForegroundColor Cyan
+    Write-Host "  1. REVISION SUPERFICIAL (Rapida - Metadatos, indices y estructura de archivos)" -ForegroundColor White
+    Write-Host "     * Analiza el sistema de archivos en pocos segundos/minutos sin desmontar la unidad."
+    Write-Host "  2. REVISION PROFUNDA (Exhaustiva - Superficie completa y recuperacion de sectores danados)" -ForegroundColor White
+    Write-Host "     * Ejecuta chkdsk /f /r /x. Busca sectores defectuosos (Bad Sectors) y repara errores."
+    Write-Host "     * NOTA: Este proceso puede tomar bastante tiempo segun la velocidad y tamano del disco."
+    Write-Host "  0. DESCARTAR y volver al menu anterior" -ForegroundColor Yellow
+
+    $tipoScan = Read-Host "`nSeleccione el nivel de revision (1, 2 o 0)"
+
+    if ($tipoScan -eq "0" -or $tipoScan -eq "") {
+        Write-Host "[INFO] Analisis cancelado. Regresando al menu anterior..." -ForegroundColor Yellow
+        return
+    }
+
+    if ($letra -eq $env:SystemDrive) {
+        Write-Host "`n[ADVERTENCIA CRITICA] La unidad seleccionada es la del Sistema Operativo Windows ($letra)." -ForegroundColor Magenta
+        if ($tipoScan -eq "2") {
+            Write-Host "Windows no puede desmontar el disco C: en vivo para una revision profunda con /r." -ForegroundColor Yellow
+            $respC = Read-Host "Desea programar el analisis CHKDSK /F /R para el proximo reinicio del equipo? (S/N)"
+            if ($respC.ToUpper() -eq "S") {
+                chkdsk.exe $letra /f /r
+                Write-Host "`n[OK] Analisis profundo programado para el proximo reinicio." -ForegroundColor Green
+            } else {
+                Write-Host "Operacion cancelada por el usuario." -ForegroundColor Yellow
+            }
+            return
+        }
+    }
+
+    switch ($tipoScan) {
+        "1" {
+            Write-Host "`nIniciando Revision Superficial de la unidad $letra..." -ForegroundColor Cyan
+            try {
+                if (Get-Command Repair-Volume -ErrorAction SilentlyContinue) {
+                    Write-Host "Ejecutando: Repair-Volume -DriveLetter $($letra.Replace(':','')) -Scan" -ForegroundColor Gray
+                    Repair-Volume -DriveLetter ($letra.Replace(":", "")) -Scan
+                } else {
+                    Write-Host "Ejecutando: chkdsk.exe $letra /scan" -ForegroundColor Gray
+                    chkdsk.exe $letra /scan
+                }
+                Write-Host "`n[EXITO] Revision superficial finalizada en $letra." -ForegroundColor Green
+            } catch {
+                Write-Host "`n[ERROR OCURRIDO]: $_" -ForegroundColor Red
+            }
+        }
+        "2" {
+            Write-Host "`n==========================================================================================" -ForegroundColor Red
+            Write-Host " ADVERTENCIA: SE DESMONTARA TEMPORALMENTE LA UNIDAD $letra PARA EL ANALISIS PROFUNDO" -ForegroundColor Yellow
+            Write-Host "==========================================================================================" -ForegroundColor Red
+            $conf = Read-Host "Confirma iniciar el escaneo exhaustivo de superficie en $letra? (S/N)"
+            if ($conf.ToUpper() -ne "S") {
+                Write-Host "Revision profunda cancelada." -ForegroundColor Yellow
+                return
+            }
+
+            Write-Host "`nEjecutando: chkdsk.exe $letra /f /r /x" -ForegroundColor Cyan
+            Write-Host "Por favor espere mientras Windows analiza la superficie del disco...`n" -ForegroundColor Yellow
+            try {
+                & chkdsk.exe $letra /f /r /x
+                Write-Host "`n[EXITO] Revision profunda de sectores finalizada en la unidad $letra." -ForegroundColor Green
+            } catch {
+                Write-Host "`n[ERROR OCURRIDO]: $_" -ForegroundColor Red
+            }
+        }
+        Default {
+            Write-Host "Opcion de revision no valida. Operacion abortada." -ForegroundColor Yellow
+        }
+    }
+}
+
+function Format-DiskStorageMBR {
+    cabecera
+    Write-Header "OPCION 19.3: PREPARACION Y FORMATEO EN MBR PARA S.O. WINDOWS - PARTICION ACTIVA"
+
+    $discos = Get-SafeDiskList
+    if ($null -eq $discos -or $discos.Count -eq 0) {
+        Write-Host "[ERROR] No se detectaron discos en el sistema." -ForegroundColor Red
+        return
+    }
+
+    Write-Host "`n--- UNIDADES FISICAS DISPONIBLES ---" -ForegroundColor Cyan
+    foreach ($d in $discos) {
+        $etiquetaSys = if ($d.IsSystem) { " [SISTEMA OPERATIVO C: - PROTEGIDO]" } else { "" }
+        $color = if ($d.IsSystem) { "Magenta" } elseif ($d.MediaType -match "USB") { "Green" } else { "White" }
+        Write-Host ("  [Disco {0}] {1} | Bus: {2} | Capacidad: {3} GB | Particion: {4}{5}" -f $d.Number, $d.FriendlyName, $d.BusType, $d.SizeGB, $d.PartitionStyle, $etiquetaSys) -ForegroundColor $color
+    }
+
+    Write-Host "`n[0] CANCELAR y volver al menu anterior" -ForegroundColor Yellow
+    $discoSel = Read-Host "`nIngrese el numero de disco a formatear en MBR"
+    if ($null -eq $discoSel -or $discoSel -notmatch '^\d+$' -or $discoSel -eq "0") {
+        Write-Host "Operacion cancelada." -ForegroundColor Yellow
+        return
+    }
+    $discoIndex = [int]$discoSel
+    $targetDisk = $discos | Where-Object { $_.Number -eq $discoIndex }
+    if ($null -eq $targetDisk) {
+        Write-Host "[ERROR] El disco $discoIndex no existe en el sistema." -ForegroundColor Red
+        return
+    }
+
+    if ($targetDisk.IsSystem) {
+        Write-Host "`n[BLOQUEO DE SEGURIDAD CRITICO] El Disco $discoIndex contiene el Sistema Operativo actual." -ForegroundColor Red
+        Write-Host "No esta permitido formatear la unidad donde corre el script." -ForegroundColor Red
+        return
+    }
+
+    # 1. Selección de Filesystem
+    Write-Host "`n--- SELECCION DE SISTEMA DE ARCHIVOS (MBR / WINDOWS) ---" -ForegroundColor Cyan
+    Write-Host "  1. NTFS  (Recomendado para Windows Vista/7/8/10/11 en BIOS Legacy, soporta archivos > 4GB)"
+    Write-Host "  2. FAT32 (Universal, para herramientas de rescate/WinPE. Limite max 4GB por archivo)"
+    Write-Host "  0. Cancelar operacion" -ForegroundColor Yellow
+    $fsOpt = Read-Host "`nElija el sistema de archivos (1 o 2)"
+    $fs = switch ($fsOpt) {
+        "1" { "ntfs" }
+        "2" { "fat32" }
+        Default { "" }
+    }
+    if ($fs -eq "") {
+        Write-Host "Operacion cancelada." -ForegroundColor Yellow
+        return
+    }
+
+    # 2. Selección de Modo de Formateo
+    Write-Host "`n--- MODO DE FORMATEO ---" -ForegroundColor Cyan
+    Write-Host "  1. Formateo RAPIDO (quick - inicializa tablas de particion en segundos)"
+    Write-Host "  2. Formateo PROFUNDO (Escribe ceros y comprueba cada sector fisico de la unidad)"
+    Write-Host "  0. Cancelar operacion" -ForegroundColor Yellow
+    $modoOpt = Read-Host "`nElija el modo de formateo (1 o 2)"
+    $paramQuick = switch ($modoOpt) {
+        "1" { "quick" }
+        "2" { "" }
+        Default { "CANCEL" }
+    }
+    if ($paramQuick -eq "CANCEL") {
+        Write-Host "Operacion cancelada." -ForegroundColor Yellow
+        return
+    }
+
+    $labelInput = Read-Host "`nIngrese una etiqueta de volumen (Presione ENTER para 'WIN_MBR')"
+    $etiqueta = if ($labelInput.Trim()) { $labelInput.Trim().Replace(" ", "_") } else { "WIN_MBR" }
+
+    # 3. Confirmación estricta de seguridad
+    Write-Host "`n==========================================================================================" -ForegroundColor Red
+    Write-Host "                       ADVERTENCIA CRITICA DE ELIMINACION DE DATOS                        " -ForegroundColor Yellow
+    Write-Host "==========================================================================================" -ForegroundColor Red
+    Write-Host " Se eliminaran TODAS las particiones y datos del siguiente dispositivo:" -ForegroundColor White
+    Write-Host "  - Disco Objetivo  : [Disco $discoIndex] $($targetDisk.FriendlyName)" -ForegroundColor Yellow
+    Write-Host "  - Capacidad       : $($targetDisk.SizeGB) GB ($($targetDisk.BusType))" -ForegroundColor Yellow
+    Write-Host "  - Esquema         : MBR (Particion Primaria Unica - ACTIVA)" -ForegroundColor Yellow
+    Write-Host "  - Sistema Archivos: $($fs.ToUpper()) ($etiqueta)" -ForegroundColor Yellow
+    Write-Host "  - Modo Formateo   : $(if ($paramQuick -eq 'quick') { 'RAPIDO' } else { 'PROFUNDO' })" -ForegroundColor Yellow
+    Write-Host "==========================================================================================" -ForegroundColor Red
+
+    $confirmacion = Read-Host "Para PROCEDER escriba exactamente 'CONFIRMAR'"
+    if ($confirmacion.Trim().ToUpper() -ne "CONFIRMAR") {
+        Write-Host "Confirmacion denegada. Proceso abortado de manera segura." -ForegroundColor Yellow
+        return
+    }
+
+    # 4. Generación y ejecución de script Diskpart
+    $diskpartCmds = @(
+        "select disk $discoIndex",
+        "clean",
+        "convert mbr",
+        "create partition primary",
+        "active",
+        "format fs=$fs $paramQuick label=`"$etiqueta`"",
+        "assign",
+        "exit"
+    )
+
+    $exitCode = Invoke-DiskpartBatch -Commands $diskpartCmds
+    if ($exitCode -eq 0) {
+        Write-Host "`n[EXITO] El disco $discoIndex ha sido formateado en MBR y su particion esta ACTIVA." -ForegroundColor Green
+
+        # Inyectar código BOOTMGR si bootsect existe
+        try {
+            $nuevoVol = Get-Partition -DiskNumber $discoIndex -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter } | Select-Object -First 1
+            if ($nuevoVol -and (Get-Command bootsect.exe -ErrorAction SilentlyContinue)) {
+                $driveL = "$($nuevoVol.DriveLetter):"
+                Write-Host "Inyectando cargador maestro BOOTMGR con bootsect en $driveL..." -ForegroundColor Cyan
+                & bootsect.exe /nt60 $driveL /mbr
+                Write-Host "[OK] Codigo BOOTMGR instalado con exito." -ForegroundColor Green
+            }
+        } catch {}
+
+        Write-Host "`nEl disco esta listo para uso y preparado para arranque en sistemas Legacy BIOS." -ForegroundColor Cyan
+    } else {
+        Write-Host "`n[ERROR] Diskpart concluyo con codigo de error: $exitCode" -ForegroundColor Red
+    }
+}
+
+function Format-DiskStorageGPT {
+    cabecera
+    Write-Header "OPCION 19.4: PREPARACION Y FORMATEO EN GPT PARA S.O. WINDOWS - MODO UEFI"
+
+    $discos = Get-SafeDiskList
+    if ($null -eq $discos -or $discos.Count -eq 0) {
+        Write-Host "[ERROR] No se detectaron discos en el sistema." -ForegroundColor Red
+        return
+    }
+
+    Write-Host "`n--- UNIDADES FISICAS DISPONIBLES ---" -ForegroundColor Cyan
+    foreach ($d in $discos) {
+        $etiquetaSys = if ($d.IsSystem) { " [SISTEMA OPERATIVO C: - PROTEGIDO]" } else { "" }
+        $color = if ($d.IsSystem) { "Magenta" } elseif ($d.MediaType -match "USB") { "Green" } else { "White" }
+        Write-Host ("  [Disco {0}] {1} | Bus: {2} | Capacidad: {3} GB | Particion: {4}{5}" -f $d.Number, $d.FriendlyName, $d.BusType, $d.SizeGB, $d.PartitionStyle, $etiquetaSys) -ForegroundColor $color
+    }
+
+    Write-Host "`n[0] CANCELAR y volver al menu anterior" -ForegroundColor Yellow
+    $discoSel = Read-Host "`nIngrese el numero de disco a formatear en GPT"
+    if ($null -eq $discoSel -or $discoSel -notmatch '^\d+$' -or $discoSel -eq "0") {
+        Write-Host "Operacion cancelada." -ForegroundColor Yellow
+        return
+    }
+    $discoIndex = [int]$discoSel
+    $targetDisk = $discos | Where-Object { $_.Number -eq $discoIndex }
+    if ($null -eq $targetDisk) {
+        Write-Host "[ERROR] El disco $discoIndex no existe en el sistema." -ForegroundColor Red
+        return
+    }
+
+    if ($targetDisk.IsSystem) {
+        Write-Host "`n[BLOQUEO DE SEGURIDAD CRITICO] El Disco $discoIndex contiene el Sistema Operativo actual." -ForegroundColor Red
+        Write-Host "No esta permitido formatear la unidad donde corre el script." -ForegroundColor Red
+        return
+    }
+
+    # 1. Selección de Filesystem
+    Write-Host "`n--- SELECCION DE SISTEMA DE ARCHIVOS (GPT / UEFI) ---" -ForegroundColor Cyan
+    Write-Host "  1. FAT32 (Estandar UEFI para USB de instalacion. Maximo 4GB por archivo)"
+    Write-Host "  2. NTFS  (Para disco principal de sistema C: o instaladores UEFI con soporte NTFS)"
+    Write-Host "  0. Cancelar operacion" -ForegroundColor Yellow
+    $fsOpt = Read-Host "`nElija el sistema de archivos (1 o 2)"
+    $fs = switch ($fsOpt) {
+        "1" { "fat32" }
+        "2" { "ntfs" }
+        Default { "" }
+    }
+    if ($fs -eq "") {
+        Write-Host "Operacion cancelada." -ForegroundColor Yellow
+        return
+    }
+
+    # 2. Selección de Modo de Formateo
+    Write-Host "`n--- MODO DE FORMATEO ---" -ForegroundColor Cyan
+    Write-Host "  1. Formateo RAPIDO (quick - inicializa tablas de particion en segundos)"
+    Write-Host "  2. Formateo PROFUNDO (Escribe ceros y comprueba cada sector fisico de la unidad)"
+    Write-Host "  0. Cancelar operacion" -ForegroundColor Yellow
+    $modoOpt = Read-Host "`nElija el modo de formateo (1 o 2)"
+    $paramQuick = switch ($modoOpt) {
+        "1" { "quick" }
+        "2" { "" }
+        Default { "CANCEL" }
+    }
+    if ($paramQuick -eq "CANCEL") {
+        Write-Host "Operacion cancelada." -ForegroundColor Yellow
+        return
+    }
+
+    $labelInput = Read-Host "`nIngrese una etiqueta de volumen (Presione ENTER para 'WIN_UEFI')"
+    $etiqueta = if ($labelInput.Trim()) { $labelInput.Trim().Replace(" ", "_") } else { "WIN_UEFI" }
+
+    # 3. Confirmación estricta de seguridad
+    Write-Host "`n==========================================================================================" -ForegroundColor Red
+    Write-Host "                       ADVERTENCIA CRITICA DE ELIMINACION DE DATOS                        " -ForegroundColor Yellow
+    Write-Host "==========================================================================================" -ForegroundColor Red
+    Write-Host " Se eliminaran TODAS las particiones y datos del siguiente dispositivo:" -ForegroundColor White
+    Write-Host "  - Disco Objetivo  : [Disco $discoIndex] $($targetDisk.FriendlyName)" -ForegroundColor Yellow
+    Write-Host "  - Capacidad       : $($targetDisk.SizeGB) GB ($($targetDisk.BusType))" -ForegroundColor Yellow
+    Write-Host "  - Esquema         : GPT (Particion Primaria Unica UEFI)" -ForegroundColor Yellow
+    Write-Host "  - Sistema Archivos: $($fs.ToUpper()) ($etiqueta)" -ForegroundColor Yellow
+    Write-Host "  - Modo Formateo   : $(if ($paramQuick -eq 'quick') { 'RAPIDO' } else { 'PROFUNDO' })" -ForegroundColor Yellow
+    Write-Host "==========================================================================================" -ForegroundColor Red
+
+    $confirmacion = Read-Host "Para PROCEDER escriba exactamente 'CONFIRMAR'"
+    if ($confirmacion.Trim().ToUpper() -ne "CONFIRMAR") {
+        Write-Host "Confirmacion denegada. Proceso abortado de manera segura." -ForegroundColor Yellow
+        return
+    }
+
+    # 4. Generación y ejecución de script Diskpart
+    $diskpartCmds = @(
+        "select disk $discoIndex",
+        "clean",
+        "convert gpt",
+        "create partition primary",
+        "format fs=$fs $paramQuick label=`"$etiqueta`"",
+        "assign",
+        "exit"
+    )
+
+    $exitCode = Invoke-DiskpartBatch -Commands $diskpartCmds
+    if ($exitCode -eq 0) {
+        Write-Host "`n[EXITO] El disco $discoIndex ha sido formateado en GPT con una particion unica." -ForegroundColor Green
+        Write-Host "Nota UEFI: En tablas GPT el arranque es administrado por el firmware buscando particiones ESP/EFI." -ForegroundColor Cyan
+        Write-Host "La particion ha quedado montada, en linea, asignada y ACTIVA/LISTA para transferir archivos de Windows." -ForegroundColor Green
+    } else {
+        Write-Host "`n[ERROR] Diskpart concluyo con codigo de error: $exitCode" -ForegroundColor Red
+    }
+}
+
+function Format-DiskStorageExFAT {
+    cabecera
+    Write-Header "OPCION 19.5: PREPARACION Y FORMATEO EN exFAT - PARTICION UNICA LISTA"
+
+    $discos = Get-SafeDiskList
+    if ($null -eq $discos -or $discos.Count -eq 0) {
+        Write-Host "[ERROR] No se detectaron discos en el sistema." -ForegroundColor Red
+        return
+    }
+
+    Write-Host "`n--- UNIDADES FISICAS DISPONIBLES ---" -ForegroundColor Cyan
+    foreach ($d in $discos) {
+        $etiquetaSys = if ($d.IsSystem) { " [SISTEMA OPERATIVO C: - PROTEGIDO]" } else { "" }
+        $color = if ($d.IsSystem) { "Magenta" } elseif ($d.MediaType -match "USB") { "Green" } else { "White" }
+        Write-Host ("  [Disco {0}] {1} | Bus: {2} | Capacidad: {3} GB | Particion: {4}{5}" -f $d.Number, $d.FriendlyName, $d.BusType, $d.SizeGB, $d.PartitionStyle, $etiquetaSys) -ForegroundColor $color
+    }
+
+    Write-Host "`n[0] CANCELAR y volver al menu anterior" -ForegroundColor Yellow
+    $discoSel = Read-Host "`nIngrese el numero de disco a formatear en exFAT"
+    if ($null -eq $discoSel -or $discoSel -notmatch '^\d+$' -or $discoSel -eq "0") {
+        Write-Host "Operacion cancelada." -ForegroundColor Yellow
+        return
+    }
+    $discoIndex = [int]$discoSel
+    $targetDisk = $discos | Where-Object { $_.Number -eq $discoIndex }
+    if ($null -eq $targetDisk) {
+        Write-Host "[ERROR] El disco $discoIndex no existe en el sistema." -ForegroundColor Red
+        return
+    }
+
+    if ($targetDisk.IsSystem) {
+        Write-Host "`n[BLOQUEO DE SEGURIDAD CRITICO] El Disco $discoIndex contiene el Sistema Operativo actual." -ForegroundColor Red
+        Write-Host "No esta permitido formatear la unidad donde corre el script." -ForegroundColor Red
+        return
+    }
+
+    # 1. Selección de Estilo de Partición
+    Write-Host "`n--- SELECCION DE ESTILO DE PARTICION PARA exFAT ---" -ForegroundColor Cyan
+    Write-Host "  1. MBR (Recomendado para <= 2TB y compatibilidad con Smart TVs, equipos multimedia y autorradios)"
+    Write-Host "  2. GPT (Recomendado para unidades modernas o capacidades > 2TB)"
+    Write-Host "  0. Cancelar operacion" -ForegroundColor Yellow
+    $estiloOpt = Read-Host "`nElija el estilo de particion (1 o 2)"
+    $estilo = switch ($estiloOpt) {
+        "1" { "mbr" }
+        "2" { "gpt" }
+        Default { "" }
+    }
+    if ($estilo -eq "") {
+        Write-Host "Operacion cancelada." -ForegroundColor Yellow
+        return
+    }
+
+    # 2. Selección de Modo de Formateo
+    Write-Host "`n--- MODO DE FORMATEO ---" -ForegroundColor Cyan
+    Write-Host "  1. Formateo RAPIDO (quick - inicializa tablas de particion en segundos)"
+    Write-Host "  2. Formateo PROFUNDO (Escribe ceros y comprueba cada sector fisico de la unidad)"
+    Write-Host "  0. Cancelar operacion" -ForegroundColor Yellow
+    $modoOpt = Read-Host "`nElija el modo de formateo (1 o 2)"
+    $paramQuick = switch ($modoOpt) {
+        "1" { "quick" }
+        "2" { "" }
+        Default { "CANCEL" }
+    }
+    if ($paramQuick -eq "CANCEL") {
+        Write-Host "Operacion cancelada." -ForegroundColor Yellow
+        return
+    }
+
+    $labelInput = Read-Host "`nIngrese una etiqueta de volumen (Presione ENTER para 'DATOS_EXFAT')"
+    $etiqueta = if ($labelInput.Trim()) { $labelInput.Trim().Replace(" ", "_") } else { "DATOS_EXFAT" }
+
+    # 3. Confirmación estricta de seguridad
+    Write-Host "`n==========================================================================================" -ForegroundColor Red
+    Write-Host "                       ADVERTENCIA CRITICA DE ELIMINACION DE DATOS                        " -ForegroundColor Yellow
+    Write-Host "==========================================================================================" -ForegroundColor Red
+    Write-Host " Se eliminaran TODAS las particiones y datos del siguiente dispositivo:" -ForegroundColor White
+    Write-Host "  - Disco Objetivo  : [Disco $discoIndex] $($targetDisk.FriendlyName)" -ForegroundColor Yellow
+    Write-Host "  - Capacidad       : $($targetDisk.SizeGB) GB ($($targetDisk.BusType))" -ForegroundColor Yellow
+    Write-Host "  - Esquema         : $($estilo.ToUpper()) (Particion Primaria Unica)" -ForegroundColor Yellow
+    Write-Host "  - Sistema Archivos: exFAT ($etiqueta)" -ForegroundColor Yellow
+    Write-Host "  - Modo Formateo   : $(if ($paramQuick -eq 'quick') { 'RAPIDO' } else { 'PROFUNDO' })" -ForegroundColor Yellow
+    Write-Host "==========================================================================================" -ForegroundColor Red
+
+    $confirmacion = Read-Host "Para PROCEDER escriba exactamente 'CONFIRMAR'"
+    if ($confirmacion.Trim().ToUpper() -ne "CONFIRMAR") {
+        Write-Host "Confirmacion denegada. Proceso abortado de manera segura." -ForegroundColor Yellow
+        return
+    }
+
+    # 4. Generación y ejecución de script Diskpart
+    $diskpartCmds = @(
+        "select disk $discoIndex",
+        "clean",
+        "convert $estilo",
+        "create partition primary"
+    )
+    if ($estilo -eq "mbr") {
+        $diskpartCmds += "active"
+    }
+    $diskpartCmds += @(
+        "format fs=exfat $paramQuick label=`"$etiqueta`"",
+        "assign",
+        "exit"
+    )
+
+    $exitCode = Invoke-DiskpartBatch -Commands $diskpartCmds
+    if ($exitCode -eq 0) {
+        Write-Host "`n[EXITO] El disco $discoIndex ha sido formateado en exFAT con una sola particion ACTIVA/LISTA." -ForegroundColor Green
+        Write-Host "La unidad esta preparada para almacenamiento masivo y compatibilidad multiplataforma (Windows/Mac/Linux/Smart TV)." -ForegroundColor Cyan
+    } else {
+        Write-Host "`n[ERROR] Diskpart concluyo con codigo de error: $exitCode" -ForegroundColor Red
+    }
+}
+
+function psSubMenuFormatHDD {
+    $salirSub19 = $false
+    do {
+        cabecera
+        Write-Header "OPCION 19. TODO SOBRE FORMAT HDD, SSD Y DISPOSITIVOS USB (PREPARACION S.O.)"
+        Write-Host "  19.0 Tabla de relacion: Filesystem vs Particion vs Modo Arranque (BIOS/UEFI)" -ForegroundColor Cyan
+        Write-Host "  19.1 Informacion tecnica detallada de la unidad (Particion, FS, Salud SMART)" -ForegroundColor Yellow
+        Write-Host "  19.2 Verificacion de sectores y revision de superficie (Superficial vs Profunda)" -ForegroundColor Yellow
+        Write-Host "  19.3 Formateo e inicializacion en MBR (FAT32/NTFS) para SO Windows - Particion ACTIVA" -ForegroundColor Yellow
+        Write-Host "  19.4 Formateo e inicializacion en GPT (FAT32/NTFS) para SO Windows UEFI - Particion Lista" -ForegroundColor Yellow
+        Write-Host "  19.5 Formateo e inicializacion en exFAT (Rapido vs Profundo) - Particion Lista" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "  0. V O L V E R   A L   S U B M E N U   2 0" -ForegroundColor White
+        Write-Header "=============================================================================="
+
+        $op19 = Read-Host "Seleccione la tarea a realizar en Formateo / Preparacion de Unidades"
+
+        switch ($op19) {
+            { $_ -in "19.0", "0.0", "table" } { Show-FormatBootMatrix }
+            { $_ -in "19.1", "1" }             { Show-DiskTechnicalDetails }
+            { $_ -in "19.2", "2" }             { Invoke-DiskSurfaceCheck }
+            { $_ -in "19.3", "3" }             { Format-DiskStorageMBR }
+            { $_ -in "19.4", "4" }             { Format-DiskStorageGPT }
+            { $_ -in "19.5", "5" }             { Format-DiskStorageExFAT }
+            "0" { $salirSub19 = $true }
+            Default { Write-Host "Opcion invalida." -ForegroundColor Red }
+        }
+
+        if (-not $salirSub19) {
+            Write-Host ""
+            Read-Host "Presione ENTER para continuar en el menu de Formateo..."
+        }
+    } while (-not $salirSub19)
+}
+
+# =========================================================================================
+# ORQUESTADOR DE EJECUCION EXTERNA PARA EL GRUPO 19 (DESACOPLAMIENTO MULTIVENTANA)
+# =========================================================================================
+
+function Invoke-FormatHDDExternalWindow {
+    <#
+    .SYNOPSIS
+        Despacha la ejecución de las funciones del Grupo 19 (Formateo y Preparación de Discos/USB)
+        a un proceso y ventana de consola independiente de PowerShell, liberando inmediatamente la
+        consola principal para el operador.
+    .PARAMETER OpcionDestino
+        Código de la opción a ejecutar ("19", "19.0", "19.1", "19.2", "19.3", "19.4", "19.5").
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$OpcionDestino
+    )
+
+    $taskMap = @{
+        "19"   = @{ Titulo = "Submenu 19: Formateo HDD, SSD y USB (Preparacion S.O.)"; Cmd = "psSubMenuFormatHDD" }
+        "19.0" = @{ Titulo = "19.0 Matriz Filesystem vs Particion vs Modo Arranque"; Cmd = "Show-FormatBootMatrix" }
+        "19.1" = @{ Titulo = "19.1 Ficha Tecnica Detallada y Salud S.M.A.R.T.";     Cmd = "Show-DiskTechnicalDetails" }
+        "19.2" = @{ Titulo = "19.2 Verificacion de Sectores y Revision Superficie";  Cmd = "Invoke-DiskSurfaceCheck" }
+        "19.3" = @{ Titulo = "19.3 Formateo e Inicializacion en MBR (Particion ACTIVA)"; Cmd = "Format-DiskStorageMBR" }
+        "19.4" = @{ Titulo = "19.4 Formateo e Inicializacion en GPT (UEFI Nativo)";  Cmd = "Format-DiskStorageGPT" }
+        "19.5" = @{ Titulo = "19.5 Formateo e Inicializacion en exFAT (Multiplataforma)"; Cmd = "Format-DiskStorageExFAT" }
+    }
+
+    if (-not $taskMap.ContainsKey($OpcionDestino)) {
+        Write-Host "[ERROR] Opcion de formateo '$OpcionDestino' no reconocida para ejecucion externa." -ForegroundColor Red
+        return
+    }
+
+    $info = $taskMap[$OpcionDestino]
+    $cleanOp = ($OpcionDestino -replace '[^\w]', '_')
+    $tempFile = Join-Path $env:TEMP ("shellWil_FormatHDD_" + $cleanOp + "_" + (Get-Random -Minimum 1000 -Maximum 9999) + ".ps1")
+
+    # Lista de funciones del módulo que deben exportarse al subproceso
+    $requiredFunctions = @(
+        'cabecera',
+        'Write-Header',
+        'Get-SafeDiskList',
+        'Invoke-DiskpartBatch',
+        'Show-FormatBootMatrix',
+        'Show-DiskTechnicalDetails',
+        'Invoke-DiskSurfaceCheck',
+        'Format-DiskStorageMBR',
+        'Format-DiskStorageGPT',
+        'Format-DiskStorageExFAT',
+        'psSubMenuFormatHDD'
+    )
+
+    # Construcción compatible con PowerShell 2.0 / 3.0 / 5.1 / 7+
+    $sb = New-Object System.Text.StringBuilder
+
+    [void]$sb.AppendLine("# ==========================================================================")
+    [void]$sb.AppendLine("# CONSOLA SECUNDARIA AUTONOMA - SHELLSW (DISCOS Y PREPARACION S.O.)")
+    [void]$sb.AppendLine("# Tarea: $($info.Titulo)")
+    [void]$sb.AppendLine("# Generado: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')")
+    [void]$sb.AppendLine("# ==========================================================================")
+    [void]$sb.AppendLine("try { `$Host.UI.RawUI.WindowTitle = 'ShellSW - Discos y Formateo [$OpcionDestino]' } catch {}")
+    [void]$sb.AppendLine("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8")
+    [void]$sb.AppendLine("")
+
+    # Definiciones de contingencia para cabeceras si no estuviesen cargadas en el entorno
+    if (-not (Get-Command 'cabecera' -ErrorAction SilentlyContinue)) {
+        [void]$sb.AppendLine(@'
+function cabecera {
+    Write-Host " ------------------------------------------------------------------------" -ForegroundColor Cyan
+    Write-Host " Ing. Wilson Yucra - Soft. Administracion y Gestion del Sistema Operativo" -ForegroundColor Cyan
+    Write-Host " ------------------------------------------------------------------------" -ForegroundColor Cyan
+}
+'@)
+    }
+
+    if (-not (Get-Command 'Write-Header' -ErrorAction SilentlyContinue)) {
+        [void]$sb.AppendLine(@'
+function Write-Header {
+    param([string]$texto)
+    $ancho = $texto.Length + 15
+    $linea = "=" * $ancho
+    Write-Host "`n$linea" -ForegroundColor Yellow
+    Write-Host "| $texto |" -ForegroundColor White -BackgroundColor DarkBlue
+    Write-Host "$linea" -ForegroundColor Yellow
+}
+'@)
+    }
+
+    # Serializar las funciones activas en memoria hacia el archivo runner
+    foreach ($fn in $requiredFunctions) {
+        $cmd = Get-Command $fn -ErrorAction SilentlyContinue
+        if ($cmd) {
+            [void]$sb.AppendLine("function $fn {")
+            [void]$sb.AppendLine($cmd.Definition)
+            [void]$sb.AppendLine("}`n")
+        }
+    }
+
+    # Bloque de ejecución principal del subproceso
+    [void]$sb.AppendLine("# --- EJECUCION DE LA TAREA SOLICITADA ---")
+    [void]$sb.AppendLine("try {")
+    [void]$sb.AppendLine("    $($info.Cmd)")
+    [void]$sb.AppendLine("}")
+    [void]$sb.AppendLine("catch {")
+    [void]$sb.AppendLine("    Write-Host '`n[ERROR CRITICO EN VENTANA SECUNDARIA]: ' `$_.Exception.Message -ForegroundColor Red")
+    [void]$sb.AppendLine("}")
+    [void]$sb.AppendLine("finally {")
+    if ($OpcionDestino -eq "19") {
+        [void]$sb.AppendLine("    Write-Host '`n[Cerrando consola secundaria de formateo...]' -ForegroundColor Gray")
+        [void]$sb.AppendLine("    Start-Sleep -Milliseconds 600")
+        [void]$sb.AppendLine("    try { Remove-Item -Path `$MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue } catch {}")
+        [void]$sb.AppendLine("    exit")
+    } else {
+        [void]$sb.AppendLine("    Write-Host '`n==========================================================================' -ForegroundColor Cyan")
+        [void]$sb.AppendLine("    Write-Host ' [PROCESO FINALIZADO] Esta ventana permanecera abierta para su consulta.' -ForegroundColor Green")
+        [void]$sb.AppendLine("    Write-Host ' Puede revisar los reportes y cerrarla cuando lo desee.' -ForegroundColor Gray")
+        [void]$sb.AppendLine("    Write-Host '==========================================================================' -ForegroundColor Cyan")
+        [void]$sb.AppendLine("    Write-Host ''")
+        [void]$sb.AppendLine("    Read-Host 'Presione ENTER para cerrar esta ventana...'")
+        [void]$sb.AppendLine("    try { Remove-Item -Path `$MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue } catch {}")
+        [void]$sb.AppendLine("    exit")
+    }
+    [void]$sb.AppendLine("}")
+
+    # Guardar en temporal con codificación UTF-8
+    [System.IO.File]::WriteAllText($tempFile, $sb.ToString(), [System.Text.Encoding]::UTF8)
+
+    # Lanzamiento del proceso de PowerShell en ventana externa independiente con elevación UAC
+    $procArgs = @(
+        "-NoExit",
+        "-ExecutionPolicy", "Bypass",
+        "-File", "`"$tempFile`""
+    )
+
+    try {
+        Start-Process -FilePath "powershell.exe" -ArgumentList $procArgs -Verb RunAs -ErrorAction Stop
+    }
+    catch {
+        # Si el usuario deniega UAC o el entorno no soporta RunAs, lanzar sin elevación forzada
+        Start-Process -FilePath "powershell.exe" -ArgumentList $procArgs -ErrorAction SilentlyContinue
+    }
+
+    # Panel informativo en la consola principal
+    Write-Host "`n==========================================================================" -ForegroundColor Cyan
+    Write-Host "  [OK] TAREA DESPLEGADA EN UNA VENTANA O CONSOLA INDEPENDIENTE" -ForegroundColor Green
+    Write-Host "==========================================================================" -ForegroundColor Cyan
+    Write-Host "  Accion Solicitada : $($info.Titulo)" -ForegroundColor White
+    Write-Host "  Opcion / Codigo   : $OpcionDestino" -ForegroundColor Yellow
+    Write-Host "  Estado Operativo  : Se ha abierto una consola secundaria de PowerShell." -ForegroundColor Gray
+    Write-Host "  Disponibilidad    : Esta consola principal queda 100% LIBRE para su uso" -ForegroundColor Green
+    Write-Host "                      inmediato en otras tareas del sistema." -ForegroundColor Gray
+    Write-Host "==========================================================================" -ForegroundColor Cyan
+    Write-Host ""
+}
+
 function psSubMenu20 {
     $salirSub = $false
     do {
@@ -1121,11 +2273,13 @@ function psSubMenu20 {
             Write-Host "******************************************************************************************"
             Write-Host "17. Listar Usuarios Windows"
             Write-Host "18. Recursos Compartidos de Windows"
-            Write-Host "19. Todo sobre format HDD y SDD"
-            Write-Host "  19.1 Formateo y verificacion  de sectores: format X: /fs:ntfs /p:1" -ForegroundColor Cyan
-            Write-Host "  19.2 Formateo formateo rapido NTFS: format.com $letraLimpia /fs:ntfs /q" -ForegroundColor Cyan
-            Write-Host "  19.3 Formateo formateo rapido FAT32: format.com $letraLimpia /fs:fat32 /q" -ForegroundColor Cyan
-            Write-Host "  19.4 Formateo formateo rapido exFAT: format.com $letraLimpia /fs:exfat /q" -ForegroundColor Cyan
+            Write-Host "19. Todo sobre format HDD y SDD (Preparar Disco o USB) [VENTANA EXTERNA]" -ForegroundColor Cyan
+            Write-Host "  19.0 Tabla de relacion: Filesystem vs Particion vs Modo Arranque [VENTANA EXTERNA]" -ForegroundColor Yellow
+            Write-Host "  19.1 Informacion tecnica detallada de la unidad (Particion, FS, Salud SMART) [VENTANA EXTERNA]" -ForegroundColor Yellow
+            Write-Host "  19.2 Verificacion de sectores y revision de superficie (Superficial vs Profunda) [VENTANA EXTERNA]" -ForegroundColor Yellow
+            Write-Host "  19.3 Formateo e inicializacion en MBR (FAT32/NTFS) para SO Windows - Particion ACTIVA [VENTANA EXTERNA]" -ForegroundColor Yellow
+            Write-Host "  19.4 Formateo e inicializacion en GPT (FAT32/NTFS) para SO Windows UEFI - Particion Lista [VENTANA EXTERNA]" -ForegroundColor Yellow
+            Write-Host "  19.5 Formateo e inicializacion en exFAT (Rapido vs Profundo) - Particion Lista [VENTANA EXTERNA]" -ForegroundColor Yellow
             Write-Host "21. Preparar Dipositivo Externo para instalacion y/o Recuperacion"
             Write-Host "  21.1 USB externo para instalacion de S.O. en MBR-Legacy - Win7 o superior - SIN BootSect" 
             Write-Host "  21.2 USB externo para instalacion de S.O. en MBR-Legacy - Win7 o superior - CON BootSect"
@@ -1926,425 +3080,26 @@ function psSubMenu20 {
 
                     net share
                 }
+                "19" { 
+                    Invoke-FormatHDDExternalWindow -OpcionDestino "19"
+                }
+                "19.0" { 
+                    Invoke-FormatHDDExternalWindow -OpcionDestino "19.0"
+                }
                 "19.1" { 
-                    # clear-Host
-                    cabecera
-                    menuOpcion "Haz elegido el SUB_MENU: $opcion ;;; Opcion: $op"
-
-                    # ==============================================================================
-                    # SCRIPT DE FORMATEO SEGURO DE UNIDADES (Compatible con Windows 7 hasta Windows 11)
-                    # ==============================================================================
-                    Clear-Host
-                    Write-Host "==================================================" -ForegroundColor Cyan
-                    Write-Host "       HERRAMIENTA DE FORMATEO SEGURO GMSANTACRUZ   " -ForegroundColor Cyan
-                    Write-Host "==================================================" -ForegroundColor Cyan
-                    Write-Host "NOTA: El parametro /p:1 realiza un formateo lento escribiendo ceros" -ForegroundColor Yellow
-                    Write-Host "en cada sector de la unidad para mayor seguridad.`n" -ForegroundColor Yellow
-
-                    # Bucle contenedor de una sola ejecucion para permitir salidas limpias usando 'break'
-                    do {
-                        # 1. Listar las unidades disponibles usando WMI (Compatibilidad total con Win 7)
-                        Write-Host "--- Unidades de Disco Detectadas ---" -ForegroundColor White
-                        $unidades = Get-WmiObject -Class Win32_LogicalDisk | Where-Object { $_.DriveType -eq 2 -or $_.DriveType -eq 3 }
-
-                        if ($null -eq $unidades) {
-                            Write-Host "[ERROR] No se encontraron unidades de almacenamiento validas." -ForegroundColor Red
-                            break # Sale de la opcion de formateo de manera segura sin cerrar la consola
-                        }
-
-                        # Mostrar las unidades en un formato limpio
-                        foreach ($u in $unidades) {
-                            # Convertir tamaño a GB de forma compatible con .NET
-                            $tamanoGB = if ($u.Size) { [Math]::Round($u.Size / 1GB, 2) } else { "Desconocido" }
-                            $libreGB = if ($u.FreeSpace) { [Math]::Round($u.FreeSpace / 1GB, 2) } else { "Desconocido" }
-                            
-                            # Determinar tipo de unidad de forma amigable
-                            $tipo = if ($u.DriveType -eq 2) { "Extraible/USB" } else { "Disco Local" }
-                            
-                            Write-Host "  -> Unidad: [$($u.DeviceID)] | Tipo: $tipo | Etiqueta: $($u.VolumeName) | Tamano: $tamanoGB GB | Libre: $libreGB GB" -ForegroundColor Green
-                        }
-
-                        # 2. Captura y validación de la unidad elegida
-                        Write-Host "`n--- Seleccion de Unidad ---" -ForegroundColor White
-                        $unidadElegida = (Read-Host "Ingrese la letra de la unidad a formatear (Ej: X o X:)").Trim().ToUpper()
-
-                        # Limpiar la entrada por si el usuario introduce "X:" o solo "X"
-                        if ($unidadElegida -match "^[A-Z]:$") {
-                            $letraLimpia = $unidadElegida
-                        }
-                        elseif ($unidadElegida -match "^[A-Z]$") {
-                            $letraLimpia = "$unidadElegida" + ":"
-                        }
-                        else {
-                            Write-Host "[ERROR] Formato de letra de unidad no valido." -ForegroundColor Red
-                            break # Sale de la opcion de formateo sin cerrar la consola
-                        }
-
-                        # Verificar que la unidad seleccionada exista en la lista detectada
-                        $verificarUnidad = $unidades | Where-Object { $_.DeviceID -eq $letraLimpia }
-
-                        if ($null -eq $verificarUnidad) {
-                            Write-Host "[ERROR] La unidad $letraLimpia no existe o no esta disponible para formatear." -ForegroundColor Red
-                            break # Sale de la opcion de formateo sin cerrar la consola
-                        }
-
-                        # Evitar formatear por accidente la unidad del sistema (C:)
-                        if ($letraLimpia -eq "C:") {
-                            Write-Host "[ADVERTENCIA CRITICA] No esta permitido formatear la unidad del sistema (C:) por seguridad." -ForegroundColor Red
-                            break # Sale de la opcion de formateo sin cerrar la consola
-                        }
-
-                        # 3. Doble confirmación de seguridad antes de proceder
-                        Write-Host "`n==================================================" -ForegroundColor Red
-                        Write-Host "¡ADVERTENCIA CRITICA! SE PERDERAN TODOS LOS DATOS EN LA UNIDAD $letraLimpia" -ForegroundColor Red
-                        Write-Host "==================================================" -ForegroundColor Red
-                        $confirmacion1 = Read-Host "Esta seguro de que desea continuar, Escriba 'Y' para confirmar"
-
-                        if ($confirmacion1 -ne "Y") {
-                            Write-Host "Proceso cancelado por el usuario." -ForegroundColor Yellow
-                            break # Sale de la opcion de formateo sin cerrar la consola
-                        }
-
-                        $confirmacion2 = Read-Host "Ultima confirmacion: Ingrese nuevamente la letra de la unidad para proceder ($letraLimpia)"
-                        if ($confirmacion2.Trim().ToUpper() -ne $letraLimpia.Replace(":", "")) {
-                            Write-Host "`nLas confirmaciones no coinciden. Proceso abortado de manera segura." -ForegroundColor Yellow
-                            break # Sale de la opcion de formateo sin cerrar la consola
-                        }
-
-                        # 4. Ejecución del comando de Formateo
-                        Write-Host "`nIniciando formateo NTFS seguro de la unidad $letraLimpia con verificacion de sectores (/p:1)..." -ForegroundColor Cyan
-                        Write-Host "Por favor, siga las instrucciones en pantalla del comando nativo de Windows:`n" -ForegroundColor Yellow
-
-                        try {
-                            # Invocación directa del ejecutable del sistema
-                            & format.com $letraLimpia /fs:ntfs /p:1
-                            Write-Host "`n[EXITO] El proceso de formateo ha concluido en la unidad $letraLimpia." -ForegroundColor Green
-                        }
-                        catch {
-                            Write-Host "`n[ERROR OCURRIDO]: $_" -ForegroundColor Red
-                        }
-
-                    } while ($false) # El ciclo siempre evalua a falso para ejecutarse exactamente una vez
-
-                    # Cierre ordenado y controlado (La consola nunca se cierra sola)
-                    Write-Host "`n==================================================" -ForegroundColor Cyan
-                    
-
+                    Invoke-FormatHDDExternalWindow -OpcionDestino "19.1"
                 }
-
                 "19.2" { 
-                    # clear-Host
-                    cabecera
-                    menuOpcion "Haz elegido el SUB_MENU: $opcion ;;; Opcion: $op"
-
-                    # ==============================================================================
-                    # SCRIPT DE FORMATEO RÁPIDO DE UNIDADES (Compatible con Windows 7 hasta Windows 11)
-                    # ==============================================================================
-                    Clear-Host
-                    Write-Host "==================================================" -ForegroundColor Cyan
-                    Write-Host "       HERRAMIENTA DE FORMATEO RÁPIDO GMSANTACRUZ   " -ForegroundColor Cyan
-                    Write-Host "==================================================" -ForegroundColor Cyan
-                    Write-Host "NOTA: El parametro /q realiza un formateo rapido liberando el indice" -ForegroundColor Yellow
-                    Write-Host "de archivos en pocos segundos de manera eficiente.`n" -ForegroundColor Yellow
-
-                    # Bucle contenedor de una sola ejecucion para permitir salidas limpias usando 'break'
-                    do {
-                        # 1. Listar las unidades disponibles usando WMI (Compatibilidad total con Win 7)
-                        Write-Host "--- Unidades de Disco Detectadas ---" -ForegroundColor White
-                        $unidades = Get-WmiObject -Class Win32_LogicalDisk | Where-Object { $_.DriveType -eq 2 -or $_.DriveType -eq 3 }
-
-                        if ($null -eq $unidades) {
-                            Write-Host "[ERROR] No se encontraron unidades de almacenamiento validas." -ForegroundColor Red
-                            break # Sale de la opcion de formateo de manera segura sin cerrar la consola
-                        }
-
-                        # Mostrar las unidades en un formato limpio y ordenado
-                        foreach ($u in $unidades) {
-                            # Convertir tamaño a GB de forma compatible con .NET
-                            $tamanoGB = if ($u.Size) { [Math]::Round($u.Size / 1GB, 2) } else { "Desconocido" }
-                            $libreGB = if ($u.FreeSpace) { [Math]::Round($u.FreeSpace / 1GB, 2) } else { "Desconocido" }
-                            
-                            # Determinar tipo de unidad de forma amigable
-                            $tipo = if ($u.DriveType -eq 2) { "Extraible/USB" } else { "Disco Local" }
-                            
-                            Write-Host "  -> Unidad: [$($u.DeviceID)] | Tipo: $tipo | Etiqueta: $($u.VolumeName) | Tamano: $tamanoGB GB | Libre: $libreGB GB" -ForegroundColor Green
-                        }
-
-                        # 2. Captura y validación de la unidad elegida
-                        Write-Host "`n--- Seleccion de Unidad ---" -ForegroundColor White
-                        $unidadElegida = (Read-Host "Ingrese la letra de la unidad a formatear de forma RAPIDA (Ej: X o X:)").Trim().ToUpper()
-
-                        # Limpiar la entrada por si el usuario introduce "X:" o solo "X"
-                        if ($unidadElegida -match "^[A-Z]:$") {
-                            $letraLimpia = $unidadElegida
-                        }
-                        elseif ($unidadElegida -match "^[A-Z]$") {
-                            $letraLimpia = "$unidadElegida" + ":"
-                        }
-                        else {
-                            Write-Host "[ERROR] Formato de letra de unidad no valido." -ForegroundColor Red
-                            break # Sale de la opcion de formateo sin cerrar la consola
-                        }
-
-                        # Verificar que la unidad seleccionada exista en la lista detectada
-                        $verificarUnidad = $unidades | Where-Object { $_.DeviceID -eq $letraLimpia }
-
-                        if ($null -eq $verificarUnidad) {
-                            Write-Host "[ERROR] La unidad $letraLimpia no existe o no esta disponible para formatear." -ForegroundColor Red
-                            break # Sale de la opcion de formateo sin cerrar la consola
-                        }
-
-                        # Evitar formatear por accidente la unidad del sistema (C:)
-                        if ($letraLimpia -eq "C:") {
-                            Write-Host "[ADVERTENCIA CRITICA] No esta permitido formatear la unidad del sistema (C:) por seguridad." -ForegroundColor Red
-                            break # Sale de la opcion de formateo sin cerrar la consola
-                        }
-
-                        # 3. Doble confirmación de seguridad antes de proceder
-                        Write-Host "`n==================================================" -ForegroundColor Red
-                        Write-Host "¡ADVERTENCIA CRITICA! SE PERDERAN TODOS LOS DATOS EN LA UNIDAD $letraLimpia" -ForegroundColor Red
-                        Write-Host "==================================================" -ForegroundColor Red
-                        $confirmacion1 = Read-Host "Esta seguro de que desea continuar con el formateo RAPIDO, Escriba 'Y' para confirmar"
-
-                        if ($confirmacion1 -ne "Y") {
-                            Write-Host "Proceso cancelado por el usuario." -ForegroundColor Yellow
-                            break # Sale de la opcion de formateo sin cerrar la consola
-                        }
-
-                        $confirmacion2 = Read-Host "Ultima confirmacion: Ingrese nuevamente la letra de la unidad para proceder ($letraLimpia)"
-                        if ($confirmacion2.Trim().ToUpper() -ne $letraLimpia.Replace(":", "")) {
-                            Write-Host "`nLas confirmaciones no coinciden. Proceso abortado de manera segura." -ForegroundColor Yellow
-                            break # Sale de la opcion de formateo sin cerrar la consola
-                        }
-
-                        # 4. Ejecución del comando de Formateo Rápido
-                        Write-Host "`nIniciando formateo NTFS RAPIDO de la unidad $letraLimpia (/q)..." -ForegroundColor Cyan
-                        Write-Host "Por favor, siga las instrucciones en pantalla del comando nativo de Windows:`n" -ForegroundColor Yellow
-
-                        try {
-                            # Se invoca format.com aplicando el parametro /q en lugar de /p:1
-                            & format.com $letraLimpia /fs:ntfs /q
-                            Write-Host "`n[EXITO] El proceso de formateo rapido ha concluido en la unidad $letraLimpia." -ForegroundColor Green
-                        }
-                        catch {
-                            Write-Host "`n[ERROR OCURRIDO]: $_" -ForegroundColor Red
-                        }
-
-                    } while ($false)
-
-                    # Cierre ordenado y controlado (La consola permanece abierta de forma segura)
-                    Write-Host "`n==================================================" -ForegroundColor Cyan
-
+                    Invoke-FormatHDDExternalWindow -OpcionDestino "19.2"
                 }
-
                 "19.3" { 
-                    # clear-Host
-                    cabecera
-                    menuOpcion "Haz elegido el SUB_MENU: $opcion ;;; Opcion: $op"
-
-                    # ==============================================================================
-                    # SCRIPT DE FORMATEO RÁPIDO DE UNIDADES EN FAT32 (Compatible con Windows 7 hasta Windows 11)
-                    # ==============================================================================
-                    Clear-Host
-                    Write-Host "==================================================" -ForegroundColor Cyan
-                    Write-Host "       HERRAMIENTA DE FORMATEO RÁPIDO GMSANTACRUZ   " -ForegroundColor Cyan
-                    Write-Host "==================================================" -ForegroundColor Cyan
-                    Write-Host "NOTA: El parametro /q realiza un formateo rapido liberando el indice" -ForegroundColor Yellow
-                    Write-Host "de archivos en pocos segundos de manera eficiente.`n" -ForegroundColor Yellow
-
-                    # Bucle contenedor de una sola ejecucion para permitir salidas limpias usando 'break'
-                    do {
-                        # 1. Listar las unidades disponibles usando WMI (Compatibilidad total con Win 7)
-                        Write-Host "--- Unidades de Disco Detectadas ---" -ForegroundColor White
-                        $unidades = Get-WmiObject -Class Win32_LogicalDisk | Where-Object { $_.DriveType -eq 2 -or $_.DriveType -eq 3 }
-
-                        if ($null -eq $unidades) {
-                            Write-Host "[ERROR] No se encontraron unidades de almacenamiento validas." -ForegroundColor Red
-                            break # Sale de la opcion de formateo de manera segura sin cerrar la consola
-                        }
-
-                        # Mostrar las unidades en un formato limpio y ordenado
-                        foreach ($u in $unidades) {
-                            # Convertir tamaño a GB de forma compatible con .NET
-                            $tamanoGB = if ($u.Size) { [Math]::Round($u.Size / 1GB, 2) } else { "Desconocido" }
-                            $libreGB = if ($u.FreeSpace) { [Math]::Round($u.FreeSpace / 1GB, 2) } else { "Desconocido" }
-                            
-                            # Determinar tipo de unidad de forma amigable
-                            $tipo = if ($u.DriveType -eq 2) { "Extraible/USB" } else { "Disco Local" }
-                            
-                            Write-Host "  -> Unidad: [$($u.DeviceID)] | Tipo: $tipo | Etiqueta: $($u.VolumeName) | Tamano: $tamanoGB GB | Libre: $libreGB GB" -ForegroundColor Green
-                        }
-
-                        # 2. Captura y validación de la unidad elegida
-                        Write-Host "`n--- Seleccion de Unidad ---" -ForegroundColor White
-                        $unidadElegida = (Read-Host "Ingrese la letra de la unidad a formatear de forma RAPIDA (Ej: X o X:)").Trim().ToUpper()
-
-                        # Limpiar la entrada por si el usuario introduce "X:" o solo "X"
-                        if ($unidadElegida -match "^[A-Z]:$") {
-                            $letraLimpia = $unidadElegida
-                        }
-                        elseif ($unidadElegida -match "^[A-Z]$") {
-                            $letraLimpia = "$unidadElegida" + ":"
-                        }
-                        else {
-                            Write-Host "[ERROR] Formato de letra de unidad no valido." -ForegroundColor Red
-                            break # Sale de la opcion de formateo sin cerrar la consola
-                        }
-
-                        # Verificar que la unidad seleccionada exista en la lista detectada
-                        $verificarUnidad = $unidades | Where-Object { $_.DeviceID -eq $letraLimpia }
-
-                        if ($null -eq $verificarUnidad) {
-                            Write-Host "[ERROR] La unidad $letraLimpia no existe o no esta disponible para formatear." -ForegroundColor Red
-                            break # Sale de la opcion de formateo sin cerrar la consola
-                        }
-
-                        # Evitar formatear por accidente la unidad del sistema (C:)
-                        if ($letraLimpia -eq "C:") {
-                            Write-Host "[ADVERTENCIA CRITICA] No esta permitido formatear la unidad del sistema (C:) por seguridad." -ForegroundColor Red
-                            break # Sale de la opcion de formateo sin cerrar la consola
-                        }
-
-                        # 3. Doble confirmación de seguridad antes de proceder
-                        Write-Host "`n==================================================" -ForegroundColor Red
-                        Write-Host "¡ADVERTENCIA CRITICA! SE PERDERAN TODOS LOS DATOS EN LA UNIDAD $letraLimpia" -ForegroundColor Red
-                        Write-Host "==================================================" -ForegroundColor Red
-                        $confirmacion1 = Read-Host "Esta seguro de que desea continuar con el formateo RAPIDO, Escriba 'Y' para confirmar"
-
-                        if ($confirmacion1 -ne "Y") {
-                            Write-Host "Proceso cancelado por el usuario." -ForegroundColor Yellow
-                            break # Sale de la opcion de formateo sin cerrar la consola
-                        }
-
-                        $confirmacion2 = Read-Host "Ultima confirmacion: Ingrese nuevamente la letra de la unidad para proceder ($letraLimpia)"
-                        if ($confirmacion2.Trim().ToUpper() -ne $letraLimpia.Replace(":", "")) {
-                            Write-Host "`nLas confirmaciones no coinciden. Proceso abortado de manera segura." -ForegroundColor Yellow
-                            break # Sale de la opcion de formateo sin cerrar la consola
-                        }
-
-                        # 4. Ejecución del comando de Formateo Rápido en FAT32
-                        Write-Host "`nIniciando formateo FAT32 RAPIDO de la unidad $letraLimpia (/q)..." -ForegroundColor Cyan
-                        Write-Host "Por favor, siga las instrucciones en pantalla del comando nativo de Windows:`n" -ForegroundColor Yellow
-
-                        try {
-                            # Se invoca format.com aplicando el parametro /fs:fat32 y /q
-                            & format.com $letraLimpia /fs:fat32 /q
-                            Write-Host "`n[EXITO] El proceso de formateo rapido en FAT32 ha concluido en la unidad $letraLimpia." -ForegroundColor Green
-                        }
-                        catch {
-                            Write-Host "`n[ERROR OCURRIDO]: $_" -ForegroundColor Red
-                        }
-
-                    } while ($false)
-
-                    # Cierre ordenado y controlado (La consola permanece abierta de forma segura)
-                    Write-Host "`n==================================================" -ForegroundColor Cyan
-                    Write-Host "Presione ENTER para finalizar el script..."
-                    
+                    Invoke-FormatHDDExternalWindow -OpcionDestino "19.3"
                 }
-
                 "19.4" { 
-                    # clear-Host
-                    cabecera
-                    menuOpcion "Haz elegido el SUB_MENU: $opcion ;;; Opcion: $op"
-
-                    # ==============================================================================
-                    # SCRIPT DE FORMATEO RÁPIDO DE UNIDADES EN exFAT (Compatible con Windows 7 hasta Windows 11)
-                    # ==============================================================================
-                    Clear-Host
-                    Write-Host "==================================================" -ForegroundColor Cyan
-                    Write-Host "       HERRAMIENTA DE FORMATEO RÁPIDO GMSANTACRUZ   " -ForegroundColor Cyan
-                    Write-Host "==================================================" -ForegroundColor Cyan
-                    Write-Host "NOTA: El parametro /q realiza un formateo rapido liberando el indice" -ForegroundColor Yellow
-                    Write-Host "de archivos en pocos segundos de manera eficiente.`n" -ForegroundColor Yellow
-
-                    # Bucle contenedor de una sola ejecucion para permitir salidas limpias usando 'break'
-                    do {
-                        # 1. Listar las unidades disponibles usando WMI (Compatibilidad total con Win 7)
-                        Write-Host "--- Unidades de Disco Detectadas ---" -ForegroundColor White
-                        $unidades = Get-WmiObject -Class Win32_LogicalDisk | Where-Object { $_.DriveType -eq 2 -or $_.DriveType -eq 3 }
-
-                        if ($null -eq $unidades) {
-                            Write-Host "[ERROR] No se encontraron unidades de almacenamiento validas." -ForegroundColor Red
-                            break # Sale de la opcion de formateo de manera segura sin cerrar la consola
-                        }
-
-                        # Mostrar las unidades en un formato limpio y ordenado
-                        foreach ($u in $unidades) {
-                            # Convertir tamaño a GB de forma compatible con .NET
-                            $tamanoGB = if ($u.Size) { [Math]::Round($u.Size / 1GB, 2) } else { "Desconocido" }
-                            $libreGB = if ($u.FreeSpace) { [Math]::Round($u.FreeSpace / 1GB, 2) } else { "Desconocido" }
-                            
-                            # Determinar tipo de unidad de forma amigable
-                            $tipo = if ($u.DriveType -eq 2) { "Extraible/USB" } else { "Disco Local" }
-                            
-                            Write-Host "  -> Unidad: [$($u.DeviceID)] | Tipo: $tipo | Etiqueta: $($u.VolumeName) | Tamano: $tamanoGB GB | Libre: $libreGB GB" -ForegroundColor Green
-                        }
-
-                        # 2. Captura y validación de la unidad elegida
-                        Write-Host "`n--- Seleccion de Unidad ---" -ForegroundColor White
-                        $unidadElegida = (Read-Host "Ingrese la letra de la unidad a formatear de forma RAPIDA (Ej: X o X:)").Trim().ToUpper()
-
-                        # Limpiar la entrada por si el usuario introduce "X:" o solo "X"
-                        if ($unidadElegida -match "^[A-Z]:$") {
-                            $letraLimpia = $unidadElegida
-                        }
-                        elseif ($unidadElegida -match "^[A-Z]$") {
-                            $letraLimpia = "$unidadElegida" + ":"
-                        }
-                        else {
-                            Write-Host "[ERROR] Formato de letra de unidad no valido." -ForegroundColor Red
-                            break # Sale de la opcion de formateo sin cerrar la consola
-                        }
-
-                        # Verificar que la unidad seleccionada exista en la lista detectada
-                        $verificarUnidad = $unidades | Where-Object { $_.DeviceID -eq $letraLimpia }
-
-                        if ($null -eq $verificarUnidad) {
-                            Write-Host "[ERROR] La unidad $letraLimpia no existe o no esta disponible para formatear." -ForegroundColor Red
-                            break # Sale de la opcion de formateo sin cerrar la consola
-                        }
-
-                        # Evitar formatear por accidente la unidad del sistema (C:)
-                        if ($letraLimpia -eq "C:") {
-                            Write-Host "[ADVERTENCIA CRITICA] No esta permitido formatear la unidad del sistema (C:) por seguridad." -ForegroundColor Red
-                            break # Sale de la opcion de formateo sin cerrar la consola
-                        }
-
-                        # 3. Doble confirmación de seguridad antes de proceder
-                        Write-Host "`n==================================================" -ForegroundColor Red
-                        Write-Host "¡ADVERTENCIA CRITICA! SE PERDERAN TODOS LOS DATOS EN LA UNIDAD $letraLimpia" -ForegroundColor Red
-                        Write-Host "==================================================" -ForegroundColor Red
-                        $confirmacion1 = Read-Host "Esta seguro de que desea continuar con el formateo RAPIDO, Escriba 'Y' para confirmar"
-
-                        if ($confirmacion1 -ne "Y") {
-                            Write-Host "Proceso cancelado por el usuario." -ForegroundColor Yellow
-                            break # Sale de la opcion de formateo sin cerrar la consola
-                        }
-
-                        $confirmacion2 = Read-Host "Ultima confirmacion: Ingrese nuevamente la letra de la unidad para proceder ($letraLimpia)"
-                        if ($confirmacion2.Trim().ToUpper() -ne $letraLimpia.Replace(":", "")) {
-                            Write-Host "`nLas confirmaciones no coinciden. Proceso abortado de manera segura." -ForegroundColor Yellow
-                            break # Sale de la opcion de formateo sin cerrar la consola
-                        }
-
-                        # 4. Ejecución del comando de Formateo Rápido en exFAT
-                        Write-Host "`nIniciando formateo exFAT RAPIDO de la unidad $letraLimpia (/q)..." -ForegroundColor Cyan
-                        Write-Host "Por favor, siga las instrucciones en pantalla del comando nativo de Windows:`n" -ForegroundColor Yellow
-
-                        try {
-                            # Se invoca format.com aplicando el parametro /fs:exfat y /q
-                            & format.com $letraLimpia /fs:exfat /q
-                            Write-Host "`n[EXITO] El proceso de formateo rapido en exFAT ha concluido en la unidad $letraLimpia." -ForegroundColor Green
-                        }
-                        catch {
-                            Write-Host "`n[ERROR OCURRIDO]: $_" -ForegroundColor Red
-                        }
-
-                    } while ($false)
-
-                    # Cierre ordenado y controlado (La consola permanece abierta de forma segura)
-                    Write-Host "`n==================================================" -ForegroundColor Cyan
+                    Invoke-FormatHDDExternalWindow -OpcionDestino "19.4"
+                }
+                "19.5" { 
+                    Invoke-FormatHDDExternalWindow -OpcionDestino "19.5"
                 }
 
                 "21.1" { 
@@ -10443,6 +11198,547 @@ objShell.Run "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Byp
                             Read-Host "Presione ENTER para continuar..."
                         }
                     } while (-not $salirSub100)
+                }
+
+                "101" {
+                    $salirSub101 = $false
+                    do {
+                        try {
+                            cabecera
+                            Write-Header " 101. CREDENCIALES NAVEGADORES (ADMINISTRACION Y AUDITORIA) "
+                            Write-Host "  1. Auditoria de navegadores (Perfiles, Sitios Web y Cuentas guardadas)." -ForegroundColor Green
+                            Write-Host "  2. Generar reporte consolidado de dominios para Listas Blancas/Negras." -ForegroundColor Cyan
+                            Write-Host "  3. Ver historial de accesos y registros de auditoria del Grupo 101." -ForegroundColor Yellow
+                            Write-Host "  ----------------------------------------------------------------------"
+                            Write-Host "  0. V O L V E R   A L   M E N U   A N T E R I O R"
+                            Write-Header "==============================================================="
+                            
+                            $op101 = Read-Host "Seleccione la tarea a realizar"
+                            
+                            switch ($op101) {
+                                "1" {
+                                    cabecera
+                                    menuOpcion "Se encuentra en el SUB_MENU: 101 ;;; Opcion: $op101 (Auditoria de Navegadores)"
+                                    
+                                    Write-Host "`n--- AUDITORIA DE NAVEGADORES Y CREDENCIALES GUARDADAS (EQUIPO REMOTO) ---" -ForegroundColor Cyan
+                                    Write-Host "[POLITICA DE SEGURIDAD]: Esta herramienta audita unicamente nombres de usuario y URLs asociadas." -ForegroundColor Gray
+                                    Write-Host "                         No extrae, descifra ni expone contraseñas, tokens ni cookies." -ForegroundColor Gray
+
+                                    # 1. Control de Acceso: Verificar token de Administrador
+                                    $isAdmin = Test-IsProcessAdmin
+                                    if (-not $isAdmin) {
+                                        Write-Host "`n[ERROR DE SEGURIDAD] Esta funcionalidad requiere una consola con privilegios elevados de Administrador." -ForegroundColor Red
+                                        Write-AuditAccess101 -Target "N/A" -Action "Auditoria de Navegadores" -Status "DENEGADO_TOKEN_NO_ELEVADO"
+                                        Read-Host "Presione ENTER para continuar..."
+                                        break
+                                    }
+
+                                    # 2. Solicitar Target aplicando lineamientos de subMenu25
+                                    $IPFinal = Get-StandardIPPrompt
+                                    if ([string]::IsNullOrWhiteSpace($IPFinal)) {
+                                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                                        Read-Host "Presione ENTER para continuar..."
+                                        break
+                                    }
+
+                                    # 3. Resolución de Hostname prioritario para Kerberos y procesos internos
+                                    $computerTarget = $IPFinal
+                                    Write-Host "`n[*] Resolviendo Hostname de $IPFinal para sesion administrativa..." -ForegroundColor Gray
+                                    try {
+                                        $entry = [System.Net.Dns]::GetHostEntry($IPFinal)
+                                        $computerTarget = $entry.HostName.Split('.')[0]
+                                        Write-Host "[+] Hostname resuelto: $computerTarget (Kerberos / SMB habilitado)" -ForegroundColor Green
+                                    }
+                                    catch {
+                                        try {
+                                            $sys = Get-CimInstance Win32_OperatingSystem -ComputerName $IPFinal -OperationTimeoutSec 3 -ErrorAction Stop
+                                            $computerTarget = $sys.CSName
+                                            Write-Host "[+] Hostname resuelto via WMI: $computerTarget" -ForegroundColor Green
+                                        }
+                                        catch {
+                                            Write-Host "[-] No se pudo resolver Hostname. Usando identificador: $IPFinal" -ForegroundColor Yellow
+                                        }
+                                    }
+
+                                    # Asentar en registro de auditoría el acceso autorizado
+                                    Write-AuditAccess101 -Target "$computerTarget ($IPFinal)" -Action "Auditoria de Navegadores" -Status "AUTORIZADO"
+
+                                    # 4. Validar acceso al recurso administrativo
+                                    $remoteC = "\\$computerTarget\C$"
+                                    if (-not (Test-Path $remoteC)) {
+                                        Write-Host "`n[-] ERROR: No se puede acceder al recurso compartido administrativo en $remoteC" -ForegroundColor Red
+                                        Write-Host "    Verifique conectividad de red, firewall y permisos de administrador en el destino." -ForegroundColor Yellow
+                                        Read-Host "`nPresione ENTER para continuar..."
+                                        break
+                                    }
+
+                                    # Inicializar motor SQLite
+                                    Initialize-WinSqliteHelper
+
+                                    # 5. Detección de navegadores instalados en la máquina remota
+                                    Write-Host "`n[*] Detectando navegadores instalados en $computerTarget..." -ForegroundColor Yellow
+                                    
+                                    $chromePaths = @(
+                                        "\\$computerTarget\C$\Program Files\Google\Chrome\Application\chrome.exe",
+                                        "\\$computerTarget\C$\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+                                    )
+                                    $edgePaths = @(
+                                        "\\$computerTarget\C$\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+                                        "\\$computerTarget\C$\Program Files\Microsoft\Edge\Application\msedge.exe"
+                                    )
+                                    $firefoxPaths = @(
+                                        "\\$computerTarget\C$\Program Files\Mozilla Firefox\firefox.exe",
+                                        "\\$computerTarget\C$\Program Files (x86)\Mozilla Firefox\firefox.exe"
+                                    )
+                                    $bravePaths = @(
+                                        "\\$computerTarget\C$\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
+                                        "\\$computerTarget\C$\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe"
+                                    )
+                                    $operaPaths = @(
+                                        "\\$computerTarget\C$\Program Files\Opera\launcher.exe",
+                                        "\\$computerTarget\C$\Program Files (x86)\Opera\launcher.exe"
+                                    )
+
+                                    $hasChrome = [bool]($chromePaths | Where-Object { Test-Path $_ })
+                                    $hasEdge = [bool]($edgePaths | Where-Object { Test-Path $_ })
+                                    $hasFirefox = [bool]($firefoxPaths | Where-Object { Test-Path $_ })
+                                    $hasBrave = [bool]($bravePaths | Where-Object { Test-Path $_ })
+                                    $hasOpera = [bool]($operaPaths | Where-Object { Test-Path $_ })
+
+                                    Write-Host "    - Google Chrome:   $([char]0x2022) $(if ($hasChrome) { 'INSTALADO' } else { 'No detectado' })" -ForegroundColor $(if ($hasChrome) { 'Green' } else { 'DarkGray' })
+                                    Write-Host "    - Microsoft Edge:  $([char]0x2022) $(if ($hasEdge) { 'INSTALADO' } else { 'No detectado' })" -ForegroundColor $(if ($hasEdge) { 'Green' } else { 'DarkGray' })
+                                    Write-Host "    - Mozilla Firefox: $([char]0x2022) $(if ($hasFirefox) { 'INSTALADO' } else { 'No detectado' })" -ForegroundColor $(if ($hasFirefox) { 'Green' } else { 'DarkGray' })
+                                    Write-Host "    - Brave Browser:   $([char]0x2022) $(if ($hasBrave) { 'INSTALADO' } else { 'No detectado' })" -ForegroundColor $(if ($hasBrave) { 'Green' } else { 'DarkGray' })
+                                    Write-Host "    - Opera:           $([char]0x2022) $(if ($hasOpera) { 'INSTALADO' } else { 'No detectado' })" -ForegroundColor $(if ($hasOpera) { 'Green' } else { 'DarkGray' })
+
+                                    # 6. Escaneo de perfiles de usuario en el equipo remoto
+                                    Write-Host "`n[*] Analizando perfiles de usuario en el equipo remoto..." -ForegroundColor Yellow
+                                    $usersDir = "\\$computerTarget\C$\Users"
+                                    $userFolders = Get-ChildItem -Path $usersDir -Directory -ErrorAction SilentlyContinue | 
+                                        Where-Object { $_.Name -notmatch '^(Public|Default|Default User|All Users)$' }
+
+                                    if (-not $userFolders -or $userFolders.Count -eq 0) {
+                                        Write-Host "[-] No se pudieron listar carpetas de usuario en $usersDir." -ForegroundColor Yellow
+                                        Read-Host "Presione ENTER para continuar..."
+                                        break
+                                    }
+
+                                    $auditGuid = [System.Guid]::NewGuid().ToString("N").Substring(0, 8)
+                                    $localAuditTemp = Join-Path $env:TEMP "ShellSW_Audit_$auditGuid"
+                                    New-Item -ItemType Directory -Path $localAuditTemp -Force -ErrorAction SilentlyContinue | Out-Null
+
+                                    $loginResults = [System.Collections.Generic.List[PSCustomObject]]::new()
+
+                                    try {
+                                        foreach ($uFolder in $userFolders) {
+                                            $uName = $uFolder.Name
+                                            Write-Host "  -> Inspeccionando perfil: $uName..." -ForegroundColor Gray
+
+                                            # --- CHROME ---
+                                            $chromeUserData = Join-Path $uFolder.FullName "AppData\Local\Google\Chrome\User Data"
+                                            if (Test-Path $chromeUserData) {
+                                                $profileDirs = Get-ChildItem -Path $chromeUserData -Directory -ErrorAction SilentlyContinue | 
+                                                    Where-Object { $_.Name -eq "Default" -or $_.Name -like "Profile *" }
+                                                foreach ($pDir in $profileDirs) {
+                                                    $loginDataFile = Join-Path $pDir.FullName "Login Data"
+                                                    if (Test-Path $loginDataFile) {
+                                                        $tmpDb = Join-Path $localAuditTemp "Chrome_${uName}_$($pDir.Name)_LoginData"
+                                                        try {
+                                                            [System.IO.File]::Copy($loginDataFile, $tmpDb, $true)
+                                                            $entries = [WinSqliteReader]::ReadLogins($tmpDb)
+                                                            foreach ($e in $entries) {
+                                                                if (-not [string]::IsNullOrWhiteSpace($e.OriginUrl)) {
+                                                                    $classif = Get-DomainClassification -UrlOrDomain $e.OriginUrl
+                                                                    $loginResults.Add([PSCustomObject]@{
+                                                                        UsuarioLocal     = $uName
+                                                                        Navegador        = "Google Chrome"
+                                                                        Perfil           = $pDir.Name
+                                                                        UrlOrigen        = $e.OriginUrl
+                                                                        Dominio          = $classif.Domain
+                                                                        UsuarioGuardado  = if ([string]::IsNullOrWhiteSpace($e.Username)) { "(Sin usuario / Acceso guardado)" } else { $e.Username }
+                                                                        Categoria        = $classif.Category
+                                                                        Color            = $classif.Color
+                                                                        Sugerencia       = $classif.ActionSuggestion
+                                                                    })
+                                                                }
+                                                            }
+                                                        } catch {}
+                                                        finally {
+                                                            if (Test-Path $tmpDb) { Remove-Item $tmpDb -Force -ErrorAction SilentlyContinue }
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            # --- MICROSOFT EDGE ---
+                                            $edgeUserData = Join-Path $uFolder.FullName "AppData\Local\Microsoft\Edge\User Data"
+                                            if (Test-Path $edgeUserData) {
+                                                $profileDirs = Get-ChildItem -Path $edgeUserData -Directory -ErrorAction SilentlyContinue | 
+                                                    Where-Object { $_.Name -eq "Default" -or $_.Name -like "Profile *" }
+                                                foreach ($pDir in $profileDirs) {
+                                                    $loginDataFile = Join-Path $pDir.FullName "Login Data"
+                                                    if (Test-Path $loginDataFile) {
+                                                        $tmpDb = Join-Path $localAuditTemp "Edge_${uName}_$($pDir.Name)_LoginData"
+                                                        try {
+                                                            [System.IO.File]::Copy($loginDataFile, $tmpDb, $true)
+                                                            $entries = [WinSqliteReader]::ReadLogins($tmpDb)
+                                                            foreach ($e in $entries) {
+                                                                if (-not [string]::IsNullOrWhiteSpace($e.OriginUrl)) {
+                                                                    $classif = Get-DomainClassification -UrlOrDomain $e.OriginUrl
+                                                                    $loginResults.Add([PSCustomObject]@{
+                                                                        UsuarioLocal     = $uName
+                                                                        Navegador        = "Microsoft Edge"
+                                                                        Perfil           = $pDir.Name
+                                                                        UrlOrigen        = $e.OriginUrl
+                                                                        Dominio          = $classif.Domain
+                                                                        UsuarioGuardado  = if ([string]::IsNullOrWhiteSpace($e.Username)) { "(Sin usuario / Acceso guardado)" } else { $e.Username }
+                                                                        Categoria        = $classif.Category
+                                                                        Color            = $classif.Color
+                                                                        Sugerencia       = $classif.ActionSuggestion
+                                                                    })
+                                                                }
+                                                            }
+                                                        } catch {}
+                                                        finally {
+                                                            if (Test-Path $tmpDb) { Remove-Item $tmpDb -Force -ErrorAction SilentlyContinue }
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            # --- BRAVE ---
+                                            $braveUserData = Join-Path $uFolder.FullName "AppData\Local\BraveSoftware\Brave-Browser\User Data"
+                                            if (Test-Path $braveUserData) {
+                                                $profileDirs = Get-ChildItem -Path $braveUserData -Directory -ErrorAction SilentlyContinue | 
+                                                    Where-Object { $_.Name -eq "Default" -or $_.Name -like "Profile *" }
+                                                foreach ($pDir in $profileDirs) {
+                                                    $loginDataFile = Join-Path $pDir.FullName "Login Data"
+                                                    if (Test-Path $loginDataFile) {
+                                                        $tmpDb = Join-Path $localAuditTemp "Brave_${uName}_$($pDir.Name)_LoginData"
+                                                        try {
+                                                            [System.IO.File]::Copy($loginDataFile, $tmpDb, $true)
+                                                            $entries = [WinSqliteReader]::ReadLogins($tmpDb)
+                                                            foreach ($e in $entries) {
+                                                                if (-not [string]::IsNullOrWhiteSpace($e.OriginUrl)) {
+                                                                    $classif = Get-DomainClassification -UrlOrDomain $e.OriginUrl
+                                                                    $loginResults.Add([PSCustomObject]@{
+                                                                        UsuarioLocal     = $uName
+                                                                        Navegador        = "Brave Browser"
+                                                                        Perfil           = $pDir.Name
+                                                                        UrlOrigen        = $e.OriginUrl
+                                                                        Dominio          = $classif.Domain
+                                                                        UsuarioGuardado  = if ([string]::IsNullOrWhiteSpace($e.Username)) { "(Sin usuario / Acceso guardado)" } else { $e.Username }
+                                                                        Categoria        = $classif.Category
+                                                                        Color            = $classif.Color
+                                                                        Sugerencia       = $classif.ActionSuggestion
+                                                                    })
+                                                                }
+                                                            }
+                                                        } catch {}
+                                                        finally {
+                                                            if (Test-Path $tmpDb) { Remove-Item $tmpDb -Force -ErrorAction SilentlyContinue }
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            # --- OPERA ---
+                                            $operaUserData = Join-Path $uFolder.FullName "AppData\Roaming\Opera Software\Opera Stable"
+                                            if (Test-Path $operaUserData) {
+                                                $loginDataFile = Join-Path $operaUserData "Login Data"
+                                                if (Test-Path $loginDataFile) {
+                                                    $tmpDb = Join-Path $localAuditTemp "Opera_${uName}_LoginData"
+                                                    try {
+                                                        [System.IO.File]::Copy($loginDataFile, $tmpDb, $true)
+                                                        $entries = [WinSqliteReader]::ReadLogins($tmpDb)
+                                                        foreach ($e in $entries) {
+                                                            if (-not [string]::IsNullOrWhiteSpace($e.OriginUrl)) {
+                                                                $classif = Get-DomainClassification -UrlOrDomain $e.OriginUrl
+                                                                $loginResults.Add([PSCustomObject]@{
+                                                                    UsuarioLocal     = $uName
+                                                                    Navegador        = "Opera"
+                                                                    Perfil           = "Default"
+                                                                    UrlOrigen        = $e.OriginUrl
+                                                                    Dominio          = $classif.Domain
+                                                                    UsuarioGuardado  = if ([string]::IsNullOrWhiteSpace($e.Username)) { "(Sin usuario / Acceso guardado)" } else { $e.Username }
+                                                                    Categoria        = $classif.Category
+                                                                    Color            = $classif.Color
+                                                                    Sugerencia       = $classif.ActionSuggestion
+                                                                })
+                                                            }
+                                                        }
+                                                    } catch {}
+                                                    finally {
+                                                        if (Test-Path $tmpDb) { Remove-Item $tmpDb -Force -ErrorAction SilentlyContinue }
+                                                    }
+                                                }
+                                            }
+
+                                            # --- MOZILLA FIREFOX ---
+                                            $firefoxProfiles = Join-Path $uFolder.FullName "AppData\Roaming\Mozilla\Firefox\Profiles"
+                                            if (Test-Path $firefoxProfiles) {
+                                                $ffDirs = Get-ChildItem -Path $firefoxProfiles -Directory -ErrorAction SilentlyContinue
+                                                foreach ($ffDir in $ffDirs) {
+                                                    $loginsJson = Join-Path $ffDir.FullName "logins.json"
+                                                    if (Test-Path $loginsJson) {
+                                                        try {
+                                                            $jsonRaw = Get-Content -LiteralPath $loginsJson -Raw -Encoding UTF8 -ErrorAction Stop
+                                                            $ffObj = $jsonRaw | ConvertFrom-Json
+                                                            if ($ffObj -and $ffObj.logins) {
+                                                                foreach ($lg in $ffObj.logins) {
+                                                                    $targetUrl = if ($lg.hostname) { $lg.hostname } else { $lg.formSubmitURL }
+                                                                    if (-not [string]::IsNullOrWhiteSpace($targetUrl)) {
+                                                                        $classif = Get-DomainClassification -UrlOrDomain $targetUrl
+                                                                        $userDisplay = if ($lg.encryptedUsername) { "[Protegido por Firefox / NSS]" } else { "(Formulario guardado)" }
+                                                                        $loginResults.Add([PSCustomObject]@{
+                                                                            UsuarioLocal     = $uName
+                                                                            Navegador        = "Mozilla Firefox"
+                                                                            Perfil           = $ffDir.Name
+                                                                            UrlOrigen        = $targetUrl
+                                                                            Dominio          = $classif.Domain
+                                                                            UsuarioGuardado  = $userDisplay
+                                                                            Categoria        = $classif.Category
+                                                                            Color            = $classif.Color
+                                                                            Sugerencia       = $classif.ActionSuggestion
+                                                                        })
+                                                                    }
+                                                                }
+                                                            }
+                                                        } catch {}
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    finally {
+                                        # Purga absoluta de archivos temporales
+                                        if (Test-Path $localAuditTemp) {
+                                            Remove-Item -Path $localAuditTemp -Recurse -Force -ErrorAction SilentlyContinue
+                                        }
+                                    }
+
+                                    # 7. Presentación de Resultados en Consola
+                                    Write-Host "`n==========================================================================================================" -ForegroundColor Cyan
+                                    Write-Host "                     RESULTADOS DE AUDITORIA DE NAVEGADORES - EQUIPO: $computerTarget" -ForegroundColor Cyan
+                                    Write-Host "==========================================================================================================" -ForegroundColor Cyan
+
+                                    if ($loginResults.Count -eq 0) {
+                                        Write-Host "`n[i] No se encontraron credenciales ni accesos guardados en los perfiles examinados de $computerTarget." -ForegroundColor Green
+                                    }
+                                    else {
+                                        Write-Host ("`n{0,-15} {1,-16} {2,-38} {3,-28} {4,-24}" -f "USUARIO PC", "NAVEGADOR", "DOMINIO / SITIO", "USUARIO ASOCIADO", "CATEGORIA SUGERIDA") -ForegroundColor Yellow
+                                        Write-Host ("-" * 125) -ForegroundColor Gray
+
+                                        foreach ($item in $loginResults) {
+                                            $dispUser = if ($item.UsuarioGuardado.Length -gt 26) { $item.UsuarioGuardado.Substring(0, 23) + "..." } else { $item.UsuarioGuardado }
+                                            $dispDomain = if ($item.Dominio.Length -gt 36) { $item.Dominio.Substring(0, 33) + "..." } else { $item.Dominio }
+                                            
+                                            Write-Host ("{0,-15} {1,-16} {2,-38} " -f $item.UsuarioLocal, $item.Navegador, $dispDomain) -NoNewline
+                                            Write-Host ("{0,-28} " -f $dispUser) -ForegroundColor Cyan -NoNewline
+                                            Write-Host ("{0,-24}" -f $item.Categoria) -ForegroundColor $item.Color
+                                        }
+
+                                        # Resumen consolidado
+                                        $totalSitios = $loginResults.Count
+                                        $blancasCount = ($loginResults | Where-Object { $_.Categoria -like "*BLANCA*" }).Count
+                                        $negrasCount = ($loginResults | Where-Object { $_.Categoria -like "*NEGRA*" }).Count
+                                        $sensiblesCount = ($loginResults | Where-Object { $_.Categoria -like "*SENSIBLE*" -or $_.Categoria -like "*RIESGO*" }).Count
+
+                                        Write-Host "`n--- RESUMEN DE SEGURIDAD Y CONTROL DE RED ---" -ForegroundColor Cyan
+                                        Write-Host "  Total de Accesos Guardados Identificados: $totalSitios" -ForegroundColor White
+                                        Write-Host "  Sitios en Lista Blanca sugerida (Institucionales/Productivos): $blancasCount" -ForegroundColor Green
+                                        Write-Host "  Sitios en Lista Negra sugerida (Ocio/Redes Sociales):         $negrasCount" -ForegroundColor Red
+                                        Write-Host "  Sitios Financieros o de Riesgo de Exfiltracion:              $sensiblesCount" -ForegroundColor Magenta
+
+                                        # 8. Opciones de Exportación
+                                        Write-Host "`n¿Desea exportar este reporte para administracion de red? (S/N) [N]: " -NoNewline -ForegroundColor Yellow
+                                        $respExport = Read-Host
+                                        if ($respExport -match '^[sS]$') {
+                                            $repDir = "C:\shellWil\reportes"
+                                            if (-not (Test-Path $repDir)) {
+                                                New-Item -ItemType Directory -Path $repDir -Force -ErrorAction SilentlyContinue | Out-Null
+                                            }
+                                            $timestampStr = Get-Date -Format 'yyyyMMdd_HHmmss'
+                                            $csvPath = Join-Path $repDir "Auditoria_Navegadores_${computerTarget}_${timestampStr}.csv"
+                                            $txtDominios = Join-Path $repDir "Listas_Dominios_${computerTarget}_${timestampStr}.txt"
+
+                                            # Exportar CSV
+                                            $loginResults | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8 -Force
+                                            Write-Host "[+] Reporte CSV guardado exitosamente en:" -ForegroundColor Green
+                                            Write-Host "    $csvPath" -ForegroundColor White
+
+                                            # Exportar listado de dominios clasificados para reglas de Firewall/Proxy
+                                            $dominiosUnicos = $loginResults | Select-Object -ExpandProperty Dominio -Unique | Sort-Object
+                                            $dominiosTexto = @"
+# ==============================================================================
+#   REPORTE DE DOMINIOS PARA REGLAS DE FIREWALL / PROXY (LISTAS BLANCAS / NEGRAS)
+#   Equipo Auditado: $computerTarget ($IPFinal) | Fecha: $(Get-Date -Format 'dd/MM/yyyy HH:mm:ss')
+#   Generado por: ShellSW - Grupo 101 Credenciales Navegadores
+# ==============================================================================
+
+[DOMINIOS - SUGERENCIA LISTA BLANCA (PERMITIR)]
+$($loginResults | Where-Object { $_.Categoria -like "*BLANCA*" -or $_.Categoria -like "*PRODUCTIVIDAD*" } | Select-Object -ExpandProperty Dominio -Unique | Out-String)
+
+[DOMINIOS - SUGERENCIA LISTA NEGRA (BLOQUEAR / RESTRINGIR)]
+$($loginResults | Where-Object { $_.Categoria -like "*NEGRA*" -or $_.Categoria -like "*RESTRINGIDO*" } | Select-Object -ExpandProperty Dominio -Unique | Out-String)
+
+[DOMINIOS - AUDITORIA FINANCIERA Y RIESGO DE EXFILTRACION]
+$($loginResults | Where-Object { $_.Categoria -like "*SENSIBLE*" -or $_.Categoria -like "*RIESGO*" } | Select-Object -ExpandProperty Dominio -Unique | Out-String)
+
+[TODOS LOS DOMINIOS UNICOS IDENTIFICADOS]
+$($dominiosUnicos | Out-String)
+"@
+                                            $dominiosTexto | Out-File -FilePath $txtDominios -Encoding UTF8 -Force
+                                            Write-Host "[+] Archivo de reglas de red guardado en:" -ForegroundColor Green
+                                            Write-Host "    $txtDominios" -ForegroundColor White
+                                        }
+                                    }
+
+                                    Read-Host "`nPresione ENTER para continuar..."
+                                }
+
+                                "2" {
+                                    cabecera
+                                    menuOpcion "Se encuentra en el SUB_MENU: 101 ;;; Opcion: $op101 (Reporte Consolidado Listas Blancas/Negras)"
+                                    Write-Host "`n--- GENERADOR CONSOLIDADO DE REGLAS DE RED PARA FIREWALL / PROXY ---" -ForegroundColor Cyan
+                                    Write-Host "Esta opcion permite procesar el equipo remoto y generar directamente las directivas" -ForegroundColor Gray
+                                    Write-Host "en formatos compatibles con FortiGate, Squid, RouterOS (MikroTik) o Pi-hole." -ForegroundColor Gray
+                                    
+                                    $IPFinal = Get-StandardIPPrompt
+                                    if ([string]::IsNullOrWhiteSpace($IPFinal)) {
+                                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                                        Read-Host "Presione ENTER para continuar..."
+                                        break
+                                    }
+
+                                    $computerTarget = $IPFinal
+                                    try {
+                                        $entry = [System.Net.Dns]::GetHostEntry($IPFinal)
+                                        $computerTarget = $entry.HostName.Split('.')[0]
+                                    } catch {}
+
+                                    Write-Host "`n[*] Extrayendo inventario de dominios desde perfiles remotos de $computerTarget..." -ForegroundColor Yellow
+                                    
+                                    Initialize-WinSqliteHelper
+                                    $usersDir = "\\$computerTarget\C$\Users"
+                                    if (-not (Test-Path $usersDir)) {
+                                        Write-Host "[-] No se pudo conectar a $usersDir. Verifique permisos y red." -ForegroundColor Red
+                                        Read-Host "Presione ENTER para continuar..."
+                                        break
+                                    }
+
+                                    $userFolders = Get-ChildItem -Path $usersDir -Directory -ErrorAction SilentlyContinue | 
+                                        Where-Object { $_.Name -notmatch '^(Public|Default|Default User|All Users)$' }
+
+                                    $dominiosDetectados = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                                    $auditGuid = [System.Guid]::NewGuid().ToString("N").Substring(0, 8)
+                                    $localAuditTemp = Join-Path $env:TEMP "ShellSW_Audit_$auditGuid"
+                                    New-Item -ItemType Directory -Path $localAuditTemp -Force -ErrorAction SilentlyContinue | Out-Null
+
+                                    try {
+                                        foreach ($uFolder in $userFolders) {
+                                            $browserUserDatas = @(
+                                                (Join-Path $uFolder.FullName "AppData\Local\Google\Chrome\User Data"),
+                                                (Join-Path $uFolder.FullName "AppData\Local\Microsoft\Edge\User Data"),
+                                                (Join-Path $uFolder.FullName "AppData\Local\BraveSoftware\Brave-Browser\User Data")
+                                            )
+                                            foreach ($bData in $browserUserDatas) {
+                                                if (Test-Path $bData) {
+                                                    $profileDirs = Get-ChildItem -Path $bData -Directory -ErrorAction SilentlyContinue | 
+                                                        Where-Object { $_.Name -eq "Default" -or $_.Name -like "Profile *" }
+                                                    foreach ($pDir in $profileDirs) {
+                                                        $loginDataFile = Join-Path $pDir.FullName "Login Data"
+                                                        if (Test-Path $loginDataFile) {
+                                                            $tmpDb = Join-Path $localAuditTemp "tmp_$([System.Guid]::NewGuid().ToString('N').Substring(0,6))"
+                                                            try {
+                                                                [System.IO.File]::Copy($loginDataFile, $tmpDb, $true)
+                                                                $entries = [WinSqliteReader]::ReadLogins($tmpDb)
+                                                                foreach ($e in $entries) {
+                                                                    if (-not [string]::IsNullOrWhiteSpace($e.OriginUrl)) {
+                                                                        $c = Get-DomainClassification -UrlOrDomain $e.OriginUrl
+                                                                        if ($c.Domain) { $dominiosDetectados.Add($c.Domain) | Out-Null }
+                                                                    }
+                                                                }
+                                                            } catch {}
+                                                            finally {
+                                                                if (Test-Path $tmpDb) { Remove-Item $tmpDb -Force -ErrorAction SilentlyContinue }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    finally {
+                                        if (Test-Path $localAuditTemp) { Remove-Item $localAuditTemp -Recurse -Force -ErrorAction SilentlyContinue }
+                                    }
+
+                                    Write-Host "`n[+] Total de dominios unicos extraidos: $($dominiosDetectados.Count)" -ForegroundColor Green
+                                    Write-Host "`n--- LISTA BLANCA SUGERIDA (Dominios Institucionales / Gubernamentales / Productivos) ---" -ForegroundColor Green
+                                    $lb = $dominiosDetectados | Where-Object { (Get-DomainClassification $_).Category -like "*BLANCA*" -or (Get-DomainClassification $_).Category -like "*PRODUCTIVIDAD*" }
+                                    if ($lb) { $lb | ForEach-Object { Write-Host "  + $_" -ForegroundColor Green } } else { Write-Host "  (Ninguno detectado)" -ForegroundColor Gray }
+
+                                    Write-Host "`n--- LISTA NEGRA SUGERIDA (Ocio / Redes Sociales / Streaming) ---" -ForegroundColor Red
+                                    $ln = $dominiosDetectados | Where-Object { (Get-DomainClassification $_).Category -like "*NEGRA*" -or (Get-DomainClassification $_).Category -like "*RESTRINGIDO*" }
+                                    if ($ln) { $ln | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red } } else { Write-Host "  (Ninguno detectado)" -ForegroundColor Gray }
+
+                                    Read-Host "`nPresione ENTER para continuar..."
+                                }
+
+                                "3" {
+                                    cabecera
+                                    menuOpcion "Se encuentra en el SUB_MENU: 101 ;;; Opcion: $op101 (Registro de Auditoria de Accesos)"
+                                    Write-Host "`n--- HISTORIAL DE ACCESOS Y REGISTROS DE AUDITORIA (GRUPO 101) ---" -ForegroundColor Yellow
+                                    
+                                    $logFile = "C:\shellWil\logs\audit_101.log"
+                                    if (Test-Path $logFile) {
+                                        Write-Host "`n[Bitacora Local: $logFile]" -ForegroundColor Cyan
+                                        Get-Content -Path $logFile -Tail 30 | ForEach-Object {
+                                            if ($_ -like "*DENEGADO*") {
+                                                Write-Host $_ -ForegroundColor Red
+                                            } elseif ($_ -like "*AUTORIZADO*") {
+                                                Write-Host $_ -ForegroundColor Green
+                                            } else {
+                                                Write-Host $_ -ForegroundColor Gray
+                                            }
+                                        }
+                                    } else {
+                                        Write-Host "`n[i] Aun no se ha generado la bitacora local $logFile." -ForegroundColor Gray
+                                    }
+
+                                    Write-Host "`n--- Eventos Recientes en Visor de Sucesos (Application / ShellSW) ---" -ForegroundColor Cyan
+                                    try {
+                                        $evs = Get-EventLog -LogName Application -Source "ShellSW" -Newest 15 -ErrorAction SilentlyContinue
+                                        if ($evs) {
+                                            foreach ($ev in $evs) {
+                                                $colorEv = if ($ev.EntryType -eq "Warning") { "Red" } else { "Green" }
+                                                Write-Host "  [$($ev.TimeGenerated.ToString('yyyy-MM-dd HH:mm:ss'))] EventID: $($ev.InstanceId) | $($ev.Message)" -ForegroundColor $colorEv
+                                            }
+                                        } else {
+                                            Write-Host "  (No se encontraron eventos previos de ShellSW en el Visor de Sucesos)" -ForegroundColor Gray
+                                        }
+                                    } catch {
+                                        Write-Host "  [!] No se pudieron leer eventos del registro de Windows: $_" -ForegroundColor DarkGray
+                                    }
+
+                                    Read-Host "`nPresione ENTER para continuar..."
+                                }
+
+                                "0" {
+                                    $salirSub101 = $true
+                                }
+
+                                Default {
+                                    Write-Host "Opcion invalida." -ForegroundColor Red
+                                    Start-Sleep -Seconds 1
+                                }
+                            }
+                        }
+                        catch {
+                            Write-Host "[-] ERROR: Ocurrio un fallo en el submenu de credenciales navegadores: $_" -ForegroundColor Red
+                            Read-Host "Presione ENTER para continuar..."
+                        }
+                    } while (-not $salirSub101)
                 }
 
                 "0" { 
