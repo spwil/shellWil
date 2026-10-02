@@ -1,0 +1,9 @@
+CARPETA PARA VENTOY (MOTOR MULTIBOOT UNIVERSAL)
+=================================================
+Coloca aquí los archivos de Ventoy para Windows:
+- Ventoy2Disk.exe
+- Carpeta 'ventoy/' (con sus plugins y binarios oficiales)
+
+Al colocarlo en esta ruta, la opción 21.7 de ShellSW detectará automáticamente
+Ventoy2Disk.exe en modo local (offline) sin requerir conexión a Internet.
+Sitio oficial: https://www.ventoy.net / https://github.com/ventoy/Ventoy
