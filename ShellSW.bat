@@ -9904,6 +9904,582 @@ Write-Output "Proceso de optimizacion completado con exito."
         }
     }
 
+    # ==============================================================================
+    #   MODULO DEL GRUPO 15: CONFIGURACION DE NAVEGADOR PREDETERMINADO EN PC REMOTA
+    # ==============================================================================
+    function Invoke-RemoteSetDefaultBrowser {
+        param(
+            [Parameter(Mandatory=$true)]$ctx,
+            [Parameter(Mandatory=$true)][ValidateSet("Chrome", "Firefox", "Edge")][string]$Browser
+        )
+
+        $ipRemota = $ctx.ComputerName
+        $cred = $ctx.Credential
+        $browserName = switch ($Browser) {
+            "Chrome"  { "Google Chrome" }
+            "Firefox" { "Mozilla Firefox" }
+            "Edge"    { "Microsoft Edge" }
+        }
+
+        Write-Host "`n==========================================================================" -ForegroundColor Cyan
+        Write-Host "    CONFIGURAR $browserName COMO PREDETERMINADO EN $ipRemota" -ForegroundColor White -BackgroundColor DarkBlue
+        Write-Host "==========================================================================" -ForegroundColor Cyan
+        Write-Host "Alcance: Todos los usuarios que inicien sesion (Directiva GPO + Plantilla DISM + Iconos)" -ForegroundColor Gray
+        Write-Host ""
+
+        $confirm = Read-Host "¿Desea aplicar esta configuracion en el equipo remoto? (S/N) [S]"
+        if ($confirm.Trim().ToUpper() -eq "N") {
+            Write-Host "Operacion cancelada por el usuario." -ForegroundColor Yellow
+            return
+        }
+
+        Write-Host "`n[*] Preparando script de verificacion y configuracion para $browserName..." -ForegroundColor Yellow
+
+        $workerScript = @'
+param(
+    [string]$BrowserChoice = "Edge"
+)
+
+$logPath = "C:\Windows\Temp\browser_default_setup.log"
+$resPath = "C:\Windows\Temp\browser_default_res.txt"
+
+function Write-RemoteLog {
+    param([string]$msg)
+    $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $formatted = "[$ts] $msg"
+    Write-Output $formatted
+    try {
+        [System.IO.File]::AppendAllText($logPath, "$formatted`r`n", [System.Text.Encoding]::UTF8)
+    } catch {}
+}
+
+Write-RemoteLog "Iniciando verificacion e instalacion de navegador predeterminado..."
+
+# 0. Habilitar y asegurar internamente los servicios necesarios del sistema
+$requiredServices = @("wuauserv", "cryptsvc", "TrustedInstaller")
+foreach ($sName in $requiredServices) {
+    try {
+        $sObj = Get-Service -Name $sName -ErrorAction SilentlyContinue
+        if ($sObj) {
+            if ($sObj.StartType -eq "Disabled") {
+                Set-Service -Name $sName -StartupType Manual -ErrorAction SilentlyContinue
+                Write-RemoteLog "Servicio $sName configurado a Manual."
+            }
+            if ($sObj.Status -ne "Running") {
+                Start-Service -Name $sName -ErrorAction SilentlyContinue
+                Write-RemoteLog "Servicio $sName iniciado internamente."
+            }
+        }
+    } catch {}
+}
+
+$installed = $false
+$targetAppName = ""
+$progIdUrl = ""
+$progIdFile = ""
+$clientRegName = ""
+
+# 1. Verificacion rigurosa de instalacion segun el navegador solicitado
+if ($BrowserChoice -eq "Chrome") {
+    $targetAppName = "Google Chrome"
+    $clientRegName = "Google Chrome"
+    
+    $cPaths = @(
+        "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+        "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
+    )
+    $cExe = $cPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+    $cKey = Test-Path "HKLM:\SOFTWARE\Clients\StartMenuInternet\Google Chrome"
+    $cAppPath = Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"
+    
+    if ($cExe -or $cKey -or $cAppPath) {
+        $installed = $true
+        Write-RemoteLog "[OK] Google Chrome detectado como instalado en el equipo."
+        if ($cExe) {
+            Start-Process -FilePath $cExe -ArgumentList "--make-default-browser" -NoNewWindow -Wait -ErrorAction SilentlyContinue
+        }
+    } else {
+        Write-RemoteLog "[ERROR] Google Chrome NO esta instalado en el equipo."
+    }
+
+    $progIdUrl = "ChromeHTML"
+    $progIdFile = "ChromeHTML"
+}
+elseif ($BrowserChoice -eq "Firefox") {
+    $targetAppName = "Firefox"
+    
+    $fPaths = @(
+        "$env:ProgramFiles\Mozilla Firefox\firefox.exe",
+        "${env:ProgramFiles(x86)}\Mozilla Firefox\firefox.exe"
+    )
+    $fExe = $fPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+    $fClient = Get-ChildItem "HKLM:\SOFTWARE\Clients\StartMenuInternet" -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -like "*Firefox*" } | Select-Object -First 1
+    $fAppPath = Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\firefox.exe"
+    
+    if ($fExe -or $fClient -or $fAppPath) {
+        $installed = $true
+        Write-RemoteLog "[OK] Mozilla Firefox detectado como instalado en el equipo."
+        
+        # Invocar helper.exe nativo de Firefox con /SetAsDefaultAppGlobal si esta disponible
+        if ($fExe) {
+            $ffDir = Split-Path $fExe
+            $helperExe = Join-Path $ffDir "uninstall\helper.exe"
+            if (Test-Path $helperExe) {
+                Write-RemoteLog "Ejecutando helper.exe /SetAsDefaultAppGlobal..."
+                Start-Process -FilePath $helperExe -ArgumentList "/SetAsDefaultAppGlobal" -NoNewWindow -Wait -ErrorAction SilentlyContinue
+            }
+        }
+        
+        $clientRegName = if ($fClient) { $fClient.PSChildName } else { "Mozilla Firefox" }
+        
+        # Detectar ProgIDs reales con Hash creados por Firefox en HKLM\SOFTWARE\Classes
+        $ffHtmlProg = (Get-ChildItem "HKLM:\SOFTWARE\Classes" -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -like "FirefoxHTML*" } | Select-Object -First 1 -ExpandProperty PSChildName)
+        $ffUrlProg = (Get-ChildItem "HKLM:\SOFTWARE\Classes" -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -like "FirefoxURL*" } | Select-Object -First 1 -ExpandProperty PSChildName)
+        
+        if (-not $ffHtmlProg -and $fClient) {
+            $fKey = Get-ItemProperty "HKLM:\SOFTWARE\Clients\StartMenuInternet\$($fClient.PSChildName)\Capabilities\FileAssociations" -ErrorAction SilentlyContinue
+            if ($fKey -and $fKey.'.html') { $ffHtmlProg = $fKey.'.html' }
+            $uKey = Get-ItemProperty "HKLM:\SOFTWARE\Clients\StartMenuInternet\$($fClient.PSChildName)\Capabilities\URLAssociations" -ErrorAction SilentlyContinue
+            if ($uKey -and $uKey.http) { $ffUrlProg = $uKey.http }
+        }
+        
+        if (-not $ffHtmlProg) { $ffHtmlProg = "FirefoxHTML" }
+        if (-not $ffUrlProg) { $ffUrlProg = "FirefoxURL" }
+        
+        $progIdFile = $ffHtmlProg
+        $progIdUrl = $ffUrlProg
+        Write-RemoteLog "[OK] ProgIDs identificados para Firefox: HTML/Archivos=$progIdFile | URLs=$progIdUrl"
+    } else {
+        Write-RemoteLog "[ERROR] Mozilla Firefox NO esta instalado en el equipo."
+    }
+}
+elseif ($BrowserChoice -eq "Edge") {
+    $targetAppName = "Microsoft Edge"
+    $clientRegName = "Microsoft Edge"
+    
+    $ePaths = @(
+        "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
+        "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
+    )
+    $eExe = $ePaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+    $eKey = Test-Path "HKLM:\SOFTWARE\Clients\StartMenuInternet\Microsoft Edge"
+    $eAppPath = Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe"
+    
+    if ($eExe -or $eKey -or $eAppPath) {
+        $installed = $true
+        Write-RemoteLog "[OK] Microsoft Edge detectado como instalado en el equipo."
+        if ($eExe) {
+            Start-Process -FilePath $eExe -ArgumentList "--make-default-browser" -NoNewWindow -Wait -ErrorAction SilentlyContinue
+        }
+    } else {
+        Write-RemoteLog "[ERROR] Microsoft Edge NO esta instalado en el equipo."
+    }
+
+    $progIdUrl = "MSEdgeHTM"
+    $progIdFile = "MSEdgeHTM"
+}
+
+# 2. Si NO esta instalado, detener y reportar inmediatamente
+if (-not $installed) {
+    Write-RemoteLog "[ABORT] Operacion cancelada porque el navegador solicitado no se encuentra instalado."
+    $resLine = "Success:False|Installed:False|Browser:$targetAppName|Error:NotInstalled"
+    $resLine | Out-File -FilePath $resPath -Encoding UTF8 -Force
+    return
+}
+
+# 3. Generar archivo XML de asociaciones de aplicaciones por defecto (AppAssoc)
+$xmlPath = "C:\Windows\System32\AppAssoc_DefaultBrowser.xml"
+Write-RemoteLog "Generando archivo de asociaciones en $xmlPath..."
+
+$xmlLines = @(
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<DefaultAssociations>',
+    "  <Association Identifier=`".htm`" ProgId=`"$progIdFile`" ApplicationName=`"$targetAppName`" />",
+    "  <Association Identifier=`".html`" ProgId=`"$progIdFile`" ApplicationName=`"$targetAppName`" />",
+    "  <Association Identifier=`".shtml`" ProgId=`"$progIdFile`" ApplicationName=`"$targetAppName`" />",
+    "  <Association Identifier=`".xht`" ProgId=`"$progIdFile`" ApplicationName=`"$targetAppName`" />",
+    "  <Association Identifier=`".xhtml`" ProgId=`"$progIdFile`" ApplicationName=`"$targetAppName`" />",
+    "  <Association Identifier=`".svg`" ProgId=`"$progIdFile`" ApplicationName=`"$targetAppName`" />",
+    "  <Association Identifier=`".webp`" ProgId=`"$progIdFile`" ApplicationName=`"$targetAppName`" />",
+    "  <Association Identifier=`"http`" ProgId=`"$progIdUrl`" ApplicationName=`"$targetAppName`" />",
+    "  <Association Identifier=`"https`" ProgId=`"$progIdUrl`" ApplicationName=`"$targetAppName`" />",
+    "  <Association Identifier=`"ftp`" ProgId=`"$progIdUrl`" ApplicationName=`"$targetAppName`" />",
+    '</DefaultAssociations>'
+)
+$xmlContent = $xmlLines -join "`r`n"
+
+try {
+    [System.IO.File]::WriteAllText($xmlPath, $xmlContent, [System.Text.Encoding]::UTF8)
+    Write-RemoteLog "[OK] Archivo XML generado con exito en $xmlPath."
+} catch {
+    Write-RemoteLog "[ERROR] Error al crear archivo XML: $_"
+}
+
+# 4. Registrar Directiva de Sistema GPO (Aplica en cada logon para todos los usuarios)
+$gpoKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System"
+try {
+    if (-not (Test-Path $gpoKey)) {
+        New-Item -Path $gpoKey -Force | Out-Null
+    }
+    Set-ItemProperty -Path $gpoKey -Name "DefaultAssociationsConfiguration" -Value $xmlPath -Type String -Force
+    Write-RemoteLog "[OK] Directiva HKLM DefaultAssociationsConfiguration configurada."
+} catch {
+    Write-RemoteLog "[ERROR] Error configurando directiva de registro: $_"
+}
+
+# 5. Importar asociaciones en la imagen y perfil predeterminado con DISM
+try {
+    Write-RemoteLog "Ejecutando DISM /Online /Import-DefaultAppAssociations..."
+    $dismProc = Start-Process -FilePath "dism.exe" -ArgumentList "/Online", "/Import-DefaultAppAssociations:$xmlPath" -NoNewWindow -Wait -PassThru
+    Write-RemoteLog "[OK] DISM finalizo con codigo de salida: $($dismProc.ExitCode)"
+} catch {
+    Write-RemoteLog "[ERROR] Fallo al invocar DISM: $_"
+}
+
+# 6. Actualizar HKLM:\SOFTWARE\Classes para cambio inmediato de iconos y asociaciones de archivos
+$webExtensions = @(".htm", ".html", ".shtml", ".xht", ".xhtml", ".svg", ".webp")
+try {
+    foreach ($ext in $webExtensions) {
+        $extKey = "HKLM:\SOFTWARE\Classes\$ext"
+        if (-not (Test-Path $extKey)) { New-Item -Path $extKey -Force | Out-Null }
+        Set-ItemProperty -Path $extKey -Name "(Default)" -Value $progIdFile -Force
+        Set-ItemProperty -Path $extKey -Name "Content Type" -Value "text/html" -Force
+    }
+    Write-RemoteLog "[OK] Clases e iconos de extensiones web enlazados a $progIdFile en HKLM."
+} catch {
+    Write-RemoteLog "[!] Error al actualizar clases de extensiones web en HKLM: $_"
+}
+
+# 7. Actualizar sesiones de usuario cargadas en HKEY_USERS (Iconos inmediatos y limpieza UserChoice obsoleto)
+try {
+    $loadedUserSids = Get-ChildItem "Registry::HKEY_USERS" -ErrorAction SilentlyContinue | Where-Object { 
+        $_.PSChildName -match '^S-1-5-21-\d+-\d+-\d+-\d+$' 
+    }
+    foreach ($uSid in $loadedUserSids) {
+        $sidPath = "Registry::HKEY_USERS\$($uSid.PSChildName)"
+        $targetsToClean = @(
+            "$sidPath\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.html\UserChoice",
+            "$sidPath\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.htm\UserChoice",
+            "$sidPath\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice",
+            "$sidPath\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice"
+        )
+        foreach ($uc in $targetsToClean) {
+            if (Test-Path $uc) {
+                Remove-Item -Path $uc -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+        foreach ($ext in $webExtensions) {
+            $uExtKey = "$sidPath\Software\Classes\$ext"
+            if (-not (Test-Path $uExtKey)) { New-Item -Path $uExtKey -Force -ErrorAction SilentlyContinue | Out-Null }
+            Set-ItemProperty -Path $uExtKey -Name "(Default)" -Value $progIdFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Write-RemoteLog "[OK] Perfiles activos en HKEY_USERS actualizados."
+} catch {
+    Write-RemoteLog "[!] Error al actualizar perfiles en HKEY_USERS: $_"
+}
+
+# 8. Configurar Cliente de Internet del Sistema (StartMenuInternet)
+if ($clientRegName) {
+    try {
+        if (Test-Path "HKLM:\SOFTWARE\Clients\StartMenuInternet\$clientRegName") {
+            Set-ItemProperty -Path "HKLM:\SOFTWARE\Clients\StartMenuInternet" -Name "(Default)" -Value $clientRegName -Force
+            Write-RemoteLog "[OK] Cliente de Internet predeterminado asignado a $clientRegName."
+        }
+    } catch {
+        Write-RemoteLog "[ERROR] Error configurando StartMenuInternet: $_"
+    }
+}
+
+# 9. Notificar a Explorer para refrescar iconos inmediatamente (SHChangeNotify + ie4uinit)
+try {
+    $shellNotifyCode = 'using System; using System.Runtime.InteropServices; public class ShellRefreshIcon { [DllImport("shell32.dll", CharSet = CharSet.Auto, SetLastError = true)] public static extern void SHChangeNotify(uint wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2); }'
+    Add-Type -TypeDefinition $shellNotifyCode -ErrorAction SilentlyContinue
+    [ShellRefreshIcon]::SHChangeNotify(0x08000000, 0x1000, [IntPtr]::Zero, [IntPtr]::Zero)
+    Write-RemoteLog "[OK] Evento SHChangeNotify (SHCNE_ASSOCCHANGED) emitido para refrescar iconos en Explorer."
+} catch {
+    Write-RemoteLog "[!] Advertencia emitiendo SHChangeNotify: $_"
+}
+
+try {
+    Start-Process -FilePath "ie4uinit.exe" -ArgumentList "-show" -NoNewWindow -Wait -ErrorAction SilentlyContinue
+    Write-RemoteLog "[OK] ie4uinit.exe ejecutado para refrescar cache de iconos."
+} catch {}
+
+# 10. Actualizacion de directivas de maquina
+try {
+    Start-Process -FilePath "gpupdate.exe" -ArgumentList "/target:computer", "/force" -NoNewWindow -Wait
+    Write-RemoteLog "[OK] gpupdate ejecutado con exito."
+} catch {
+    Write-RemoteLog "[ERROR] gpupdate fallo: $_"
+}
+
+# 11. Escribir archivo de resumen de resultados
+$resLine = "Success:True|Installed:True|Browser:$targetAppName|ProgIdUrl:$progIdUrl|ProgIdFile:$progIdFile|XML:$xmlPath"
+$resLine | Out-File -FilePath $resPath -Encoding UTF8 -Force
+Write-RemoteLog "Proceso finalizado correctamente."
+'@
+
+        $isLocal = ($ipRemota -in @("127.0.0.1", "localhost", $env:COMPUTERNAME))
+        $remoteScriptFileName = "browser_default_remote.ps1"
+        $drive = $null
+        $destScriptPath = ""
+        $destLogPath = ""
+        $destResPath = ""
+
+        if ($isLocal) {
+            $destScriptPath = "C:\Windows\Temp\$remoteScriptFileName"
+            $destLogPath = "C:\Windows\Temp\browser_default_setup.log"
+            $destResPath = "C:\Windows\Temp\browser_default_res.txt"
+            Remove-Item -Path $destLogPath, $destResPath, $destScriptPath -Force -ErrorAction SilentlyContinue
+            try {
+                $workerScript | Out-File -FilePath $destScriptPath -Encoding UTF8 -Force -ErrorAction Stop
+                Write-Host "Script de configuracion preparado localmente." -ForegroundColor Green
+            } catch {
+                Write-Host "[ERROR] No se pudo escribir el script local: $_" -ForegroundColor Red
+                return
+            }
+        } else {
+            # Habilitar y asegurar internamente los servicios locales para administracion remota
+            Enable-LocalTrustedHostsConfig
+            try {
+                $lw = Get-Service -Name "LanmanWorkstation" -ErrorAction SilentlyContinue
+                if ($lw -and $lw.Status -ne "Running") {
+                    Start-Service -Name "LanmanWorkstation" -ErrorAction SilentlyContinue
+                }
+            } catch {}
+
+            $drive = Mount-RemoteCShare -ComputerName $ipRemota -Credential $cred
+            if ($null -eq $drive) {
+                Write-Host "[ERROR] No se pudo conectar al recurso administrativo C$ de $ipRemota." -ForegroundColor Red
+                Write-Host "Verifique conectividad SMB (Puerto 445), permisos de Administrador y firewall en $ipRemota." -ForegroundColor Yellow
+                return
+            }
+            $destScriptPath = "${drive}:\Windows\Temp\$remoteScriptFileName"
+            $destLogPath = "${drive}:\Windows\Temp\browser_default_setup.log"
+            $destResPath = "${drive}:\Windows\Temp\browser_default_res.txt"
+            $destScriptUNC = "\\$ipRemota\C$\Windows\Temp\$remoteScriptFileName"
+            $destLogUNC    = "\\$ipRemota\C$\Windows\Temp\browser_default_setup.log"
+            $destResUNC    = "\\$ipRemota\C$\Windows\Temp\browser_default_res.txt"
+
+            Remove-Item -Path $destLogPath, $destResPath, $destScriptPath -Force -ErrorAction SilentlyContinue
+            Remove-Item -Path $destLogUNC, $destResUNC, $destScriptUNC -Force -ErrorAction SilentlyContinue
+
+            $copiedOk = $false
+            try {
+                # Metodo 1: PowerShell Out-File directo sobre el PSDrive montado (compatible con PSDrive)
+                $workerScript | Out-File -FilePath $destScriptPath -Encoding UTF8 -Force -ErrorAction Stop
+                $copiedOk = $true
+            } catch {
+                try {
+                    # Metodo 2: Set-Content sobre PSDrive
+                    $workerScript | Set-Content -LiteralPath $destScriptPath -Encoding UTF8 -Force -ErrorAction Stop
+                    $copiedOk = $true
+                } catch {
+                    try {
+                        # Metodo 3: Ruta UNC directa (compatible con .NET BCL)
+                        [System.IO.File]::WriteAllText($destScriptUNC, $workerScript, [System.Text.Encoding]::UTF8)
+                        $copiedOk = $true
+                    } catch {}
+                }
+            }
+
+            if ($copiedOk) {
+                Write-Host "Script copiado al equipo remoto con exito." -ForegroundColor Green
+            } else {
+                Write-Host "[ERROR] Fallo al copiar el script en el equipo remoto: No se pudo escribir en el recurso temporal." -ForegroundColor Red
+                Dismount-RemoteCShare -driveName $drive
+                return
+            }
+        }
+
+        # 2. Iniciar el proceso remoto con comando corto (evita buffer overflow de WMI)
+        $cmd = "cmd.exe /c `"powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\Windows\Temp\$remoteScriptFileName -BrowserChoice $Browser > C:\Windows\Temp\browser_default_setup.log 2>&1`""
+        Write-Host "Iniciando ejecucion en el equipo remoto..." -ForegroundColor Yellow
+
+        $procStarted = $false
+        $remotePid = $null
+        $usedPsExec = $false
+
+        # Intento 1: WMI Win32_Process.Create
+        try {
+            if ($isLocal) {
+                $wmiRes = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $cmd
+            } elseif ($null -ne $cred) {
+                $wmiRes = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $cmd -ComputerName $ipRemota -Credential $cred
+            } else {
+                $wmiRes = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList $cmd -ComputerName $ipRemota
+            }
+
+            if ($wmiRes -and $wmiRes.ReturnValue -eq 0 -and $wmiRes.ProcessId) {
+                $procStarted = $true
+                $remotePid = $wmiRes.ProcessId
+                Write-Host "Proceso iniciado exitosamente via WMI (PID: $remotePid)." -ForegroundColor Green
+            } else {
+                $retCode = if ($wmiRes) { $wmiRes.ReturnValue } else { "Nulo" }
+                Write-Host "[!] WMI no pudo iniciar el proceso (Codigo: $retCode)." -ForegroundColor Yellow
+            }
+        } catch {
+            Write-Host "[!] Excepcion WMI: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+
+        # Intento 2: Fallback automatico con PsExec (C:\PSTools\psexec.exe)
+        if (-not $procStarted -and -not $isLocal) {
+            $psexecPath = "C:\PSTools\psexec.exe"
+            if (Test-Path $psexecPath) {
+                Write-Host "[*] Intentando ejecucion alternativa mediante PsExec (modo SYSTEM)..." -ForegroundColor Cyan
+                if ($null -ne $cred) {
+                    $uNet = $cred.UserName
+                    $pNet = $cred.GetNetworkCredential().Password
+                    $pArgs = "\\$ipRemota -u `"$uNet`" -p `"$pNet`" -s -accepteula -d $cmd"
+                } else {
+                    $pArgs = "\\$ipRemota -s -accepteula -d $cmd"
+                }
+                try {
+                    $pProc = Start-Process -FilePath $psexecPath -ArgumentList $pArgs -NoNewWindow -Wait -PassThru
+                    if ($pProc.ExitCode -eq 0) {
+                        $procStarted = $true
+                        $usedPsExec = $true
+                        Write-Host "Proceso remoto iniciado exitosamente via PsExec." -ForegroundColor Green
+                    } else {
+                        Write-Host "[-] PsExec retorno codigo de salida: $($pProc.ExitCode)" -ForegroundColor Red
+                    }
+                } catch {
+                    Write-Host "[-] Error al invocar PsExec: $_" -ForegroundColor Red
+                }
+            }
+        }
+
+        if (-not $procStarted) {
+            Write-Host "`n==========================================================================" -ForegroundColor Red
+            Write-Host "   ERROR: NO SE PUDO INICIAR EL PROCESO REMOTO NI POR WMI NI POR PSEXEC   " -ForegroundColor White -BackgroundColor DarkRed
+            Write-Host "==========================================================================" -ForegroundColor Red
+            Write-Host "Diagnostico y posibles soluciones:" -ForegroundColor Yellow
+            Write-Host " 1. Verifique que la cuenta tenga permisos de Administrador en $ipRemota." -ForegroundColor White
+            Write-Host " 2. Compruebe que el firewall remoto permita RPC/WMI (TCP 135) y SMB (TCP 445)." -ForegroundColor White
+            Write-Host " 3. En equipos que no son de dominio, active LocalAccountTokenFilterPolicy:" -ForegroundColor White
+            Write-Host "    reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f" -ForegroundColor Gray
+            Write-Host "==========================================================================" -ForegroundColor Red
+            if ($drive) { Dismount-RemoteCShare -driveName $drive }
+            return
+        }
+
+        # 3. Monitoreo en tiempo real del progreso
+        Write-Host "Verificando instalacion, aplicando asociaciones y refrescando iconos..." -ForegroundColor Yellow
+        $timeout = 60
+        $elapsed = 0
+        $lastLineCount = 0
+        $finished = $false
+
+        while ($elapsed -lt $timeout) {
+            Start-Sleep -Milliseconds 1500
+            $elapsed += 1.5
+
+            $logTarget = if ($destLogPath -and (Test-Path $destLogPath)) { $destLogPath } elseif ($destLogUNC -and (Test-Path $destLogUNC)) { $destLogUNC } else { $null }
+            if ($logTarget) {
+                try {
+                    $lines = Get-Content -Path $logTarget -ErrorAction SilentlyContinue
+                    if ($lines -and $lines.Count -gt $lastLineCount) {
+                        for ($i = $lastLineCount; $i -lt $lines.Count; $i++) {
+                            $curLine = $lines[$i]
+                            if ($curLine -match "\[OK\]") {
+                                Write-Host "  $curLine" -ForegroundColor Green
+                            } elseif ($curLine -match "\[ERROR\]" -or $curLine -match "\[ABORT\]") {
+                                Write-Host "  $curLine" -ForegroundColor Red
+                            } elseif ($curLine -match "\[!\]") {
+                                Write-Host "  $curLine" -ForegroundColor Yellow
+                            } else {
+                                Write-Host "  $curLine" -ForegroundColor Gray
+                            }
+                        }
+                        $lastLineCount = $lines.Count
+                    }
+                } catch {}
+            }
+
+            if (($destResPath -and (Test-Path $destResPath)) -or ($destResUNC -and (Test-Path $destResUNC))) {
+                $finished = $true
+                break
+            }
+
+            if ($remotePid -and -not $usedPsExec) {
+                try {
+                    if ($isLocal) {
+                        $procCheck = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ErrorAction SilentlyContinue
+                    } elseif ($null -ne $cred) {
+                        $procCheck = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -Credential $cred -ErrorAction SilentlyContinue
+                    } else {
+                        $procCheck = Get-WmiObject -Class Win32_Process -Filter "ProcessId = $remotePid" -ComputerName $ipRemota -ErrorAction SilentlyContinue
+                    }
+                } catch { $procCheck = $null }
+                if ($null -eq $procCheck) {
+                    Start-Sleep -Seconds 1
+                    $finished = $true
+                    break
+                }
+            }
+        }
+
+        # 4. Procesar resultados estructurados
+        $resData = @{}
+        $resTarget = if ($destResPath -and (Test-Path $destResPath)) { $destResPath } elseif ($destResUNC -and (Test-Path $destResUNC)) { $destResUNC } else { $null }
+        if ($resTarget) {
+            $raw = Get-Content -Path $resTarget -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+            if ($raw) {
+                $raw.Trim() -split '\|' | ForEach-Object {
+                    $kv = $_ -split ':'
+                    if ($kv.Length -ge 2) { $resData[$kv[0]] = ($kv[1..($kv.Length-1)] -join ':') }
+                }
+            }
+            Remove-Item -Path $resTarget -Force -ErrorAction SilentlyContinue
+        }
+
+        # Limpieza de script remoto
+        if ($destScriptPath -and (Test-Path $destScriptPath)) { Remove-Item -Path $destScriptPath -Force -ErrorAction SilentlyContinue }
+        if ($destScriptUNC -and (Test-Path $destScriptUNC)) { Remove-Item -Path $destScriptUNC -Force -ErrorAction SilentlyContinue }
+        if ($destLogPath -and (Test-Path $destLogPath)) { Remove-Item -Path $destLogPath -Force -ErrorAction SilentlyContinue }
+        if ($destLogUNC -and (Test-Path $destLogUNC)) { Remove-Item -Path $destLogUNC -Force -ErrorAction SilentlyContinue }
+
+        if ($drive) {
+            Dismount-RemoteCShare -driveName $drive
+        }
+
+        # Validacion si el navegador NO estaba instalado
+        if ($resData['Installed'] -eq "False" -or $resData['Success'] -eq "False") {
+            Write-Host "`n==========================================================================" -ForegroundColor Red
+            Write-Host "   ERROR: EL NAVEGADOR SOLICITADO NO ESTA INSTALADO EN EL EQUIPO REMOTO  " -ForegroundColor White -BackgroundColor DarkRed
+            Write-Host "==========================================================================" -ForegroundColor Red
+            Write-Host ("  Equipo Destino          : {0}" -f $ipRemota) -ForegroundColor White
+            Write-Host ("  Navegador Solicitado    : {0}" -f $browserName) -ForegroundColor Yellow
+            Write-Host "  Estado de Instalacion   : NO INSTALADO" -ForegroundColor Red
+            Write-Host "--------------------------------------------------------------------------" -ForegroundColor Gray
+            Write-Host "  ACCION REQUERIDA:" -ForegroundColor Yellow
+            Write-Host "  Debe instalar $browserName en la PC antes de poder establecerlo" -ForegroundColor White
+            Write-Host "  como navegador predeterminado para todos los usuarios." -ForegroundColor White
+            Write-Host "==========================================================================" -ForegroundColor Red
+            return
+        }
+
+        Write-Host "`n==========================================================================" -ForegroundColor Green
+        Write-Host "      RESUMEN DE CONFIGURACION DE NAVEGADOR PREDETERMINADO               " -ForegroundColor White -BackgroundColor DarkGreen
+        Write-Host "==========================================================================" -ForegroundColor Green
+        Write-Host ("  Equipo Destino          : {0}" -f $ipRemota) -ForegroundColor White
+        Write-Host ("  Navegador Asignado      : {0}" -f $browserName) -ForegroundColor White
+        Write-Host "  Estado en el Sistema    : DETECTADO E INSTALADO" -ForegroundColor Green
+        if ($resData.ContainsKey('ProgIdUrl')) {
+            Write-Host ("  ProgID URL (HTTP/HTTPS) : {0}" -f $resData['ProgIdUrl']) -ForegroundColor Cyan
+        }
+        if ($resData.ContainsKey('ProgIdFile')) {
+            Write-Host ("  ProgID HTML / HTM       : {0}" -f $resData['ProgIdFile']) -ForegroundColor Cyan
+        }
+        Write-Host "  Iconos de Archivo       : Actualizados en HKLM y notificados a Explorer (SHChangeNotify)" -ForegroundColor Green
+        Write-Host "  Metodo de Aplicacion    : Directiva GPO (DefaultAssociationsConfiguration) + DISM" -ForegroundColor White
+        Write-Host "  Alcance de Efecto       : TODOS los usuarios que inicien sesion en la PC" -ForegroundColor Green
+        Write-Host "==========================================================================" -ForegroundColor Green
+
+        Write-Host "`n[EXITO] Politica de navegador predeterminado e iconos de archivo aplicados correctamente." -ForegroundColor Green
+    }
+
     $salirSub = $false
     do {
         try {
@@ -9958,6 +10534,11 @@ Write-Output "Proceso de optimizacion completado con exito."
             Write-Host "  14. defragmentacion PC Remoto" -ForegroundColor Cyan
             Write-Host "    14.1 Desfragmentar Unidad C: (Principal)" -ForegroundColor DarkCyan
             Write-Host "    14.2 Desfragmentar Otras Unidades" -ForegroundColor DarkCyan
+            Write-Host "  ----------------------------------------"
+            Write-Host "  15. CONFIGURACION DE NAVEGADOR PREDETERMINADO (TODOS LOS USUARIOS):" -ForegroundColor Green
+            Write-Host "    15.1 Colocar navegador predeterminado a Google Chrome (Todos los usuarios)" -ForegroundColor DarkCyan
+            Write-Host "    15.2 Colocar navegador predeterminado a Mozilla Firefox (Todos los usuarios)" -ForegroundColor DarkCyan
+            Write-Host "    15.3 Colocar navegador predeterminado a Microsoft Edge (Todos los usuarios)" -ForegroundColor DarkCyan
             Write-Host "  ----------------------------------------"
             Write-Host "  30. REFRESH." -ForegroundColor Red
             Write-Host "  31. REFRESH DESDE GITHUB (ONLINE)." -ForegroundColor Cyan
@@ -12634,6 +13215,47 @@ try {
                         catch {
                             Write-Host "[ERROR] No se pudo obtener el listado de unidades: $_" -ForegroundColor Red
                         }
+                    }
+                    Write-Host ""
+                }
+
+                "15" { 
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
+                    Write-Host "Por favor seleccione una sub-opcion especifica (15.1 a 15.3)" -ForegroundColor Yellow
+                    Write-Host ""
+                    Read-Host "Presione ENTER para continuar..."
+                }
+
+                "15.1" {
+                    cabecera
+                    menuOpcion "Se encuentra en: NAVEGADOR PREDETERMINADO REMOTO -> Google Chrome (Todos los usuarios)"
+                    
+                    $ctx = Get-RemoteConnectionContext
+                    if ($null -ne $ctx) {
+                        Invoke-RemoteSetDefaultBrowser -ctx $ctx -Browser "Chrome"
+                    }
+                    Write-Host ""
+                }
+
+                "15.2" {
+                    cabecera
+                    menuOpcion "Se encuentra en: NAVEGADOR PREDETERMINADO REMOTO -> Mozilla Firefox (Todos los usuarios)"
+                    
+                    $ctx = Get-RemoteConnectionContext
+                    if ($null -ne $ctx) {
+                        Invoke-RemoteSetDefaultBrowser -ctx $ctx -Browser "Firefox"
+                    }
+                    Write-Host ""
+                }
+
+                "15.3" {
+                    cabecera
+                    menuOpcion "Se encuentra en: NAVEGADOR PREDETERMINADO REMOTO -> Microsoft Edge (Todos los usuarios)"
+                    
+                    $ctx = Get-RemoteConnectionContext
+                    if ($null -ne $ctx) {
+                        Invoke-RemoteSetDefaultBrowser -ctx $ctx -Browser "Edge"
                     }
                     Write-Host ""
                 }
