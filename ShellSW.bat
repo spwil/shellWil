@@ -5606,6 +5606,12 @@ function psSubMenu23 {
             Write-Host "    6.5. Vaciar Papelera de Reciclaje" -ForegroundColor DarkCyan
             Write-Host "    6.6. Eliminacion avanzada de temporales (Todos los usuarios)" -ForegroundColor Yellow
             Write-Host "  12. Revisiones Instaladas de Windows."
+            Write-Host "  13. GESTION Y AUDITORIA DE LICENCIAS (WINDOWS Y OFFICE):" -ForegroundColor Green
+            Write-Host "    13.1. Consultar estado y expiracion de licencia Windows (slmgr)" -ForegroundColor Cyan
+            Write-Host "    13.2. Limpiar clave de Windows y registro (/upk y /cpky)" -ForegroundColor Cyan
+            Write-Host "    13.3. Auditar estado de activacion de Microsoft Office (ospp.vbs)" -ForegroundColor Cyan
+            Write-Host "    13.4. Limpiar clave residual de Microsoft Office (/unpkey)" -ForegroundColor Cyan
+            Write-Host "    13.5. Restablecer temporizadores de activacion (/rearm)" -ForegroundColor Yellow
             Write-Host "  20 ---)) HERRAMIENTAS PC y PORTATIL (Laptops)." -ForegroundColor Green
             Write-Host ""
             Write-Host "  0. V O L V E R   A L   M E N U    P R I N C I P A L"
@@ -6294,7 +6300,153 @@ function psSubMenu23 {
 
                 }
 
+                "13" {
+                    Write-Host "Seleccione una sub-opcion: 13.1, 13.2, 13.3, 13.4 o 13.5." -ForegroundColor Yellow
+                }
+                "13.1" {
+                    cabecera
+                    menuOpcion "Se encuentra en: Licencias -> Diagnostico de Licencia Windows"
 
+                    Write-Host "===========================================================" -ForegroundColor Cyan
+                    Write-Host "      ESTADO DE LICENCIA Y ACTIVACION DE WINDOWS           " -ForegroundColor Cyan
+                    Write-Host "===========================================================" -ForegroundColor Cyan
+                    Write-Host ""
+
+                    Write-Host "Consultando informacion detallada de licencia..." -ForegroundColor Yellow
+                    cscript.exe "$env:SystemRoot\System32\slmgr.vbs" /dli
+
+                    Write-Host "`nConsultando expiracion de la activacion..." -ForegroundColor Yellow
+                    cscript.exe "$env:SystemRoot\System32\slmgr.vbs" /xpr
+                    Write-Host ""
+                }
+                "13.2" {
+                    cabecera
+                    menuOpcion "Se encuentra en: Licencias -> Limpieza de Claves de Windows"
+
+                    Write-Host "===========================================================" -ForegroundColor Yellow
+                    Write-Host "         LIMPIEZA DE CLAVES DE WINDOWS Y REGISTRO          " -ForegroundColor Yellow
+                    Write-Host "===========================================================" -ForegroundColor Yellow
+                    Write-Host "ADVERTENCIA: Esta accion desinstalara la clave de producto actual" -ForegroundColor Red
+                    Write-Host "y limpiara el registro para preparar el equipo para una nueva clave." -ForegroundColor Red
+                    Write-Host ""
+
+                    $confirmar = Read-Host "¿Desea proceder con la desinstalacion y limpieza? (S/N)"
+                    if ($confirmar -eq "S" -or $confirmar -eq "s") {
+                        Write-Host "`nDesinstalando clave de producto activa (/upk)..." -ForegroundColor Yellow
+                        cscript.exe "$env:SystemRoot\System32\slmgr.vbs" /upk
+
+                        Write-Host "Limpiando clave del registro del sistema (/cpky)..." -ForegroundColor Yellow
+                        cscript.exe "$env:SystemRoot\System32\slmgr.vbs" /cpky
+
+                        Write-Host "Proceso completado. La clave ha sido removida del registro." -ForegroundColor Green
+                    }
+                    else {
+                        Write-Host "Operacion cancelada por el usuario." -ForegroundColor Gray
+                    }
+                    Write-Host ""
+                }
+                "13.3" {
+                    cabecera
+                    menuOpcion "Se encuentra en: Licencias -> Diagnostico de Microsoft Office"
+
+                    Write-Host "===========================================================" -ForegroundColor Cyan
+                    Write-Host "        AUDITORIA DE LICENCIAS MICROSOFT OFFICE           " -ForegroundColor Cyan
+                    Write-Host "===========================================================" -ForegroundColor Cyan
+                    Write-Host ""
+
+                    $rutasOspp = @(
+                        "${env:ProgramFiles}\Microsoft Office\Office16\OSPP.VBS",
+                        "${env:ProgramFiles(x86)}\Microsoft Office\Office16\OSPP.VBS",
+                        "${env:ProgramFiles}\Microsoft Office\Office15\OSPP.VBS",
+                        "${env:ProgramFiles(x86)}\Microsoft Office\Office15\OSPP.VBS",
+                        "${env:ProgramFiles}\Microsoft Office\Office14\OSPP.VBS",
+                        "${env:ProgramFiles(x86)}\Microsoft Office\Office14\OSPP.VBS"
+                    )
+
+                    $scriptEncontrado = $null
+                    foreach ($ruta in $rutasOspp) {
+                        if (Test-Path $ruta) {
+                            $scriptEncontrado = $ruta
+                            break
+                        }
+                    }
+
+                    if ($scriptEncontrado) {
+                        Write-Host "Script OSPP detectado en: $scriptEncontrado" -ForegroundColor Green
+                        Write-Host "Obteniendo estado de activacion y claves instaladas..." -ForegroundColor Yellow
+                        cscript.exe "$scriptEncontrado" /dstatus
+                    }
+                    else {
+                        Write-Host "No se encontro una instalacion estandar de Office (OSPP.VBS) en las rutas conocidas." -ForegroundColor Yellow
+                        Write-Host "Si utiliza una version basada exclusivamente en suscripcion Microsoft 365 / Click-to-Run," -ForegroundColor Gray
+                        Write-Host "la gestion se administra desde la cuenta de usuario en portal.office.com." -ForegroundColor Gray
+                    }
+                    Write-Host ""
+                }
+                "13.4" {
+                    cabecera
+                    menuOpcion "Se encuentra en: Licencias -> Limpiar Clave de Microsoft Office"
+
+                    Write-Host "===========================================================" -ForegroundColor Yellow
+                    Write-Host "      ELIMINAR CLAVE RESIDUAL DE MICROSOFT OFFICE         " -ForegroundColor Yellow
+                    Write-Host "===========================================================" -ForegroundColor Yellow
+                    Write-Host ""
+
+                    $rutasOspp = @(
+                        "${env:ProgramFiles}\Microsoft Office\Office16\OSPP.VBS",
+                        "${env:ProgramFiles(x86)}\Microsoft Office\Office16\OSPP.VBS",
+                        "${env:ProgramFiles}\Microsoft Office\Office15\OSPP.VBS",
+                        "${env:ProgramFiles(x86)}\Microsoft Office\Office15\OSPP.VBS"
+                    )
+
+                    $scriptEncontrado = $null
+                    foreach ($ruta in $rutasOspp) {
+                        if (Test-Path $ruta) {
+                            $scriptEncontrado = $ruta
+                            break
+                        }
+                    }
+
+                    if ($scriptEncontrado) {
+                        Write-Host "Ingrese los ultimos 5 caracteres de la clave a remover" -ForegroundColor Cyan
+                        Write-Host "(puede consultarlos previamente en la opcion 13.3):" -ForegroundColor Gray
+                        $ultimos5 = Read-Host "Ultimos 5 caracteres de la clave"
+
+                        if ($ultimos5 -and $ultimos5.Trim().Length -eq 5) {
+                            Write-Host "Removiendo clave residual..." -ForegroundColor Yellow
+                            cscript.exe "$scriptEncontrado" /unpkey:$($ultimos5.Trim().ToUpper())
+                            Write-Host "Comando ejecutado." -ForegroundColor Green
+                        }
+                        else {
+                            Write-Host "Valor invalido. Debe ingresar exactamente 5 caracteres." -ForegroundColor Red
+                        }
+                    }
+                    else {
+                        Write-Host "No se encontro el archivo OSPP.VBS en el sistema." -ForegroundColor Red
+                    }
+                    Write-Host ""
+                }
+                "13.5" {
+                    cabecera
+                    menuOpcion "Se encuentra en: Licencias -> Restablecer Activacion (Rearm)"
+
+                    Write-Host "===========================================================" -ForegroundColor Yellow
+                    Write-Host "      RESTABLECER ESTADO DE ACTIVACION (SLMGR /REARM)      " -ForegroundColor Yellow
+                    Write-Host "===========================================================" -ForegroundColor Yellow
+                    Write-Host "Esta operacion reinicia los temporizadores de activacion del sistema." -ForegroundColor Gray
+                    Write-Host ""
+
+                    $confirmar = Read-Host "¿Desea ejecutar /rearm en el sistema? (S/N)"
+                    if ($confirmar -eq "S" -or $confirmar -eq "s") {
+                        Write-Host "Ejecutando slmgr /rearm..." -ForegroundColor Yellow
+                        cscript.exe "$env:SystemRoot\System32\slmgr.vbs" /rearm
+                        Write-Host "Es necesario reiniciar el sistema para completar el restablecimiento." -ForegroundColor Yellow
+                    }
+                    else {
+                        Write-Host "Operacion cancelada." -ForegroundColor Gray
+                    }
+                    Write-Host ""
+                }
                 
                 "20" {
                     psSubMenuPortatil
