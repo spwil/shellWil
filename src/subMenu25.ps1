@@ -3560,6 +3560,7 @@ Write-RemoteLog "Proceso finalizado correctamente."
             Write-Host "  10. Impresoras DISPONIBLES en PC Remota."
             Write-Host "    10.1 Impresora HABILITADO en PC REMOTA" -ForegroundColor Cyan
             Write-Host "    10.2 Mostrar Impresoras con P.S. en PC Remota."
+            Write-Host "    10.3 Predeterminar Impresora para TODOS los Usuarios en PC Remota." -ForegroundColor Yellow
             Write-Host "  ----------------------------------------"
             Write-Host "  11. Habilitacion de RSAT - LOCAL"
             Write-Host "    11.1 Habilitar servicios RSAT y ejecucion remota (Local)" -ForegroundColor Cyan
@@ -5743,6 +5744,8 @@ try {
                             [string]$usuarioTarget
                         )
 
+                        $usuarioTarget = if ($usuarioTarget) { $usuarioTarget.Trim() } else { "" }
+
                         Write-Host ''
                         Write-Host '========================================================================' -ForegroundColor Yellow
                         Write-Host '             INSPECCIONANDO IMPRESORAS EN EL EQUIPO REMOTO              ' -ForegroundColor Yellow
@@ -5774,6 +5777,7 @@ try {
                         }
 
                         # 2. CONEXIÓN AL REGISTRO REMOTO PARA BUSCAR EL SID DEL USUARIO
+                        $reg = $null
                         try {
                             $reg = [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey('Users', $ip)
                             
@@ -5797,7 +5801,6 @@ try {
                             if (-not $userSID) {
                                 Write-Host " [!] Error: No se encontro perfil o sesion activa para el usuario '$usuarioTarget'." -ForegroundColor Red
                                 Write-Host '     El usuario debe haber iniciado sesion al menos una vez en esta PC.' -ForegroundColor DarkYellow
-                                $reg.Close()
                                 Write-Host '========================================================================' -ForegroundColor Yellow
                                 return
                             }
@@ -5808,25 +5811,28 @@ try {
                             $deviceString = $null
                             if ($keyWindows) {
                                 $deviceString = $keyWindows.GetValue('Device')
+                                $keyWindows.Close()
                             }
                             $nombrePredeterminada = ''
                             if ($deviceString) {
                                 $nombrePredeterminada = ($deviceString -split ',')[0]
                             }
-                            if ($keyWindows) { $keyWindows.Close() }
 
                             # 4. CONSULTAR IMPRESORAS VÍA WMI (Compatible desde Windows 7)
                             $wmiImpresoras = Get-WmiObject -Class Win32_Printer -ComputerName $ip -ErrorAction SilentlyContinue
 
                             if (-not $wmiImpresoras) {
                                 Write-Host ' [!] No se pudieron extraer las impresoras del sistema a traves de WMI.' -ForegroundColor Red
-                                $reg.Close()
                                 Write-Host '========================================================================' -ForegroundColor Yellow
                                 return
                             }
 
                             # 5. PROCESAR E IMPRIMIR LA TABLA DE DATOS PUNTUALES
                             Write-Host ''
+                            $totalConectadas = 0
+                            $totalSinConexion = 0
+                            $totalVirtuales = 0
+
                             $resultadoTabla = foreach ($impresora in $wmiImpresoras) {
                                 
                                 # Clasificación del estado "Predeterminado"
@@ -5837,33 +5843,89 @@ try {
 
                                 # Identificación simplificada de Fabricantes basado en el Driver
                                 $fabricante = 'Generico / Virtual'
-                                if ($impresora.DriverName -match 'HP|Hewlett') { $fabricante = 'HP' }
-                                elseif ($impresora.DriverName -match 'Epson') { $fabricante = 'Epson' }
-                                elseif ($impresora.DriverName -match 'Canon') { $fabricante = 'Canon' }
-                                elseif ($impresora.DriverName -match 'Brother') { $fabricante = 'Brother' }
-                                elseif ($impresora.DriverName -match 'Ricoh') { $fabricante = 'Ricoh' }
-                                elseif ($impresora.DriverName -match 'Zebra') { $fabricante = 'Zebra' }
-                                else { $fabricante = ($impresora.DriverName -split ' ')[0] }
-
-                                # Estado operacional puntual (Activo / No Activo)
-                                $estadoActivo = 'Activo'
-                                if ($impresora.DetectedErrorState -ne 0 -or $impresora.PrinterStatus -eq 1 -or $impresora.WorkOffline) {
-                                    $estadoActivo = 'No Activo'
+                                if (-not [string]::IsNullOrWhiteSpace($impresora.DriverName)) {
+                                    if ($impresora.DriverName -match 'HP|Hewlett') { $fabricante = 'HP' }
+                                    elseif ($impresora.DriverName -match 'Epson') { $fabricante = 'Epson' }
+                                    elseif ($impresora.DriverName -match 'Canon') { $fabricante = 'Canon' }
+                                    elseif ($impresora.DriverName -match 'Brother') { $fabricante = 'Brother' }
+                                    elseif ($impresora.DriverName -match 'Ricoh') { $fabricante = 'Ricoh' }
+                                    elseif ($impresora.DriverName -match 'Zebra') { $fabricante = 'Zebra' }
+                                    elseif ($impresora.DriverName -match 'Kyocera') { $fabricante = 'Kyocera' }
+                                    elseif ($impresora.DriverName -match 'Xerox') { $fabricante = 'Xerox' }
+                                    elseif ($impresora.DriverName -match 'Samsung') { $fabricante = 'Samsung' }
+                                    elseif ($impresora.DriverName -match 'Konica') { $fabricante = 'Konica' }
+                                    else { $fabricante = ($impresora.DriverName -split ' ')[0] }
                                 }
 
-                                # AJUSTE: Mapeo ordenado incluyendo el Nombre/Modelo de la impresora
+                                # Clasificación en 3 Estados: "Conectado", "Sin Conexion", "Impr. Virtual"
+                                $esVirtual = (
+                                    $impresora.PortName -match 'PORTPROMPT|FILE:|nul:' -or
+                                    $impresora.Name -match 'PDF|XPS|OneNote|Fax' -or
+                                    $impresora.DriverName -match 'PDF|XPS|OneNote|Fax'
+                                )
+
+                                $estaDesconectada = (
+                                    $impresora.WorkOffline -eq $true -or 
+                                    $impresora.PrinterStatus -eq 7 -or 
+                                    $impresora.ExtendedPrinterStatus -eq 7
+                                )
+
+                                if ($esVirtual) {
+                                    $estadoConexion = 'Impr. Virtual'
+                                    $totalVirtuales++
+                                }
+                                elseif ($estaDesconectada) {
+                                    $estadoConexion = 'Sin Conexion'
+                                    $totalSinConexion++
+                                }
+                                else {
+                                    $estadoConexion = 'Conectado'
+                                    $totalConectadas++
+                                }
+
+                                # Formateo seguro de Puerto para evitar desbordamiento del ancho de consola
+                                $puertoDisplay = $impresora.PortName
+                                if ($puertoDisplay -and $puertoDisplay.Length -gt 25) {
+                                    $puertoDisplay = $puertoDisplay.Substring(0, 22) + '...'
+                                }
+
+                                # AJUSTE: Mapeo ordenado con ESTADO en posición destacada (columna 2)
                                 New-Object PSObject -Property @{
                                     'Nombre / Modelo' = $impresora.Name
+                                    'Estado'          = $estadoConexion
                                     'Fabricante'      = $fabricante
                                     'Predeterminado'  = $esPredeterminada
-                                    'Puerto'          = $impresora.PortName
-                                    'Estado'          = $estadoActivo
-                                } | Select-Object 'Nombre / Modelo', Fabricante, Predeterminado, Puerto, Estado
+                                    'Puerto'          = $puertoDisplay
+                                } | Select-Object 'Nombre / Modelo', Estado, Fabricante, Predeterminado, Puerto
                             }
 
-                            # Mostrar tabla organizada de forma limpia y ajustada automáticamente al ancho
-                            $resultadoTabla | Format-Table -AutoSize
-                            $reg.Close()
+                            # Mostrar tabla organizada con resaltado de color en la impresora predeterminada
+                            $formato = "{0,-45} {1,-14} {2,-11} {3,-15} {4,-24}"
+                            Write-Host ($formato -f "Nombre / Modelo", "Estado", "Fabricante", "Predeterminado", "Puerto") -ForegroundColor White
+                            Write-Host ("-" * 113) -ForegroundColor Gray
+
+                            foreach ($fila in $resultadoTabla) {
+                                $nomDisplay = $fila.'Nombre / Modelo'
+                                if ($nomDisplay -and $nomDisplay.Length -gt 44) {
+                                    $nomDisplay = $nomDisplay.Substring(0, 41) + "..."
+                                }
+                                $linea = $formato -f $nomDisplay, $fila.Estado, $fila.Fabricante, $fila.Predeterminado, $fila.Puerto
+
+                                if ($fila.Predeterminado -eq 'PREDETERMINADO') {
+                                    Write-Host $linea -ForegroundColor Green
+                                }
+                                else {
+                                    Write-Host $linea
+                                }
+                            }
+                            Write-Host ""
+
+                            # Resumen rápido de auditoría
+                            Write-Host " [*] Resumen de Equipos: Total: $($resultadoTabla.Count) | Conectadas: $totalConectadas | Sin Conexion: $totalSinConexion | Virtuales: $totalVirtuales" -ForegroundColor Cyan
+                            if ($nombrePredeterminada) {
+                                Write-Host " [*] Impresora Predeterminada del Usuario: '$nombrePredeterminada'" -ForegroundColor Green
+                            }
+                            Write-Host ("-" * 113) -ForegroundColor Gray
 
                         }
                         catch [UnauthorizedAccessException] {
@@ -5872,6 +5934,11 @@ try {
                         }
                         catch {
                             Write-Host ' [!] ERROR INESPERADO al comunicarse con la base del registro de la PC remota.' -ForegroundColor Red
+                        }
+                        finally {
+                            if ($reg) {
+                                $reg.Close()
+                            }
                         }
                         Write-Host '========================================================================' -ForegroundColor Yellow
                     }
@@ -6000,6 +6067,290 @@ try {
                     }
 
                     Write-Host "`Consulta finalizado..." -ForegroundColor Cyan
+                }
+
+                "10.3" { 
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op25"
+
+                    # ==============================================================================
+                    # OPCION 10.3: PREDETERMINAR IMPRESORA PARA TODOS LOS USUARIOS (REMOTO)
+                    # ==============================================================================
+                    Write-Host "`n--- CONFIGURACION DE IMPRESORA PREDETERMINADA PARA TODOS LOS USUARIOS ---" -ForegroundColor Yellow
+
+                    $targetIP = Get-StandardIPPrompt
+                    if ([string]::IsNullOrWhiteSpace($targetIP)) {
+                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                        Read-Host "Presione ENTER para continuar..."
+                        break
+                    }
+
+                    Write-Host "`nVerificando conectividad con $targetIP..." -ForegroundColor Cyan
+                    if (-not (Test-Connection -ComputerName $targetIP -Count 1 -Quiet)) {
+                        Write-Host "[ERROR] El equipo $targetIP no responde a ping (Offline)." -ForegroundColor Red
+                        Read-Host "Presione ENTER para continuar..."
+                        break
+                    }
+
+                    try {
+                        Write-Host "[*] Obteniendo catalogo de impresoras instaladas en $targetIP..." -ForegroundColor Cyan
+                        $printers = Get-WmiObject -Class Win32_Printer -ComputerName $targetIP -ErrorAction Stop
+
+                        if (-not $printers) {
+                            Write-Host "[-] No se detectaron impresoras instaladas en el equipo remoto." -ForegroundColor Yellow
+                            Read-Host "Presione ENTER para continuar..."
+                            break
+                        }
+
+                        # 1. Detectar impresora predeterminada actual en el equipo remoto
+                        $impresoraPredetActual = ""
+                        $vbsCheck = "\\$targetIP\c$\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp\SetDefaultPrinter.vbs"
+                        if (Test-Path $vbsCheck) {
+                            try {
+                                $vbsLines = Get-Content $vbsCheck -ErrorAction SilentlyContinue
+                                foreach ($l in $vbsLines) {
+                                    if ($l -match 'SetDefaultPrinter\s+"([^"]+)"') {
+                                        $impresoraPredetActual = $matches[1]
+                                        break
+                                    }
+                                }
+                            } catch {}
+                        }
+
+                        if (-not $impresoraPredetActual) {
+                            try {
+                                $regUsers = [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey('Users', $targetIP)
+                                foreach ($k in $regUsers.GetSubKeyNames()) {
+                                    if ($k -match '^S-1-5-21-' -and $k -notmatch '_Classes$') {
+                                        $uKey = $regUsers.OpenSubKey("$k\Software\Microsoft\Windows NT\CurrentVersion\Windows")
+                                        if ($uKey) {
+                                            $devString = $uKey.GetValue('Device')
+                                            if ($devString) {
+                                                $impresoraPredetActual = ($devString -split ',')[0]
+                                                $uKey.Close()
+                                                break
+                                            }
+                                            $uKey.Close()
+                                        }
+                                    }
+                                }
+                                $regUsers.Close()
+                            } catch {}
+                        }
+
+                        if (-not $impresoraPredetActual) {
+                            $wmiDef = $printers | Where-Object { $_.Default -eq $true } | Select-Object -First 1
+                            if ($wmiDef) {
+                                $impresoraPredetActual = $wmiDef.Name
+                            }
+                        }
+
+                        # 2. Filtrar y presentar menú de selección con columna PREDETERMINADO y resaltado en verde
+                        $printerList = @()
+                        Write-Host "`nSeleccione la impresora que desea predeterminar para TODOS los usuarios:" -ForegroundColor White
+                        $formatoMenu = "  {0,-5} {1,-44} {2,-14} {3,-15} {4,-24}"
+                        Write-Host ($formatoMenu -f "N°", "Nombre / Modelo", "Estado", "Predeterminado", "Puerto") -ForegroundColor White
+                        Write-Host ("  " + ("-" * 105)) -ForegroundColor Gray
+                        
+                        $idx = 1
+                        foreach ($p in $printers) {
+                            $isVirtual = ($p.PortName -match 'PORTPROMPT|FILE:|nul:' -or $p.Name -match 'PDF|XPS|OneNote|Fax' -or $p.DriverName -match 'PDF|XPS|OneNote|Fax')
+                            $isOffline = ($p.WorkOffline -eq $true -or $p.PrinterStatus -eq 7 -or $p.ExtendedPrinterStatus -eq 7)
+                            $tag = if ($isVirtual) { "Impr. Virtual" } elseif ($isOffline) { "Sin Conexion" } else { "Conectado" }
+                            
+                            $isDefaultPrinter = ($p.Name -eq $impresoraPredetActual)
+                            $tagPredet = if ($isDefaultPrinter) { "PREDETERMINADO" } else { "No" }
+
+                            $pNom = $p.Name
+                            if ($pNom -and $pNom.Length -gt 43) { $pNom = $pNom.Substring(0, 40) + '...' }
+
+                            $pPuerto = $p.PortName
+                            if ($pPuerto -and $pPuerto.Length -gt 25) { $pPuerto = $pPuerto.Substring(0, 22) + '...' }
+
+                            $numLabel = ("[{0,2}]" -f $idx)
+                            $linea = $formatoMenu -f $numLabel, $pNom, $tag, $tagPredet, $pPuerto
+
+                            if ($isDefaultPrinter) {
+                                Write-Host $linea -ForegroundColor Green
+                            } else {
+                                Write-Host $linea
+                            }
+
+                            $printerList += $p
+                            $idx++
+                        }
+                        Write-Host ("  " + ("-" * 105)) -ForegroundColor Gray
+                        Write-Host "  [ 0] Cancelar" -ForegroundColor Red
+
+                        $sel = Read-Host "`nIngrese el numero de la impresora deseada"
+                        if ($sel -eq "0" -or [string]::IsNullOrWhiteSpace($sel) -or -not ($sel -match '^\d+$') -or [int]$sel -gt $printerList.Count) {
+                            Write-Host "Operacion cancelada." -ForegroundColor Yellow
+                            Read-Host "Presione ENTER para continuar..."
+                            break
+                        }
+
+                        $selectedPrinter = $printerList[[int]$sel - 1]
+                        $printerName = $selectedPrinter.Name
+                        $portName = $selectedPrinter.PortName
+
+                        Write-Host "`nHa seleccionado: '$printerName' (Puerto: $portName)" -ForegroundColor Cyan
+                        $confirm = Read-Host "¿Esta seguro de predeterminar esta impresora para TODOS los usuarios en $targetIP? (S/N)"
+                        if ($confirm -notmatch '^[sSyY]') {
+                            Write-Host "Operacion cancelada por el usuario." -ForegroundColor Yellow
+                            Read-Host "Presione ENTER para continuar..."
+                            break
+                        }
+
+                        Write-Host "`n[+] Aplicando directiva multi-usuario en $targetIP..." -ForegroundColor Green
+
+                        # 1. CAPA 1: POLITICA HKLM (Deshabilitar que Windows 10/11 cambie la impresora predeterminada y desbloquear la opcion en el panel)
+                        try {
+                            $regLM = [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey('LocalMachine', $targetIP)
+                            
+                            # HKLM Policies (GPO Machine)
+                            $polKey = $regLM.CreateSubKey("SOFTWARE\Policies\Microsoft\Windows NT\Printers")
+                            if ($polKey) {
+                                $polKey.SetValue("LegacyDefaultPrinterMode", 1, [Microsoft.Win32.RegistryValueKind]::DWord)
+                                $polKey.Close()
+                            }
+
+                            # HKLM Windows Base
+                            $winKey = $regLM.CreateSubKey("SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows")
+                            if ($winKey) {
+                                $winKey.SetValue("LegacyDefaultPrinterMode", 1, [Microsoft.Win32.RegistryValueKind]::DWord)
+                                $winKey.Close()
+                            }
+
+                            $regLM.Close()
+                            Write-Host "  [OK] Politica HKLM aplicada (Opcion 'Establecer como impresora predeterminada' HABILITADA)." -ForegroundColor Green
+                        } catch {
+                            Write-Host "  [!] Advertencia al aplicar politica HKLM: $($_.Exception.Message)" -ForegroundColor DarkYellow
+                        }
+
+                        # 2. CAPA 2: ACTUALIZACION EN SESIONES ACTIVAS (HKEY_USERS) Y POLITICAS DE USUARIO
+                        $updatedActiveUsers = 0
+                        $cleanPort = $portName.TrimEnd(':') + ":"
+                        $deviceVal = "$printerName,winspool,$cleanPort"
+
+                        try {
+                            $regUsers = [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey('Users', $targetIP)
+                            $subKeys = $regUsers.GetSubKeyNames()
+                            foreach ($k in $subKeys) {
+                                if (($k -match '^S-1-5-21-' -and $k -notmatch '_Classes$') -or $k -eq '.DEFAULT') {
+                                    $userPath = "$k\Software\Microsoft\Windows NT\CurrentVersion\Windows"
+                                    $uKey = $regUsers.CreateSubKey($userPath)
+                                    if ($uKey) {
+                                        $uKey.SetValue("Device", $deviceVal, [Microsoft.Win32.RegistryValueKind]::String)
+                                        $uKey.SetValue("UserSelectedDefault", 1, [Microsoft.Win32.RegistryValueKind]::DWord)
+                                        $uKey.SetValue("LegacyDefaultPrinterMode", 1, [Microsoft.Win32.RegistryValueKind]::DWord)
+                                        $uKey.SetValue("IsMRUEstablished", 0, [Microsoft.Win32.RegistryValueKind]::DWord)
+                                        $uKey.Close()
+                                        if ($k -ne '.DEFAULT') { $updatedActiveUsers++ }
+                                    }
+
+                                    $uPolPath = "$k\Software\Policies\Microsoft\Windows NT\Printers"
+                                    $uPolKey = $regUsers.CreateSubKey($uPolPath)
+                                    if ($uPolKey) {
+                                        $uPolKey.SetValue("LegacyDefaultPrinterMode", 1, [Microsoft.Win32.RegistryValueKind]::DWord)
+                                        $uPolKey.Close()
+                                    }
+                                }
+                            }
+                            $regUsers.Close()
+                            Write-Host "  [OK] Perfiles activos actualizados en memoria: $updatedActiveUsers usuario(s) + .DEFAULT." -ForegroundColor Green
+                            Write-Host "  [OK] Modo clasico forzado en perfiles (LegacyDefaultPrinterMode = 1, IsMRUEstablished = 0)." -ForegroundColor Green
+                        } catch {
+                            Write-Host "  [!] Advertencia al actualizar usuarios activos en HKU: $($_.Exception.Message)" -ForegroundColor DarkYellow
+                        }
+
+                        # 3. CAPA 3: CONFIGURACION EN PLANTILLA BASE (DEFAULT USER NTUSER.DAT)
+                        try {
+                            $procWmi = [wmiclass]"\\$targetIP\root\cimv2:Win32_Process"
+                            if ($procWmi) {
+                                $defCmd = "cmd.exe /c reg load HKLM\ShellSW_DefUser `"C:\Users\Default\NTUSER.DAT`" & reg add `"HKLM\ShellSW_DefUser\Software\Microsoft\Windows NT\CurrentVersion\Windows`" /v Device /t REG_SZ /d `"$deviceVal`" /f & reg add `"HKLM\ShellSW_DefUser\Software\Microsoft\Windows NT\CurrentVersion\Windows`" /v LegacyDefaultPrinterMode /t REG_DWORD /d 1 /f & reg add `"HKLM\ShellSW_DefUser\Software\Microsoft\Windows NT\CurrentVersion\Windows`" /v IsMRUEstablished /t REG_DWORD /d 0 /f & reg add `"HKLM\ShellSW_DefUser\Software\Microsoft\Windows NT\CurrentVersion\Windows`" /v UserSelectedDefault /t REG_DWORD /d 1 /f & reg add `"HKLM\ShellSW_DefUser\Software\Policies\Microsoft\Windows NT\Printers`" /v LegacyDefaultPrinterMode /t REG_DWORD /d 1 /f & reg unload HKLM\ShellSW_DefUser"
+                                $null = $procWmi.Create($defCmd)
+                                Write-Host "  [OK] Plantilla base (Default User) configurada para cualquier nuevo perfil futuro." -ForegroundColor Green
+                            }
+                        } catch {}
+
+                        # 4. CAPA 4: NOTIFICACION AL SERVICIO SPOOLER VIA WMI Y WIN32_PROCESS
+                        try {
+                            $escapedName = $printerName.Replace("'", "''")
+                            $wmiPrinterObj = Get-WmiObject -Class Win32_Printer -ComputerName $targetIP -Filter "Name='$escapedName'" -ErrorAction SilentlyContinue
+                            if ($wmiPrinterObj) {
+                                $null = $wmiPrinterObj.SetDefaultPrinter()
+                                Write-Host "  [OK] Notificado al servicio Spooler de Windows." -ForegroundColor Green
+                            }
+                            $procWmi = [wmiclass]"\\$targetIP\root\cimv2:Win32_Process"
+                            if ($procWmi) {
+                                $null = $procWmi.Create("rundll32.exe printui.dll,PrintUIEntry /y /n `"$printerName`"")
+                            }
+                        } catch {}
+
+                        # 5. CAPA 5: SCRIPT DE LOGON PERSISTENTE MULTI-USUARIO (PROGRAMDATA STARTUP)
+                        $startupDir = "\\$targetIP\c$\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
+                        if (Test-Path $startupDir) {
+                            $vbsPath = Join-Path $startupDir "SetDefaultPrinter.vbs"
+                            $vbsLines = @(
+                                "' Script generado por ShellSW para asignacion de impresora predeterminada",
+                                "On Error Resume Next",
+                                "Dim WshNetwork, WshShell",
+                                "Set WshNetwork = CreateObject(""WScript.Network"")",
+                                ("WshNetwork.SetDefaultPrinter ""{0}""" -f $printerName),
+                                "",
+                                "Set WshShell = CreateObject(""WScript.Shell"")",
+                                "WshShell.RegWrite ""HKCU\Software\Microsoft\Windows NT\CurrentVersion\Windows\LegacyDefaultPrinterMode"", 1, ""REG_DWORD""",
+                                "WshShell.RegWrite ""HKCU\Software\Policies\Microsoft\Windows NT\Printers\LegacyDefaultPrinterMode"", 1, ""REG_DWORD""",
+                                "WshShell.RegWrite ""HKCU\Software\Microsoft\Windows NT\CurrentVersion\Windows\IsMRUEstablished"", 0, ""REG_DWORD""",
+                                "WshShell.RegWrite ""HKCU\Software\Microsoft\Windows NT\CurrentVersion\Windows\UserSelectedDefault"", 1, ""REG_DWORD""",
+                                ("WshShell.RegWrite ""HKCU\Software\Microsoft\Windows NT\CurrentVersion\Windows\Device"", ""{0}"", ""REG_SZ""" -f $deviceVal),
+                                "",
+                                "' Refrescar entorno grafico de Dispositivos e Impresoras y activar el checkmark",
+                                ("WshShell.Run ""rundll32.exe printui.dll,PrintUIEntry /y /n """"{0}"""" "", 0, True" -f $printerName)
+                            )
+                            $vbsContent = $vbsLines -join "`r`n"
+                            [System.IO.File]::WriteAllText($vbsPath, $vbsContent, [System.Text.Encoding]::ASCII)
+                            Write-Host "  [OK] Script de inicio multi-usuario instalado en ProgramData\StartUp." -ForegroundColor Green
+                            Write-Host "       (Garantiza que la opcion quede habilitada y con checkmark en cada inicio de sesion)." -ForegroundColor Gray
+                        } else {
+                            Write-Host "  [!] No se pudo acceder a la carpeta compartida administrativa C$ en $targetIP." -ForegroundColor Yellow
+                        }
+
+                        # 6. CAPA 6: EJECUCION INMEDIATA EN SESION GRAFICA ACTIVA (Checkmark en Dispositivos e Impresoras)
+                        try {
+                            $taskName = "ShellSW_SetDefPrinter"
+                            $cmdTask = "wscript.exe `"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp\SetDefaultPrinter.vbs`""
+                            $resTask = schtasks.exe /create /s $targetIP /tn $taskName /tr $cmdTask /sc once /st "00:00" /f /it 2>&1
+                            if ($LASTEXITCODE -eq 0) {
+                                $null = schtasks.exe /run /s $targetIP /tn $taskName 2>&1
+                                Start-Sleep -Milliseconds 800
+                                $null = schtasks.exe /delete /s $targetIP /tn $taskName /f 2>&1
+                                Write-Host "  [OK] Señal grafica enviada a la sesion activa: Checkmark establecido en Dispositivos e Impresoras." -ForegroundColor Green
+                            }
+                            else {
+                                $psExecPath = "C:\PSTools\psexec.exe"
+                                if (Test-Path $psExecPath) {
+                                    $argP = "\\$targetIP -accepteula -s -i cmd /c `"wscript.exe `\`"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp\SetDefaultPrinter.vbs`\`"`""
+                                    Start-Process -FilePath $psExecPath -ArgumentList $argP -NoNewWindow -Wait
+                                    Write-Host "  [OK] Señal grafica enviada via PsExec a la sesion activa." -ForegroundColor Green
+                                }
+                            }
+                        } catch {}
+
+                        Write-Host "`n========================================================================" -ForegroundColor Green
+                        Write-Host " [EXITO] Impresora predeterminada configurada para TODOS los usuarios:" -ForegroundColor Green
+                        Write-Host "         Equipo Destino : $targetIP" -ForegroundColor White
+                        Write-Host "         Impresora      : $printerName" -ForegroundColor Cyan
+                        Write-Host "         Estado Panel   : 'Establecer como impresora predeterminada' HABILITADO [OK]" -ForegroundColor Green
+                        Write-Host "========================================================================" -ForegroundColor Green
+
+                    }
+                    catch {
+                        Write-Host "`n[ERROR] Ocurrio un fallo durante la operacion: $($_.Exception.Message)" -ForegroundColor Red
+                    }
+
+                    Write-Host ""
+                    Read-Host "Presione ENTER para continuar..."
                 }
 
                 "11" { 

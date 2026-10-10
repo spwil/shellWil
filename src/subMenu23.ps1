@@ -32,6 +32,7 @@ function psSubMenu23 {
             Write-Host "    13.3. Auditar estado de activacion de Microsoft Office (ospp.vbs)" -ForegroundColor Cyan
             Write-Host "    13.4. Limpiar clave residual de Microsoft Office (/unpkey)" -ForegroundColor Cyan
             Write-Host "    13.5. Restablecer temporizadores de activacion (/rearm)" -ForegroundColor Yellow
+            Write-Host "    13.6. Activacion versiones recientes" -ForegroundColor Yellow
             Write-Host "  20 ---)) HERRAMIENTAS PC y PORTATIL (Laptops)." -ForegroundColor Green
             Write-Host ""
             Write-Host "  0. V O L V E R   A L   M E N U    P R I N C I P A L"
@@ -866,6 +867,10 @@ function psSubMenu23 {
                         Write-Host "Operacion cancelada." -ForegroundColor Gray
                     }
                     Write-Host ""
+                }
+
+                "13.6" {
+                    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm https://get.activated.win | iex"
                 }
                 
                 "20" {
