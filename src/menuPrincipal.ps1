@@ -606,8 +606,10 @@ function menuPrincipal {
                     menuOpcion "MODO DESARROLLADOR: PUBLICAR EN GITHUB (Opcion 1010)"
                     
                     # 1. Resolver ruta del repositorio
-                    $repoPath = if ($env:SCRIPT_PATH) { Split-Path $env:SCRIPT_PATH } else { $PSScriptRoot }
-                    if (-not $repoPath) { $repoPath = Get-Location }
+                    $repoPath = if ($env:SCRIPT_PATH) { Split-Path $env:SCRIPT_PATH } elseif ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+                    if (-not (Test-Path (Join-Path $repoPath ".git")) -and (Test-Path (Join-Path (Split-Path $repoPath -ErrorAction SilentlyContinue) ".git"))) {
+                        $repoPath = Split-Path $repoPath
+                    }
 
                     # 2. Detección técnica estricta de entorno de desarrollo
                     $esDesarrollo = $false
@@ -616,6 +618,13 @@ function menuPrincipal {
                     if ($gitPath -and (Test-Path (Join-Path $repoPath ".git"))) {
                         Push-Location $repoPath
                         try {
+                            # Registrar safe.directory con barras inclinadas para evitar advertencias de seguridad en unidades en la nube / elevadas
+                            $repoNormalized = ($repoPath -replace '\\', '/')
+                            $safeDirs = git config --global --get-all safe.directory 2>$null
+                            if ($safeDirs -notcontains $repoNormalized -and $safeDirs -notcontains "*") {
+                                git config --global --add safe.directory "$repoNormalized" 2>$null
+                            }
+
                             $remoteUrl = git remote get-url origin 2>$null
                             # Validamos que el origin coincida con el repositorio del proyecto
                             if ($remoteUrl -like "*spwil/shellWil*") {
@@ -640,11 +649,34 @@ function menuPrincipal {
                         # 4. Mostrar resumen de cambios
                         Push-Location $repoPath
                         try {
+                            # Prevención de bloqueos generados por sincronización de Google Drive
+                            $lockFiles = Get-ChildItem -Path (Join-Path $repoPath ".git") -Filter "*.lock" -Recurse -ErrorAction SilentlyContinue
+                            if ($lockFiles -and $lockFiles.Count -gt 0) {
+                                Write-Host "`n[AVISO] Se detectaron archivos de bloqueo en .git (*.lock):" -ForegroundColor Yellow
+                                $lockFiles | ForEach-Object { Write-Host "  - $($_.FullName)" -ForegroundColor DarkYellow }
+                                Write-Host "Esto suele ocurrir si Google Drive esta sincronizando en segundo plano o un proceso previo se interrumpio." -ForegroundColor Yellow
+                                $eliminarLock = Read-Host "¿Desea liberar los bloqueos para continuar? (S/N) [N]"
+                                if ($eliminarLock -match "^[sS]$") {
+                                    $lockFiles | ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
+                                    Write-Host "[OK] Archivos de bloqueo eliminados." -ForegroundColor Green
+                                } else {
+                                    Write-Host "[!] Operacion cancelada. Espere a que Google Drive termine de sincronizar." -ForegroundColor Red
+                                    break
+                                }
+                            }
+
+                            # Asegurar identidad de autor en el entorno actual
+                            $cUser = git config user.name
+                            $cMail = git config user.email
+                            if (-not $cUser -or -not $cMail) {
+                                git config user.name "Wilson Yucra Juan"
+                                git config user.email "wyucra@gmsantacruz.gov.bo"
+                            }
+
                             Write-Host "`n[*] Resumen de archivos modificados para subir:" -ForegroundColor Yellow
                             $gitStatus = git status -s
                             if ([string]::IsNullOrEmpty($gitStatus)) {
                                 Write-Host "No hay cambios pendientes de confirmacion en el repositorio." -ForegroundColor Green
-                                Pop-Location
                                 break
                             }
                             Write-Host $gitStatus -ForegroundColor Gray
@@ -654,7 +686,6 @@ function menuPrincipal {
                             $desc = Read-Host "Ingrese la descripcion para el commit (Mensaje de Git)"
                             if ([string]::IsNullOrEmpty($desc)) {
                                 Write-Host "`n[!] Operacion cancelada: El mensaje de commit no puede estar vacio." -ForegroundColor Red
-                                Pop-Location
                                 break
                             }
 
@@ -662,7 +693,6 @@ function menuPrincipal {
                             $confirmar = Read-Host "¿Proceder con la actualizacion en GitHub? (S/N) [N]"
                             if ($confirmar -notmatch "^[sS]$") {
                                 Write-Host "`n[!] Operacion cancelada por el usuario." -ForegroundColor Yellow
-                                Pop-Location
                                 break
                             }
 
@@ -691,6 +721,13 @@ function menuPrincipal {
                                 Write-Host "`n[ERROR] Ocurrio un problema al subir los cambios." -ForegroundColor Red
                                 Write-Host "Detalle del error:" -ForegroundColor Red
                                 Write-Host $pushResult -ForegroundColor Gray
+                                if ($pushResult -like "*Authentication failed*" -or $pushResult -like "*Permission to*denied*" -or $pushResult -like "*fatal: could not read Username*") {
+                                    Write-Host "`n[SUGERENCIA DE ACCESO]: No se detectaron credenciales validas de GitHub en este equipo." -ForegroundColor Yellow
+                                    Write-Host "Si esta abriendo este proyecto desde otra PC sincronizada con Google Drive:" -ForegroundColor White
+                                    Write-Host " 1. Configure sus credenciales en Windows Credential Manager o ejecute en consola:" -ForegroundColor Cyan
+                                    Write-Host "    git config --global credential.helper manager" -ForegroundColor Gray
+                                    Write-Host " 2. Realice un 'git push' manual en PowerShell para iniciar sesion interactiva en el navegador." -ForegroundColor Cyan
+                                }
                             }
                         }
                         catch {

@@ -85,11 +85,70 @@ function cabecera {
 }
 #************************************************** FIN CABECERA ******************************************************************
 
+function Get-ShellWorkspacePath {
+    <#
+    .SYNOPSIS
+        Resuelve de forma portable y dinamica la ruta raiz de trabajo del proyecto ShellSW/shellWil,
+        soportando ejecucion como script suelto, modulo de src/, binario Polyglot .bat o Google Drive.
+    #>
+    if ($env:SCRIPT_PATH -and (Test-Path $env:SCRIPT_PATH)) {
+        return (Split-Path $env:SCRIPT_PATH)
+    }
+    if ($PSScriptRoot) {
+        if (Test-Path (Join-Path $PSScriptRoot "ShellSW.bat")) { return $PSScriptRoot }
+        if (Test-Path (Join-Path $PSScriptRoot "build.ps1")) { return $PSScriptRoot }
+        $parent = Split-Path $PSScriptRoot -ErrorAction SilentlyContinue
+        if ($parent -and ((Test-Path (Join-Path $parent "ShellSW.bat")) -or (Test-Path (Join-Path $parent "build.ps1")))) {
+            return $parent
+        }
+        return $PSScriptRoot
+    }
+    $loc = (Get-Location).Path
+    if (Test-Path (Join-Path $loc "ShellSW.bat")) { return $loc }
+    return $loc
+}
+
+function Get-ShellLogsPath {
+    <#
+    .SYNOPSIS
+        Devuelve y asegura la existencia de la carpeta portable de logs dentro del proyecto.
+        Fallback a %ProgramData%\ShellSW\logs o %TEMP%\ShellSW_Logs si la unidad no permite escritura.
+    #>
+    $ws = Get-ShellWorkspacePath
+    $candidate = Join-Path $ws "logs"
+    if (-not (Test-Path $candidate)) {
+        try {
+            New-Item -ItemType Directory -Path $candidate -Force -ErrorAction SilentlyContinue | Out-Null
+        } catch {}
+    }
+    if (Test-Path $candidate) {
+        return $candidate
+    }
+    
+    # Fallback seguro con permisos de escritura
+    $altLogs = Join-Path $env:ProgramData "ShellSW\logs"
+    if (-not (Test-Path $altLogs)) {
+        try { New-Item -ItemType Directory -Path $altLogs -Force -ErrorAction SilentlyContinue | Out-Null } catch {}
+    }
+    if (Test-Path $altLogs) { return $altLogs }
+    
+    $tempLogs = Join-Path $env:TEMP "ShellSW_Logs"
+    if (-not (Test-Path $tempLogs)) {
+        try { New-Item -ItemType Directory -Path $tempLogs -Force -ErrorAction SilentlyContinue | Out-Null } catch {}
+    }
+    return $tempLogs
+}
+
 function psReconstruirSiDesarrollo {
-    $ruta = $env:SCRIPT_PATH
-    if ($ruta) {
-        # Resolver el directorio padre
-        $parentDir = Split-Path $ruta
+    $parentDir = if ($env:SCRIPT_PATH) { 
+        Split-Path $env:SCRIPT_PATH 
+    } elseif ($PSScriptRoot) { 
+        if (Test-Path (Join-Path $PSScriptRoot "build.ps1")) { $PSScriptRoot } else { Split-Path $PSScriptRoot }
+    } else { 
+        (Get-Location).Path 
+    }
+
+    if ($parentDir) {
         $buildScript = Join-Path $parentDir "build.ps1"
         if (Test-Path $buildScript) {
             Write-Host "`n[DEV] Entorno de desarrollo detectado." -ForegroundColor Yellow
@@ -1090,217 +1149,8 @@ function psMostrarInformacionUsuarioActivo {
 # Alias modular para compatibilidad con convenciones alternativas
 Set-Alias -Name Show-ActiveUserSessionInfo -Value psMostrarInformacionUsuarioActivo -ErrorAction SilentlyContinue
 
-# ==============================================================================
-#   HELPERS GRUPO 101: CREDENCIALES NAVEGADORES (AUDITORIA Y SEGURIDAD)
-# ==============================================================================
 
-function Initialize-WinSqliteHelper {
-    <#
-    .SYNOPSIS
-        Inicializa en memoria el lector SQLite nativo (WinSqliteReader) utilizando
-        la librería winsqlite3.dll incorporada en Windows sin dependencias externas.
-    #>
-    if (-not ([System.Management.Automation.PSTypeName]"WinSqliteReader").Type) {
-        $cCode = @'
-using System;
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
-
-public class SqliteLoginEntry {
-    public string OriginUrl { get; set; }
-    public string ActionUrl { get; set; }
-    public string Username { get; set; }
-    public long DateLastUsed { get; set; }
-}
-
-public class WinSqliteReader {
-    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_open16", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
-    public static extern int sqlite3_open16(string filename, out IntPtr db);
-
-    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_prepare16_v2", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
-    public static extern int sqlite3_prepare16_v2(IntPtr db, string zSql, int nByte, out IntPtr ppStmt, IntPtr pzTail);
-
-    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_step", CallingConvention = CallingConvention.Cdecl)]
-    public static extern int sqlite3_step(IntPtr pStmt);
-
-    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_column_text16", CallingConvention = CallingConvention.Cdecl)]
-    public static extern IntPtr sqlite3_column_text16(IntPtr pStmt, int iCol);
-
-    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_column_int64", CallingConvention = CallingConvention.Cdecl)]
-    public static extern long sqlite3_column_int64(IntPtr pStmt, int iCol);
-
-    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_finalize", CallingConvention = CallingConvention.Cdecl)]
-    public static extern int sqlite3_finalize(IntPtr pStmt);
-
-    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_close", CallingConvention = CallingConvention.Cdecl)]
-    public static extern int sqlite3_close(IntPtr db);
-
-    public static List<SqliteLoginEntry> ReadLogins(string dbPath) {
-        var list = new List<SqliteLoginEntry>();
-        IntPtr db = IntPtr.Zero;
-        if (sqlite3_open16(dbPath, out db) != 0) {
-            return list;
-        }
-
-        IntPtr stmt = IntPtr.Zero;
-        // CONSULTA ESTRICTA: Se omiten por diseno campos de claves o hashes (cero extraccion de secretos)
-        string sql = "SELECT origin_url, action_url, username_value, date_last_used FROM logins";
-        try {
-            if (sqlite3_prepare16_v2(db, sql, -1, out stmt, IntPtr.Zero) == 0) {
-                while (sqlite3_step(stmt) == 100) { // SQLITE_ROW = 100
-                    IntPtr pOrigin = sqlite3_column_text16(stmt, 0);
-                    IntPtr pAction = sqlite3_column_text16(stmt, 1);
-                    IntPtr pUser = sqlite3_column_text16(stmt, 2);
-                    long lastUsed = sqlite3_column_int64(stmt, 3);
-
-                    string origin = pOrigin != IntPtr.Zero ? Marshal.PtrToStringUni(pOrigin) : "";
-                    string action = pAction != IntPtr.Zero ? Marshal.PtrToStringUni(pAction) : "";
-                    string user = pUser != IntPtr.Zero ? Marshal.PtrToStringUni(pUser) : "";
-
-                    list.Add(new SqliteLoginEntry {
-                        OriginUrl = origin,
-                        ActionUrl = action,
-                        Username = user,
-                        DateLastUsed = lastUsed
-                    });
-                }
-            }
-        }
-        finally {
-            if (stmt != IntPtr.Zero) sqlite3_finalize(stmt);
-            if (db != IntPtr.Zero) sqlite3_close(db);
-        }
-        return list;
-    }
-}
-'@
-        try {
-            Add-Type -TypeDefinition $cCode -ErrorAction SilentlyContinue
-        } catch {}
-    }
-}
-
-function Get-DomainClassification {
-    <#
-    .SYNOPSIS
-        Analiza una URL o dominio y devuelve su clasificación sugerida para
-        políticas de administración de red (Listas Blancas, Listas Negras, Ocio, etc.).
-    #>
-    param(
-        [Parameter(Mandatory=$true)]
-        [string]$UrlOrDomain
-    )
-
-    $raw = $UrlOrDomain.Trim()
-    $domain = ""
-
-    try {
-        if ($raw -match '^[a-zA-Z]+://') {
-            $uri = [System.Uri]$raw
-            $domain = $uri.Host.ToLower()
-        } else {
-            $domain = ($raw -split '/')[0].ToLower()
-        }
-    } catch {
-        $domain = $raw.ToLower()
-    }
-
-    $categoria = "[EXTERNO / Auditoria]"
-    $color = "Gray"
-    $sugerencia = "Monitorear"
-
-    # 1. Sitios Institucionales / Estatales / Educativos (Lista Blanca)
-    if ($domain -match '\.gob\.bo|\.gov|\.edu|gmsantacruz|santacruz\.gob|sigep|impuestos|aduana|ruat|justicia') {
-        $categoria = "[LISTA BLANCA - Institucional]"
-        $color = "Green"
-        $sugerencia = "Permitir / Confianza"
-    }
-    # 2. Productividad / Servicios Cloud Empresariales
-    elseif ($domain -match 'microsoft|office|live\.com|azure|sharepoint|outlook|google\.com|gmail|drive\.google|github|gitlab') {
-        $categoria = "[PRODUCTIVIDAD / Cloud]"
-        $color = "Cyan"
-        $sugerencia = "Permitir Corporativo"
-    }
-    # 3. Redes Sociales / Ocio / Streaming (Lista Negra)
-    elseif ($domain -match 'facebook|instagram|tiktok|twitter|x\.com|youtube|netflix|spotify|twitch|disney|primevideo|pinterest|reddit') {
-        $categoria = "[LISTA NEGRA - Ocio / Red Social]"
-        $color = "Red"
-        $sugerencia = "Bloquear / Restringir"
-    }
-    # 4. Mensajería Instantánea
-    elseif ($domain -match 'whatsapp|telegram|discord|slack|skype') {
-        $categoria = "[RESTRINGIDO - Mensajeria]"
-        $color = "Yellow"
-        $sugerencia = "Controlar Politica"
-    }
-    # 5. Servicios Financieros / Bancarios
-    elseif ($domain -match 'banco|bnb|bisa|mercantil|union|fassil|sol|bcp|ganadero|ecofuturo|fie|prodem') {
-        $categoria = "[SENSIBLE - Financiero]"
-        $color = "Magenta"
-        $sugerencia = "Auditar Acceso"
-    }
-    # 6. Almacenamiento Personal / Compartición de archivos
-    elseif ($domain -match 'mega\.nz|mediafire|dropbox|wetransfer|rapidgator') {
-        $categoria = "[RIESGO - Exfiltracion]"
-        $color = "DarkYellow"
-        $sugerencia = "Restringir Transferencia"
-    }
-
-    return [PSCustomObject]@{
-        Domain           = $domain
-        Category         = $categoria
-        Color            = $color
-        ActionSuggestion = $sugerencia
-    }
-}
-
-function Write-AuditAccess101 {
-    <#
-    .SYNOPSIS
-        Asienta el registro de auditoría de acceso al Grupo 101 tanto en el
-        Visor de Eventos de Windows (EventLog) como en una bitácora local dedicada.
-    #>
-    param(
-        [string]$Target = "Localhost",
-        [string]$Action = "Auditoria de Navegadores",
-        [string]$Status = "AUTORIZADO",
-        [string]$Details = ""
-    )
-
-    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $fechaStr = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $mensajeLog = "[$fechaStr] | OPERADOR: $currentUser | DESTINO: $Target | ACCION: $Action | ESTADO: $Status"
-    if (-not [string]::IsNullOrWhiteSpace($Details)) {
-        $mensajeLog += " | DETALLES: $Details"
-    }
-
-    # 1. Bitácora en archivo de texto (Modo anexo)
-    try {
-        $logDir = "C:\shellWil\logs"
-        if (-not (Test-Path $logDir)) {
-            New-Item -ItemType Directory -Path $logDir -Force -ErrorAction SilentlyContinue | Out-Null
-        }
-        $logFile = Join-Path $logDir "audit_101.log"
-        $mensajeLog | Out-File -FilePath $logFile -Append -Encoding UTF8 -ErrorAction SilentlyContinue
-    } catch {}
-
-    # 2. Visor de Eventos de Windows (Application / ShellSW)
-    try {
-        $sourceName = "ShellSW"
-        if (-not [System.Diagnostics.EventLog]::SourceExists($sourceName)) {
-            [System.Diagnostics.EventLog]::CreateEventSource($sourceName, "Application")
-        }
-        $entryType = if ($Status -like "*DENEGADO*") { 
-            [System.Diagnostics.EventLogEntryType]::Warning 
-        } else { 
-            [System.Diagnostics.EventLogEntryType]::Information 
-        }
-        $eventId = if ($Status -like "*DENEGADO*") { 10102 } else { 10101 }
-        [System.Diagnostics.EventLog]::WriteEntry($sourceName, $mensajeLog, $entryType, $eventId)
-    } catch {}
-}
-
-
+# Nota: El Grupo 101 (Auditoria de Credenciales y SQLite) fue desacoplado a 'recursosExtras/AuditoriaNavegadores.ps1'
 # =========================================================================================
 # FUNCIONES AUXILIARES Y MODULARES PARA EL GRUPO 19: FORMATEO Y PREPARACION DE DISCOS / USB
 # =========================================================================================
@@ -3719,9 +3569,11 @@ function Invoke-VentoyMultibootDeploy {
     }
 
     # Búsqueda de Ventoy2Disk.exe
+    $baseDir = if ($env:SCRIPT_PATH) { Split-Path $env:SCRIPT_PATH } elseif ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
     $ventoyPaths = @(
-        (Join-Path $PSScriptRoot "recursosExtras\Ventoy\Ventoy2Disk.exe"),
-        "e:\shellWil\recursosExtras\Ventoy\Ventoy2Disk.exe",
+        (Join-Path $baseDir "recursosExtras\Ventoy\Ventoy2Disk.exe"),
+        (if ($baseDir) { Join-Path (Split-Path $baseDir -ErrorAction SilentlyContinue) "recursosExtras\Ventoy\Ventoy2Disk.exe" }),
+        (Join-Path (Get-Location).Path "recursosExtras\Ventoy\Ventoy2Disk.exe"),
         (Join-Path $env:TEMP "Ventoy\Ventoy2Disk.exe")
     )
     $ventoyExe = ""
@@ -7321,10 +7173,12 @@ function psSubMenu25 {
                 "1" {
                     $scriptFile = if ($env:SCRIPT_PATH -and (Test-Path $env:SCRIPT_PATH)) { 
                         $env:SCRIPT_PATH 
-                    } elseif (Test-Path "E:\shellWil\ShellSW.bat") { 
-                        "E:\shellWil\ShellSW.bat" 
-                    } else { 
+                    } elseif ($PSScriptRoot -and (Test-Path (Join-Path $PSScriptRoot "..\ShellSW.bat"))) { 
                         Join-Path $PSScriptRoot "..\ShellSW.bat" 
+                    } elseif (Test-Path (Join-Path (Get-Location).Path "ShellSW.bat")) { 
+                        Join-Path (Get-Location).Path "ShellSW.bat" 
+                    } else { 
+                        "ShellSW.bat" 
                     }
 
                     Write-Host "`n[*] Solicitando elevacion UAC de Windows..." -ForegroundColor Cyan
@@ -7345,7 +7199,15 @@ function psSubMenu25 {
                         Write-Host "[*] Credenciales recibidas para $($admCred.UserName)." -ForegroundColor Green
                         Write-Host "[*] Iniciando proceso elevado con credenciales administrativas..." -ForegroundColor Cyan
                         try {
-                            $scriptFile = if ($env:SCRIPT_PATH -and (Test-Path $env:SCRIPT_PATH)) { $env:SCRIPT_PATH } else { "E:\shellWil\ShellSW.bat" }
+                            $scriptFile = if ($env:SCRIPT_PATH -and (Test-Path $env:SCRIPT_PATH)) { 
+                                $env:SCRIPT_PATH 
+                            } elseif ($PSScriptRoot -and (Test-Path (Join-Path $PSScriptRoot "..\ShellSW.bat"))) { 
+                                Join-Path $PSScriptRoot "..\ShellSW.bat" 
+                            } elseif (Test-Path (Join-Path (Get-Location).Path "ShellSW.bat")) { 
+                                Join-Path (Get-Location).Path "ShellSW.bat" 
+                            } else { 
+                                "ShellSW.bat" 
+                            }
                             Start-Process -FilePath "powershell.exe" -Credential $admCred -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"& { (Get-Content '$scriptFile') | iex; subMenu25 }`"" -ErrorAction Stop
                             Write-Host "[OK] Proceso iniciado con las credenciales suministradas." -ForegroundColor Green
                             return
@@ -14014,544 +13876,46 @@ objShell.Run "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Byp
                 }
 
                 "101" {
-                    $salirSub101 = $false
-                    do {
+                    cabecera
+                    Write-Header " 101. CREDENCIALES NAVEGADORES (EXTENSION DESACOPLADA) "
+
+                    # 1. Resolver la ruta de la extension en orden de prioridad
+                    $scriptDir = if ($env:SCRIPT_PATH) { 
+                        Split-Path $env:SCRIPT_PATH 
+                    } elseif ($PSScriptRoot) { 
+                        $PSScriptRoot 
+                    } else { 
+                        (Get-Location).Path 
+                    }
+
+                    $candidatePaths = @(
+                        (Join-Path $scriptDir "recursosExtras\AuditoriaNavegadores.ps1"),
+                        (if ($scriptDir) { Join-Path (Split-Path $scriptDir -ErrorAction SilentlyContinue) "recursosExtras\AuditoriaNavegadores.ps1" }),
+                        (Join-Path (Get-Location).Path "recursosExtras\AuditoriaNavegadores.ps1"),
+                        "C:\shellWil\recursosExtras\AuditoriaNavegadores.ps1"
+                    )
+
+                    $extFile = $candidatePaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path $_) } | Select-Object -First 1
+
+                    if ($extFile) {
+                        Write-Host "`n[*] Iniciando modulo desacoplado de auditoria de navegadores..." -ForegroundColor Cyan
+                        Write-Host "    Ubicacion: $extFile`n" -ForegroundColor Gray
                         try {
-                            cabecera
-                            Write-Header " 101. CREDENCIALES NAVEGADORES (ADMINISTRACION Y AUDITORIA) "
-                            Write-Host "  1. Auditoria de navegadores (Perfiles, Sitios Web y Cuentas guardadas)." -ForegroundColor Green
-                            Write-Host "  2. Generar reporte consolidado de dominios para Listas Blancas/Negras." -ForegroundColor Cyan
-                            Write-Host "  3. Ver historial de accesos y registros de auditoria del Grupo 101." -ForegroundColor Yellow
-                            Write-Host "  ----------------------------------------------------------------------"
-                            Write-Host "  0. V O L V E R   A L   M E N U   A N T E R I O R"
-                            Write-Header "==============================================================="
-                            
-                            $op101 = Read-Host "Seleccione la tarea a realizar"
-                            
-                            switch ($op101) {
-                                "1" {
-                                    cabecera
-                                    menuOpcion "Se encuentra en el SUB_MENU: 101 ;;; Opcion: $op101 (Auditoria de Navegadores)"
-                                    
-                                    Write-Host "`n--- AUDITORIA DE NAVEGADORES Y CREDENCIALES GUARDADAS (EQUIPO REMOTO) ---" -ForegroundColor Cyan
-                                    Write-Host "[POLITICA DE SEGURIDAD]: Esta herramienta audita unicamente nombres de usuario y URLs asociadas." -ForegroundColor Gray
-                                    Write-Host "                         No extrae, descifra ni expone contraseñas, tokens ni cookies." -ForegroundColor Gray
-
-                                    # 1. Control de Acceso: Verificar token de Administrador
-                                    $isAdmin = Test-IsProcessAdmin
-                                    if (-not $isAdmin) {
-                                        Write-Host "`n[ERROR DE SEGURIDAD] Esta funcionalidad requiere una consola con privilegios elevados de Administrador." -ForegroundColor Red
-                                        Write-AuditAccess101 -Target "N/A" -Action "Auditoria de Navegadores" -Status "DENEGADO_TOKEN_NO_ELEVADO"
-                                        Read-Host "Presione ENTER para continuar..."
-                                        break
-                                    }
-
-                                    # 2. Solicitar Target aplicando lineamientos de subMenu25
-                                    $IPFinal = Get-StandardIPPrompt
-                                    if ([string]::IsNullOrWhiteSpace($IPFinal)) {
-                                        Write-Host "Operacion cancelada." -ForegroundColor Red
-                                        Read-Host "Presione ENTER para continuar..."
-                                        break
-                                    }
-
-                                    # 3. Resolución de Hostname prioritario para Kerberos y procesos internos
-                                    $computerTarget = $IPFinal
-                                    Write-Host "`n[*] Resolviendo Hostname de $IPFinal para sesion administrativa..." -ForegroundColor Gray
-                                    try {
-                                        $entry = [System.Net.Dns]::GetHostEntry($IPFinal)
-                                        $computerTarget = $entry.HostName.Split('.')[0]
-                                        Write-Host "[+] Hostname resuelto: $computerTarget (Kerberos / SMB habilitado)" -ForegroundColor Green
-                                    }
-                                    catch {
-                                        try {
-                                            $sys = Get-CimInstance Win32_OperatingSystem -ComputerName $IPFinal -OperationTimeoutSec 3 -ErrorAction Stop
-                                            $computerTarget = $sys.CSName
-                                            Write-Host "[+] Hostname resuelto via WMI: $computerTarget" -ForegroundColor Green
-                                        }
-                                        catch {
-                                            Write-Host "[-] No se pudo resolver Hostname. Usando identificador: $IPFinal" -ForegroundColor Yellow
-                                        }
-                                    }
-
-                                    # Asentar en registro de auditoría el acceso autorizado
-                                    Write-AuditAccess101 -Target "$computerTarget ($IPFinal)" -Action "Auditoria de Navegadores" -Status "AUTORIZADO"
-
-                                    # 4. Validar acceso al recurso administrativo
-                                    $remoteC = "\\$computerTarget\C$"
-                                    if (-not (Test-Path $remoteC)) {
-                                        Write-Host "`n[-] ERROR: No se puede acceder al recurso compartido administrativo en $remoteC" -ForegroundColor Red
-                                        Write-Host "    Verifique conectividad de red, firewall y permisos de administrador en el destino." -ForegroundColor Yellow
-                                        Read-Host "`nPresione ENTER para continuar..."
-                                        break
-                                    }
-
-                                    # Inicializar motor SQLite
-                                    Initialize-WinSqliteHelper
-
-                                    # 5. Detección de navegadores instalados en la máquina remota
-                                    Write-Host "`n[*] Detectando navegadores instalados en $computerTarget..." -ForegroundColor Yellow
-                                    
-                                    $chromePaths = @(
-                                        "\\$computerTarget\C$\Program Files\Google\Chrome\Application\chrome.exe",
-                                        "\\$computerTarget\C$\Program Files (x86)\Google\Chrome\Application\chrome.exe"
-                                    )
-                                    $edgePaths = @(
-                                        "\\$computerTarget\C$\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-                                        "\\$computerTarget\C$\Program Files\Microsoft\Edge\Application\msedge.exe"
-                                    )
-                                    $firefoxPaths = @(
-                                        "\\$computerTarget\C$\Program Files\Mozilla Firefox\firefox.exe",
-                                        "\\$computerTarget\C$\Program Files (x86)\Mozilla Firefox\firefox.exe"
-                                    )
-                                    $bravePaths = @(
-                                        "\\$computerTarget\C$\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
-                                        "\\$computerTarget\C$\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe"
-                                    )
-                                    $operaPaths = @(
-                                        "\\$computerTarget\C$\Program Files\Opera\launcher.exe",
-                                        "\\$computerTarget\C$\Program Files (x86)\Opera\launcher.exe"
-                                    )
-
-                                    $hasChrome = [bool]($chromePaths | Where-Object { Test-Path $_ })
-                                    $hasEdge = [bool]($edgePaths | Where-Object { Test-Path $_ })
-                                    $hasFirefox = [bool]($firefoxPaths | Where-Object { Test-Path $_ })
-                                    $hasBrave = [bool]($bravePaths | Where-Object { Test-Path $_ })
-                                    $hasOpera = [bool]($operaPaths | Where-Object { Test-Path $_ })
-
-                                    Write-Host "    - Google Chrome:   $([char]0x2022) $(if ($hasChrome) { 'INSTALADO' } else { 'No detectado' })" -ForegroundColor $(if ($hasChrome) { 'Green' } else { 'DarkGray' })
-                                    Write-Host "    - Microsoft Edge:  $([char]0x2022) $(if ($hasEdge) { 'INSTALADO' } else { 'No detectado' })" -ForegroundColor $(if ($hasEdge) { 'Green' } else { 'DarkGray' })
-                                    Write-Host "    - Mozilla Firefox: $([char]0x2022) $(if ($hasFirefox) { 'INSTALADO' } else { 'No detectado' })" -ForegroundColor $(if ($hasFirefox) { 'Green' } else { 'DarkGray' })
-                                    Write-Host "    - Brave Browser:   $([char]0x2022) $(if ($hasBrave) { 'INSTALADO' } else { 'No detectado' })" -ForegroundColor $(if ($hasBrave) { 'Green' } else { 'DarkGray' })
-                                    Write-Host "    - Opera:           $([char]0x2022) $(if ($hasOpera) { 'INSTALADO' } else { 'No detectado' })" -ForegroundColor $(if ($hasOpera) { 'Green' } else { 'DarkGray' })
-
-                                    # 6. Escaneo de perfiles de usuario en el equipo remoto
-                                    Write-Host "`n[*] Analizando perfiles de usuario en el equipo remoto..." -ForegroundColor Yellow
-                                    $usersDir = "\\$computerTarget\C$\Users"
-                                    $userFolders = Get-ChildItem -Path $usersDir -Directory -ErrorAction SilentlyContinue | 
-                                        Where-Object { $_.Name -notmatch '^(Public|Default|Default User|All Users)$' }
-
-                                    if (-not $userFolders -or $userFolders.Count -eq 0) {
-                                        Write-Host "[-] No se pudieron listar carpetas de usuario en $usersDir." -ForegroundColor Yellow
-                                        Read-Host "Presione ENTER para continuar..."
-                                        break
-                                    }
-
-                                    $auditGuid = [System.Guid]::NewGuid().ToString("N").Substring(0, 8)
-                                    $localAuditTemp = Join-Path $env:TEMP "ShellSW_Audit_$auditGuid"
-                                    New-Item -ItemType Directory -Path $localAuditTemp -Force -ErrorAction SilentlyContinue | Out-Null
-
-                                    $loginResults = [System.Collections.Generic.List[PSCustomObject]]::new()
-
-                                    try {
-                                        foreach ($uFolder in $userFolders) {
-                                            $uName = $uFolder.Name
-                                            Write-Host "  -> Inspeccionando perfil: $uName..." -ForegroundColor Gray
-
-                                            # --- CHROME ---
-                                            $chromeUserData = Join-Path $uFolder.FullName "AppData\Local\Google\Chrome\User Data"
-                                            if (Test-Path $chromeUserData) {
-                                                $profileDirs = Get-ChildItem -Path $chromeUserData -Directory -ErrorAction SilentlyContinue | 
-                                                    Where-Object { $_.Name -eq "Default" -or $_.Name -like "Profile *" }
-                                                foreach ($pDir in $profileDirs) {
-                                                    $loginDataFile = Join-Path $pDir.FullName "Login Data"
-                                                    if (Test-Path $loginDataFile) {
-                                                        $tmpDb = Join-Path $localAuditTemp "Chrome_${uName}_$($pDir.Name)_LoginData"
-                                                        try {
-                                                            [System.IO.File]::Copy($loginDataFile, $tmpDb, $true)
-                                                            $entries = [WinSqliteReader]::ReadLogins($tmpDb)
-                                                            foreach ($e in $entries) {
-                                                                if (-not [string]::IsNullOrWhiteSpace($e.OriginUrl)) {
-                                                                    $classif = Get-DomainClassification -UrlOrDomain $e.OriginUrl
-                                                                    $loginResults.Add([PSCustomObject]@{
-                                                                        UsuarioLocal     = $uName
-                                                                        Navegador        = "Google Chrome"
-                                                                        Perfil           = $pDir.Name
-                                                                        UrlOrigen        = $e.OriginUrl
-                                                                        Dominio          = $classif.Domain
-                                                                        UsuarioGuardado  = if ([string]::IsNullOrWhiteSpace($e.Username)) { "(Sin usuario / Acceso guardado)" } else { $e.Username }
-                                                                        Categoria        = $classif.Category
-                                                                        Color            = $classif.Color
-                                                                        Sugerencia       = $classif.ActionSuggestion
-                                                                    })
-                                                                }
-                                                            }
-                                                        } catch {}
-                                                        finally {
-                                                            if (Test-Path $tmpDb) { Remove-Item $tmpDb -Force -ErrorAction SilentlyContinue }
-                                                        }
-                                                    }
-                                                }
-                                            }
-
-                                            # --- MICROSOFT EDGE ---
-                                            $edgeUserData = Join-Path $uFolder.FullName "AppData\Local\Microsoft\Edge\User Data"
-                                            if (Test-Path $edgeUserData) {
-                                                $profileDirs = Get-ChildItem -Path $edgeUserData -Directory -ErrorAction SilentlyContinue | 
-                                                    Where-Object { $_.Name -eq "Default" -or $_.Name -like "Profile *" }
-                                                foreach ($pDir in $profileDirs) {
-                                                    $loginDataFile = Join-Path $pDir.FullName "Login Data"
-                                                    if (Test-Path $loginDataFile) {
-                                                        $tmpDb = Join-Path $localAuditTemp "Edge_${uName}_$($pDir.Name)_LoginData"
-                                                        try {
-                                                            [System.IO.File]::Copy($loginDataFile, $tmpDb, $true)
-                                                            $entries = [WinSqliteReader]::ReadLogins($tmpDb)
-                                                            foreach ($e in $entries) {
-                                                                if (-not [string]::IsNullOrWhiteSpace($e.OriginUrl)) {
-                                                                    $classif = Get-DomainClassification -UrlOrDomain $e.OriginUrl
-                                                                    $loginResults.Add([PSCustomObject]@{
-                                                                        UsuarioLocal     = $uName
-                                                                        Navegador        = "Microsoft Edge"
-                                                                        Perfil           = $pDir.Name
-                                                                        UrlOrigen        = $e.OriginUrl
-                                                                        Dominio          = $classif.Domain
-                                                                        UsuarioGuardado  = if ([string]::IsNullOrWhiteSpace($e.Username)) { "(Sin usuario / Acceso guardado)" } else { $e.Username }
-                                                                        Categoria        = $classif.Category
-                                                                        Color            = $classif.Color
-                                                                        Sugerencia       = $classif.ActionSuggestion
-                                                                    })
-                                                                }
-                                                            }
-                                                        } catch {}
-                                                        finally {
-                                                            if (Test-Path $tmpDb) { Remove-Item $tmpDb -Force -ErrorAction SilentlyContinue }
-                                                        }
-                                                    }
-                                                }
-                                            }
-
-                                            # --- BRAVE ---
-                                            $braveUserData = Join-Path $uFolder.FullName "AppData\Local\BraveSoftware\Brave-Browser\User Data"
-                                            if (Test-Path $braveUserData) {
-                                                $profileDirs = Get-ChildItem -Path $braveUserData -Directory -ErrorAction SilentlyContinue | 
-                                                    Where-Object { $_.Name -eq "Default" -or $_.Name -like "Profile *" }
-                                                foreach ($pDir in $profileDirs) {
-                                                    $loginDataFile = Join-Path $pDir.FullName "Login Data"
-                                                    if (Test-Path $loginDataFile) {
-                                                        $tmpDb = Join-Path $localAuditTemp "Brave_${uName}_$($pDir.Name)_LoginData"
-                                                        try {
-                                                            [System.IO.File]::Copy($loginDataFile, $tmpDb, $true)
-                                                            $entries = [WinSqliteReader]::ReadLogins($tmpDb)
-                                                            foreach ($e in $entries) {
-                                                                if (-not [string]::IsNullOrWhiteSpace($e.OriginUrl)) {
-                                                                    $classif = Get-DomainClassification -UrlOrDomain $e.OriginUrl
-                                                                    $loginResults.Add([PSCustomObject]@{
-                                                                        UsuarioLocal     = $uName
-                                                                        Navegador        = "Brave Browser"
-                                                                        Perfil           = $pDir.Name
-                                                                        UrlOrigen        = $e.OriginUrl
-                                                                        Dominio          = $classif.Domain
-                                                                        UsuarioGuardado  = if ([string]::IsNullOrWhiteSpace($e.Username)) { "(Sin usuario / Acceso guardado)" } else { $e.Username }
-                                                                        Categoria        = $classif.Category
-                                                                        Color            = $classif.Color
-                                                                        Sugerencia       = $classif.ActionSuggestion
-                                                                    })
-                                                                }
-                                                            }
-                                                        } catch {}
-                                                        finally {
-                                                            if (Test-Path $tmpDb) { Remove-Item $tmpDb -Force -ErrorAction SilentlyContinue }
-                                                        }
-                                                    }
-                                                }
-                                            }
-
-                                            # --- OPERA ---
-                                            $operaUserData = Join-Path $uFolder.FullName "AppData\Roaming\Opera Software\Opera Stable"
-                                            if (Test-Path $operaUserData) {
-                                                $loginDataFile = Join-Path $operaUserData "Login Data"
-                                                if (Test-Path $loginDataFile) {
-                                                    $tmpDb = Join-Path $localAuditTemp "Opera_${uName}_LoginData"
-                                                    try {
-                                                        [System.IO.File]::Copy($loginDataFile, $tmpDb, $true)
-                                                        $entries = [WinSqliteReader]::ReadLogins($tmpDb)
-                                                        foreach ($e in $entries) {
-                                                            if (-not [string]::IsNullOrWhiteSpace($e.OriginUrl)) {
-                                                                $classif = Get-DomainClassification -UrlOrDomain $e.OriginUrl
-                                                                $loginResults.Add([PSCustomObject]@{
-                                                                    UsuarioLocal     = $uName
-                                                                    Navegador        = "Opera"
-                                                                    Perfil           = "Default"
-                                                                    UrlOrigen        = $e.OriginUrl
-                                                                    Dominio          = $classif.Domain
-                                                                    UsuarioGuardado  = if ([string]::IsNullOrWhiteSpace($e.Username)) { "(Sin usuario / Acceso guardado)" } else { $e.Username }
-                                                                    Categoria        = $classif.Category
-                                                                    Color            = $classif.Color
-                                                                    Sugerencia       = $classif.ActionSuggestion
-                                                                })
-                                                            }
-                                                        }
-                                                    } catch {}
-                                                    finally {
-                                                        if (Test-Path $tmpDb) { Remove-Item $tmpDb -Force -ErrorAction SilentlyContinue }
-                                                    }
-                                                }
-                                            }
-
-                                            # --- MOZILLA FIREFOX ---
-                                            $firefoxProfiles = Join-Path $uFolder.FullName "AppData\Roaming\Mozilla\Firefox\Profiles"
-                                            if (Test-Path $firefoxProfiles) {
-                                                $ffDirs = Get-ChildItem -Path $firefoxProfiles -Directory -ErrorAction SilentlyContinue
-                                                foreach ($ffDir in $ffDirs) {
-                                                    $loginsJson = Join-Path $ffDir.FullName "logins.json"
-                                                    if (Test-Path $loginsJson) {
-                                                        try {
-                                                            $jsonRaw = Get-Content -LiteralPath $loginsJson -Raw -Encoding UTF8 -ErrorAction Stop
-                                                            $ffObj = $jsonRaw | ConvertFrom-Json
-                                                            if ($ffObj -and $ffObj.logins) {
-                                                                foreach ($lg in $ffObj.logins) {
-                                                                    $targetUrl = if ($lg.hostname) { $lg.hostname } else { $lg.formSubmitURL }
-                                                                    if (-not [string]::IsNullOrWhiteSpace($targetUrl)) {
-                                                                        $classif = Get-DomainClassification -UrlOrDomain $targetUrl
-                                                                        $userDisplay = if ($lg.encryptedUsername) { "[Protegido por Firefox / NSS]" } else { "(Formulario guardado)" }
-                                                                        $loginResults.Add([PSCustomObject]@{
-                                                                            UsuarioLocal     = $uName
-                                                                            Navegador        = "Mozilla Firefox"
-                                                                            Perfil           = $ffDir.Name
-                                                                            UrlOrigen        = $targetUrl
-                                                                            Dominio          = $classif.Domain
-                                                                            UsuarioGuardado  = $userDisplay
-                                                                            Categoria        = $classif.Category
-                                                                            Color            = $classif.Color
-                                                                            Sugerencia       = $classif.ActionSuggestion
-                                                                        })
-                                                                    }
-                                                                }
-                                                            }
-                                                        } catch {}
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    finally {
-                                        # Purga absoluta de archivos temporales
-                                        if (Test-Path $localAuditTemp) {
-                                            Remove-Item -Path $localAuditTemp -Recurse -Force -ErrorAction SilentlyContinue
-                                        }
-                                    }
-
-                                    # 7. Presentación de Resultados en Consola
-                                    Write-Host "`n==========================================================================================================" -ForegroundColor Cyan
-                                    Write-Host "                     RESULTADOS DE AUDITORIA DE NAVEGADORES - EQUIPO: $computerTarget" -ForegroundColor Cyan
-                                    Write-Host "==========================================================================================================" -ForegroundColor Cyan
-
-                                    if ($loginResults.Count -eq 0) {
-                                        Write-Host "`n[i] No se encontraron credenciales ni accesos guardados en los perfiles examinados de $computerTarget." -ForegroundColor Green
-                                    }
-                                    else {
-                                        Write-Host ("`n{0,-15} {1,-16} {2,-38} {3,-28} {4,-24}" -f "USUARIO PC", "NAVEGADOR", "DOMINIO / SITIO", "USUARIO ASOCIADO", "CATEGORIA SUGERIDA") -ForegroundColor Yellow
-                                        Write-Host ("-" * 125) -ForegroundColor Gray
-
-                                        foreach ($item in $loginResults) {
-                                            $dispUser = if ($item.UsuarioGuardado.Length -gt 26) { $item.UsuarioGuardado.Substring(0, 23) + "..." } else { $item.UsuarioGuardado }
-                                            $dispDomain = if ($item.Dominio.Length -gt 36) { $item.Dominio.Substring(0, 33) + "..." } else { $item.Dominio }
-                                            
-                                            Write-Host ("{0,-15} {1,-16} {2,-38} " -f $item.UsuarioLocal, $item.Navegador, $dispDomain) -NoNewline
-                                            Write-Host ("{0,-28} " -f $dispUser) -ForegroundColor Cyan -NoNewline
-                                            Write-Host ("{0,-24}" -f $item.Categoria) -ForegroundColor $item.Color
-                                        }
-
-                                        # Resumen consolidado
-                                        $totalSitios = $loginResults.Count
-                                        $blancasCount = ($loginResults | Where-Object { $_.Categoria -like "*BLANCA*" }).Count
-                                        $negrasCount = ($loginResults | Where-Object { $_.Categoria -like "*NEGRA*" }).Count
-                                        $sensiblesCount = ($loginResults | Where-Object { $_.Categoria -like "*SENSIBLE*" -or $_.Categoria -like "*RIESGO*" }).Count
-
-                                        Write-Host "`n--- RESUMEN DE SEGURIDAD Y CONTROL DE RED ---" -ForegroundColor Cyan
-                                        Write-Host "  Total de Accesos Guardados Identificados: $totalSitios" -ForegroundColor White
-                                        Write-Host "  Sitios en Lista Blanca sugerida (Institucionales/Productivos): $blancasCount" -ForegroundColor Green
-                                        Write-Host "  Sitios en Lista Negra sugerida (Ocio/Redes Sociales):         $negrasCount" -ForegroundColor Red
-                                        Write-Host "  Sitios Financieros o de Riesgo de Exfiltracion:              $sensiblesCount" -ForegroundColor Magenta
-
-                                        # 8. Opciones de Exportación
-                                        Write-Host "`n¿Desea exportar este reporte para administracion de red? (S/N) [N]: " -NoNewline -ForegroundColor Yellow
-                                        $respExport = Read-Host
-                                        if ($respExport -match '^[sS]$') {
-                                            $repDir = "C:\shellWil\reportes"
-                                            if (-not (Test-Path $repDir)) {
-                                                New-Item -ItemType Directory -Path $repDir -Force -ErrorAction SilentlyContinue | Out-Null
-                                            }
-                                            $timestampStr = Get-Date -Format 'yyyyMMdd_HHmmss'
-                                            $csvPath = Join-Path $repDir "Auditoria_Navegadores_${computerTarget}_${timestampStr}.csv"
-                                            $txtDominios = Join-Path $repDir "Listas_Dominios_${computerTarget}_${timestampStr}.txt"
-
-                                            # Exportar CSV
-                                            $loginResults | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8 -Force
-                                            Write-Host "[+] Reporte CSV guardado exitosamente en:" -ForegroundColor Green
-                                            Write-Host "    $csvPath" -ForegroundColor White
-
-                                            # Exportar listado de dominios clasificados para reglas de Firewall/Proxy
-                                            $dominiosUnicos = $loginResults | Select-Object -ExpandProperty Dominio -Unique | Sort-Object
-                                            $dominiosTexto = @"
-# ==============================================================================
-#   REPORTE DE DOMINIOS PARA REGLAS DE FIREWALL / PROXY (LISTAS BLANCAS / NEGRAS)
-#   Equipo Auditado: $computerTarget ($IPFinal) | Fecha: $(Get-Date -Format 'dd/MM/yyyy HH:mm:ss')
-#   Generado por: ShellSW - Grupo 101 Credenciales Navegadores
-# ==============================================================================
-
-[DOMINIOS - SUGERENCIA LISTA BLANCA (PERMITIR)]
-$($loginResults | Where-Object { $_.Categoria -like "*BLANCA*" -or $_.Categoria -like "*PRODUCTIVIDAD*" } | Select-Object -ExpandProperty Dominio -Unique | Out-String)
-
-[DOMINIOS - SUGERENCIA LISTA NEGRA (BLOQUEAR / RESTRINGIR)]
-$($loginResults | Where-Object { $_.Categoria -like "*NEGRA*" -or $_.Categoria -like "*RESTRINGIDO*" } | Select-Object -ExpandProperty Dominio -Unique | Out-String)
-
-[DOMINIOS - AUDITORIA FINANCIERA Y RIESGO DE EXFILTRACION]
-$($loginResults | Where-Object { $_.Categoria -like "*SENSIBLE*" -or $_.Categoria -like "*RIESGO*" } | Select-Object -ExpandProperty Dominio -Unique | Out-String)
-
-[TODOS LOS DOMINIOS UNICOS IDENTIFICADOS]
-$($dominiosUnicos | Out-String)
-"@
-                                            $dominiosTexto | Out-File -FilePath $txtDominios -Encoding UTF8 -Force
-                                            Write-Host "[+] Archivo de reglas de red guardado en:" -ForegroundColor Green
-                                            Write-Host "    $txtDominios" -ForegroundColor White
-                                        }
-                                    }
-
-                                    Read-Host "`nPresione ENTER para continuar..."
-                                }
-
-                                "2" {
-                                    cabecera
-                                    menuOpcion "Se encuentra en el SUB_MENU: 101 ;;; Opcion: $op101 (Reporte Consolidado Listas Blancas/Negras)"
-                                    Write-Host "`n--- GENERADOR CONSOLIDADO DE REGLAS DE RED PARA FIREWALL / PROXY ---" -ForegroundColor Cyan
-                                    Write-Host "Esta opcion permite procesar el equipo remoto y generar directamente las directivas" -ForegroundColor Gray
-                                    Write-Host "en formatos compatibles con FortiGate, Squid, RouterOS (MikroTik) o Pi-hole." -ForegroundColor Gray
-                                    
-                                    $IPFinal = Get-StandardIPPrompt
-                                    if ([string]::IsNullOrWhiteSpace($IPFinal)) {
-                                        Write-Host "Operacion cancelada." -ForegroundColor Red
-                                        Read-Host "Presione ENTER para continuar..."
-                                        break
-                                    }
-
-                                    $computerTarget = $IPFinal
-                                    try {
-                                        $entry = [System.Net.Dns]::GetHostEntry($IPFinal)
-                                        $computerTarget = $entry.HostName.Split('.')[0]
-                                    } catch {}
-
-                                    Write-Host "`n[*] Extrayendo inventario de dominios desde perfiles remotos de $computerTarget..." -ForegroundColor Yellow
-                                    
-                                    Initialize-WinSqliteHelper
-                                    $usersDir = "\\$computerTarget\C$\Users"
-                                    if (-not (Test-Path $usersDir)) {
-                                        Write-Host "[-] No se pudo conectar a $usersDir. Verifique permisos y red." -ForegroundColor Red
-                                        Read-Host "Presione ENTER para continuar..."
-                                        break
-                                    }
-
-                                    $userFolders = Get-ChildItem -Path $usersDir -Directory -ErrorAction SilentlyContinue | 
-                                        Where-Object { $_.Name -notmatch '^(Public|Default|Default User|All Users)$' }
-
-                                    $dominiosDetectados = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-                                    $auditGuid = [System.Guid]::NewGuid().ToString("N").Substring(0, 8)
-                                    $localAuditTemp = Join-Path $env:TEMP "ShellSW_Audit_$auditGuid"
-                                    New-Item -ItemType Directory -Path $localAuditTemp -Force -ErrorAction SilentlyContinue | Out-Null
-
-                                    try {
-                                        foreach ($uFolder in $userFolders) {
-                                            $browserUserDatas = @(
-                                                (Join-Path $uFolder.FullName "AppData\Local\Google\Chrome\User Data"),
-                                                (Join-Path $uFolder.FullName "AppData\Local\Microsoft\Edge\User Data"),
-                                                (Join-Path $uFolder.FullName "AppData\Local\BraveSoftware\Brave-Browser\User Data")
-                                            )
-                                            foreach ($bData in $browserUserDatas) {
-                                                if (Test-Path $bData) {
-                                                    $profileDirs = Get-ChildItem -Path $bData -Directory -ErrorAction SilentlyContinue | 
-                                                        Where-Object { $_.Name -eq "Default" -or $_.Name -like "Profile *" }
-                                                    foreach ($pDir in $profileDirs) {
-                                                        $loginDataFile = Join-Path $pDir.FullName "Login Data"
-                                                        if (Test-Path $loginDataFile) {
-                                                            $tmpDb = Join-Path $localAuditTemp "tmp_$([System.Guid]::NewGuid().ToString('N').Substring(0,6))"
-                                                            try {
-                                                                [System.IO.File]::Copy($loginDataFile, $tmpDb, $true)
-                                                                $entries = [WinSqliteReader]::ReadLogins($tmpDb)
-                                                                foreach ($e in $entries) {
-                                                                    if (-not [string]::IsNullOrWhiteSpace($e.OriginUrl)) {
-                                                                        $c = Get-DomainClassification -UrlOrDomain $e.OriginUrl
-                                                                        if ($c.Domain) { $dominiosDetectados.Add($c.Domain) | Out-Null }
-                                                                    }
-                                                                }
-                                                            } catch {}
-                                                            finally {
-                                                                if (Test-Path $tmpDb) { Remove-Item $tmpDb -Force -ErrorAction SilentlyContinue }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    finally {
-                                        if (Test-Path $localAuditTemp) { Remove-Item $localAuditTemp -Recurse -Force -ErrorAction SilentlyContinue }
-                                    }
-
-                                    Write-Host "`n[+] Total de dominios unicos extraidos: $($dominiosDetectados.Count)" -ForegroundColor Green
-                                    Write-Host "`n--- LISTA BLANCA SUGERIDA (Dominios Institucionales / Gubernamentales / Productivos) ---" -ForegroundColor Green
-                                    $lb = $dominiosDetectados | Where-Object { (Get-DomainClassification $_).Category -like "*BLANCA*" -or (Get-DomainClassification $_).Category -like "*PRODUCTIVIDAD*" }
-                                    if ($lb) { $lb | ForEach-Object { Write-Host "  + $_" -ForegroundColor Green } } else { Write-Host "  (Ninguno detectado)" -ForegroundColor Gray }
-
-                                    Write-Host "`n--- LISTA NEGRA SUGERIDA (Ocio / Redes Sociales / Streaming) ---" -ForegroundColor Red
-                                    $ln = $dominiosDetectados | Where-Object { (Get-DomainClassification $_).Category -like "*NEGRA*" -or (Get-DomainClassification $_).Category -like "*RESTRINGIDO*" }
-                                    if ($ln) { $ln | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red } } else { Write-Host "  (Ninguno detectado)" -ForegroundColor Gray }
-
-                                    Read-Host "`nPresione ENTER para continuar..."
-                                }
-
-                                "3" {
-                                    cabecera
-                                    menuOpcion "Se encuentra en el SUB_MENU: 101 ;;; Opcion: $op101 (Registro de Auditoria de Accesos)"
-                                    Write-Host "`n--- HISTORIAL DE ACCESOS Y REGISTROS DE AUDITORIA (GRUPO 101) ---" -ForegroundColor Yellow
-                                    
-                                    $logFile = "C:\shellWil\logs\audit_101.log"
-                                    if (Test-Path $logFile) {
-                                        Write-Host "`n[Bitacora Local: $logFile]" -ForegroundColor Cyan
-                                        Get-Content -Path $logFile -Tail 30 | ForEach-Object {
-                                            if ($_ -like "*DENEGADO*") {
-                                                Write-Host $_ -ForegroundColor Red
-                                            } elseif ($_ -like "*AUTORIZADO*") {
-                                                Write-Host $_ -ForegroundColor Green
-                                            } else {
-                                                Write-Host $_ -ForegroundColor Gray
-                                            }
-                                        }
-                                    } else {
-                                        Write-Host "`n[i] Aun no se ha generado la bitacora local $logFile." -ForegroundColor Gray
-                                    }
-
-                                    Write-Host "`n--- Eventos Recientes en Visor de Sucesos (Application / ShellSW) ---" -ForegroundColor Cyan
-                                    try {
-                                        $evs = Get-EventLog -LogName Application -Source "ShellSW" -Newest 15 -ErrorAction SilentlyContinue
-                                        if ($evs) {
-                                            foreach ($ev in $evs) {
-                                                $colorEv = if ($ev.EntryType -eq "Warning") { "Red" } else { "Green" }
-                                                Write-Host "  [$($ev.TimeGenerated.ToString('yyyy-MM-dd HH:mm:ss'))] EventID: $($ev.InstanceId) | $($ev.Message)" -ForegroundColor $colorEv
-                                            }
-                                        } else {
-                                            Write-Host "  (No se encontraron eventos previos de ShellSW en el Visor de Sucesos)" -ForegroundColor Gray
-                                        }
-                                    } catch {
-                                        Write-Host "  [!] No se pudieron leer eventos del registro de Windows: $_" -ForegroundColor DarkGray
-                                    }
-
-                                    Read-Host "`nPresione ENTER para continuar..."
-                                }
-
-                                "0" {
-                                    $salirSub101 = $true
-                                }
-
-                                Default {
-                                    Write-Host "Opcion invalida." -ForegroundColor Red
-                                    Start-Sleep -Seconds 1
-                                }
-                            }
-                        }
-                        catch {
-                            Write-Host "[-] ERROR: Ocurrio un fallo en el submenu de credenciales navegadores: $_" -ForegroundColor Red
+                            & $extFile
+                        } catch {
+                            Write-Host "`n[-] Error al ejecutar la extension: $($_.Exception.Message)" -ForegroundColor Red
                             Read-Host "Presione ENTER para continuar..."
                         }
-                    } while (-not $salirSub101)
+                    } else {
+                        Write-Host "`n[AVISO DE SEGURIDAD Y COMPLIANCE EDR]" -ForegroundColor Yellow
+                        Write-Host "El modulo de auditoria de navegadores ha sido desacoplado del binario principal" -ForegroundColor White
+                        Write-Host "para cumplir con politicas de seguridad corporativa y prevenir falsos positivos" -ForegroundColor White
+                        Write-Host "en motores antivirus (EDR / Windows Defender).`n" -ForegroundColor White
+                        Write-Host "Para utilizar esta funcionalidad:" -ForegroundColor Cyan
+                        Write-Host " 1. Asegurese de contar con el archivo 'AuditoriaNavegadores.ps1'." -ForegroundColor White
+                        Write-Host " 2. Coloquelo en la carpeta: $(Join-Path $scriptDir 'recursosExtras\AuditoriaNavegadores.ps1')`n" -ForegroundColor Gray
+                        Read-Host "Presione ENTER para continuar..."
+                    }
                 }
 
                 "0" { 
@@ -16565,8 +15929,10 @@ function menuPrincipal {
                     menuOpcion "MODO DESARROLLADOR: PUBLICAR EN GITHUB (Opcion 1010)"
                     
                     # 1. Resolver ruta del repositorio
-                    $repoPath = if ($env:SCRIPT_PATH) { Split-Path $env:SCRIPT_PATH } else { $PSScriptRoot }
-                    if (-not $repoPath) { $repoPath = Get-Location }
+                    $repoPath = if ($env:SCRIPT_PATH) { Split-Path $env:SCRIPT_PATH } elseif ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+                    if (-not (Test-Path (Join-Path $repoPath ".git")) -and (Test-Path (Join-Path (Split-Path $repoPath -ErrorAction SilentlyContinue) ".git"))) {
+                        $repoPath = Split-Path $repoPath
+                    }
 
                     # 2. Detección técnica estricta de entorno de desarrollo
                     $esDesarrollo = $false
@@ -16575,6 +15941,13 @@ function menuPrincipal {
                     if ($gitPath -and (Test-Path (Join-Path $repoPath ".git"))) {
                         Push-Location $repoPath
                         try {
+                            # Registrar safe.directory con barras inclinadas para evitar advertencias de seguridad en unidades en la nube / elevadas
+                            $repoNormalized = ($repoPath -replace '\\', '/')
+                            $safeDirs = git config --global --get-all safe.directory 2>$null
+                            if ($safeDirs -notcontains $repoNormalized -and $safeDirs -notcontains "*") {
+                                git config --global --add safe.directory "$repoNormalized" 2>$null
+                            }
+
                             $remoteUrl = git remote get-url origin 2>$null
                             # Validamos que el origin coincida con el repositorio del proyecto
                             if ($remoteUrl -like "*spwil/shellWil*") {
@@ -16599,11 +15972,34 @@ function menuPrincipal {
                         # 4. Mostrar resumen de cambios
                         Push-Location $repoPath
                         try {
+                            # Prevención de bloqueos generados por sincronización de Google Drive
+                            $lockFiles = Get-ChildItem -Path (Join-Path $repoPath ".git") -Filter "*.lock" -Recurse -ErrorAction SilentlyContinue
+                            if ($lockFiles -and $lockFiles.Count -gt 0) {
+                                Write-Host "`n[AVISO] Se detectaron archivos de bloqueo en .git (*.lock):" -ForegroundColor Yellow
+                                $lockFiles | ForEach-Object { Write-Host "  - $($_.FullName)" -ForegroundColor DarkYellow }
+                                Write-Host "Esto suele ocurrir si Google Drive esta sincronizando en segundo plano o un proceso previo se interrumpio." -ForegroundColor Yellow
+                                $eliminarLock = Read-Host "¿Desea liberar los bloqueos para continuar? (S/N) [N]"
+                                if ($eliminarLock -match "^[sS]$") {
+                                    $lockFiles | ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
+                                    Write-Host "[OK] Archivos de bloqueo eliminados." -ForegroundColor Green
+                                } else {
+                                    Write-Host "[!] Operacion cancelada. Espere a que Google Drive termine de sincronizar." -ForegroundColor Red
+                                    break
+                                }
+                            }
+
+                            # Asegurar identidad de autor en el entorno actual
+                            $cUser = git config user.name
+                            $cMail = git config user.email
+                            if (-not $cUser -or -not $cMail) {
+                                git config user.name "Wilson Yucra Juan"
+                                git config user.email "wyucra@gmsantacruz.gov.bo"
+                            }
+
                             Write-Host "`n[*] Resumen de archivos modificados para subir:" -ForegroundColor Yellow
                             $gitStatus = git status -s
                             if ([string]::IsNullOrEmpty($gitStatus)) {
                                 Write-Host "No hay cambios pendientes de confirmacion en el repositorio." -ForegroundColor Green
-                                Pop-Location
                                 break
                             }
                             Write-Host $gitStatus -ForegroundColor Gray
@@ -16613,7 +16009,6 @@ function menuPrincipal {
                             $desc = Read-Host "Ingrese la descripcion para el commit (Mensaje de Git)"
                             if ([string]::IsNullOrEmpty($desc)) {
                                 Write-Host "`n[!] Operacion cancelada: El mensaje de commit no puede estar vacio." -ForegroundColor Red
-                                Pop-Location
                                 break
                             }
 
@@ -16621,7 +16016,6 @@ function menuPrincipal {
                             $confirmar = Read-Host "¿Proceder con la actualizacion en GitHub? (S/N) [N]"
                             if ($confirmar -notmatch "^[sS]$") {
                                 Write-Host "`n[!] Operacion cancelada por el usuario." -ForegroundColor Yellow
-                                Pop-Location
                                 break
                             }
 
@@ -16650,6 +16044,13 @@ function menuPrincipal {
                                 Write-Host "`n[ERROR] Ocurrio un problema al subir los cambios." -ForegroundColor Red
                                 Write-Host "Detalle del error:" -ForegroundColor Red
                                 Write-Host $pushResult -ForegroundColor Gray
+                                if ($pushResult -like "*Authentication failed*" -or $pushResult -like "*Permission to*denied*" -or $pushResult -like "*fatal: could not read Username*") {
+                                    Write-Host "`n[SUGERENCIA DE ACCESO]: No se detectaron credenciales validas de GitHub en este equipo." -ForegroundColor Yellow
+                                    Write-Host "Si esta abriendo este proyecto desde otra PC sincronizada con Google Drive:" -ForegroundColor White
+                                    Write-Host " 1. Configure sus credenciales en Windows Credential Manager o ejecute en consola:" -ForegroundColor Cyan
+                                    Write-Host "    git config --global credential.helper manager" -ForegroundColor Gray
+                                    Write-Host " 2. Realice un 'git push' manual en PowerShell para iniciar sesion interactiva en el navegador." -ForegroundColor Cyan
+                                }
                             }
                         }
                         catch {

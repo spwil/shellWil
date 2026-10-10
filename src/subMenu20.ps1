@@ -2416,9 +2416,11 @@ function Invoke-VentoyMultibootDeploy {
     }
 
     # Búsqueda de Ventoy2Disk.exe
+    $baseDir = if ($env:SCRIPT_PATH) { Split-Path $env:SCRIPT_PATH } elseif ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
     $ventoyPaths = @(
-        (Join-Path $PSScriptRoot "recursosExtras\Ventoy\Ventoy2Disk.exe"),
-        "e:\shellWil\recursosExtras\Ventoy\Ventoy2Disk.exe",
+        (Join-Path $baseDir "recursosExtras\Ventoy\Ventoy2Disk.exe"),
+        (if ($baseDir) { Join-Path (Split-Path $baseDir -ErrorAction SilentlyContinue) "recursosExtras\Ventoy\Ventoy2Disk.exe" }),
+        (Join-Path (Get-Location).Path "recursosExtras\Ventoy\Ventoy2Disk.exe"),
         (Join-Path $env:TEMP "Ventoy\Ventoy2Disk.exe")
     )
     $ventoyExe = ""

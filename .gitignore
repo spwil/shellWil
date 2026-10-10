@@ -13,3 +13,18 @@
 .idea/
 .agents/
 scratch/
+
+# Google Drive y metadatos de sincronización
+desktop.ini
+*.tmp.drivedownload
+* - Copia.*
+* - copia.*
+* (1).*
+* (2).*
+*.gdoc
+*.gsheet
+*.gslides
+
+# Entorno de desarrollo local Antigravity
+.gemini/
+
