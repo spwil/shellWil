@@ -16277,9 +16277,16 @@ function menuPrincipal {
                     $memoPath = Join-Path (Get-ShellWorkspacePath) "ESTADO_PROYECTO.md"
                     if (Test-Path $memoPath) {
                         Get-Content $memoPath -Encoding UTF8 | Select-Object -First 45 | ForEach-Object {
-                            if ($_ -like "#*") { Write-Host $_ -ForegroundColor Cyan }
-                            elseif ($_ -like "*:*" -or $_ -like "- [*") { Write-Host $_ -ForegroundColor Yellow }
-                            else { Write-Host $_ -ForegroundColor Gray }
+                            $linea = $_
+                            if ($linea.StartsWith("#")) {
+                                Write-Host $linea -ForegroundColor Cyan
+                            }
+                            elseif ($linea.StartsWith("- [") -or $linea.StartsWith("*") -or $linea.Contains(":")) {
+                                Write-Host $linea -ForegroundColor Yellow
+                            }
+                            else {
+                                Write-Host $linea -ForegroundColor Gray
+                            }
                         }
                     } else {
                         Write-Host "`n[INFO] Archivo ESTADO_PROYECTO.md no encontrado en la raiz." -ForegroundColor Yellow
