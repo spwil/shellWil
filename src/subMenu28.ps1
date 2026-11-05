@@ -88,14 +88,14 @@ function psSubMenu28 {
                             }
                         }
                         else {
-                            $psexecPath = "C:\PSTools\PsExec.exe"
-                            if (Test-Path $psexecPath) {
+                            $psexecPath = Get-PsExecPath
+                            if ($psexecPath) {
                                 $arg = "\\$ip -accepteula -s powershell.exe -NoProfile -Command `"try { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force } catch {}; try { Enable-PSRemoting -SkipNetworkProfileCheck -Force } catch {}`""
                                 Start-Process -FilePath $psexecPath -ArgumentList $arg -Wait -NoNewWindow
                                 Write-Host "[OK] Comando enviado via PsExec." -ForegroundColor Green
                             }
                             else {
-                                Write-Host "ERROR: No se pudo conectar via WMI ni se encontro PsExec en C:\PSTools\PsExec.exe" -ForegroundColor Red
+                                Write-Host "ERROR: No se pudo conectar via WMI ni se encontro PsExec en C:\PSTools ni en el sistema." -ForegroundColor Red
                             }
                         }
                     }
@@ -129,8 +129,8 @@ function psSubMenu28 {
                                 }
                             }
                             else {
-                                $psexecPath = "C:\PSTools\PsExec.exe"
-                                if (Test-Path $psexecPath) {
+                                $psexecPath = Get-PsExecPath
+                                if ($psexecPath) {
                                     & $psexecPath \\$ip -accepteula -s cmd.exe /c "gpupdate /force"
                                     Write-Host "[OK] GPUPDATE ejecutado via PsExec." -ForegroundColor Green
                                 }

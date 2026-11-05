@@ -132,6 +132,40 @@ function Get-ShellLogsPath {
     return $tempLogs
 }
 
+function Get-PsExecPath {
+    <#
+    .SYNOPSIS
+        Busca y retorna de forma dinamica la ruta absoluta al ejecutable PsExec.exe,
+        verificando C:\PSTools, la raiz del proyecto, System32 o el PATH del sistema.
+    #>
+    $workspace = Get-ShellWorkspacePath
+    $candidatePaths = @(
+        "C:\PSTools\PsExec.exe",
+        "C:\PSTools\psexec.exe",
+        "C:\PSTools\PsExec64.exe",
+        (Join-Path $workspace "PSTools\PsExec.exe"),
+        (Join-Path $workspace "PSTools\psexec.exe"),
+        "C:\Windows\System32\PsExec.exe",
+        "C:\Windows\System32\psexec.exe"
+    )
+
+    foreach ($p in $candidatePaths) {
+        if (-not [string]::IsNullOrWhiteSpace($p) -and (Test-Path -LiteralPath $p)) {
+            return $p
+        }
+    }
+
+    $cmd = Get-Command psexec.exe -ErrorAction SilentlyContinue
+    if (-not $cmd) {
+        $cmd = Get-Command psexec -ErrorAction SilentlyContinue
+    }
+    if ($cmd) {
+        return $cmd.Definition
+    }
+
+    return ""
+}
+
 function psReconstruirSiDesarrollo {
     $parentDir = if ($env:SCRIPT_PATH) { 
         Split-Path $env:SCRIPT_PATH 
@@ -583,18 +617,8 @@ function psHabilitarAdministracionRemota {
     $exito = $false
 
     # A. Método 1: PsExec (Puerto SMB 445)
-    $psexecPath = "C:\PSTools\PsExec.exe"
-    $psexecFound = $false
-    if (Test-Path $psexecPath) {
-        $psexecFound = $true
-    }
-    else {
-        $where = Get-Command psexec -ErrorAction SilentlyContinue
-        if ($where) {
-            $psexecPath = $where.Definition
-            $psexecFound = $true
-        }
-    }
+    $psexecPath = Get-PsExecPath
+    $psexecFound = [bool]$psexecPath
 
     if ($psexecFound) {
         Write-Host "[*] Intentando habilitacion via PsExec (SMB puerto 445)..." -ForegroundColor Yellow
@@ -819,16 +843,8 @@ function psGestionarServiciosUpdateRemoto {
         # Intentar consultar via PsExec
         if (-not $queryExito) {
             # Localizar PsExec
-            $psexecPath = "C:\PSTools\PsExec.exe"
-            $psexecFound = $false
-            if (Test-Path $psexecPath) { $psexecFound = $true }
-            else {
-                if (Test-Path ".\PsExec.exe") { $psexecPath = ".\PsExec.exe"; $psexecFound = $true }
-                else {
-                    $where = Get-Command psexec -ErrorAction SilentlyContinue
-                    if ($where) { $psexecPath = $where.Definition; $psexecFound = $true }
-                }
-            }
+            $psexecPath = Get-PsExecPath
+            $psexecFound = [bool]$psexecPath
 
             if ($psexecFound) {
                 try {
@@ -1010,24 +1026,8 @@ function psGestionarServiciosUpdateRemoto {
     if (-not $exito) {
         Write-Host "`n[*] WinRM no disponible. Intentando via PsExec (SMB)..." -ForegroundColor Yellow
         
-        $psexecPath = "C:\PSTools\PsExec.exe"
-        $psexecFound = $false
-        if (Test-Path $psexecPath) {
-            $psexecFound = $true
-        }
-        else {
-            if (Test-Path ".\PsExec.exe") {
-                $psexecPath = ".\PsExec.exe"
-                $psexecFound = $true
-            }
-            else {
-                $where = Get-Command psexec -ErrorAction SilentlyContinue
-                if ($where) {
-                    $psexecPath = $where.Definition
-                    $psexecFound = $true
-                }
-            }
-        }
+        $psexecPath = Get-PsExecPath
+        $psexecFound = [bool]$psexecPath
 
         if ($psexecFound) {
             $psExito = $true

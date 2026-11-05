@@ -16,22 +16,30 @@
 ---
 
 ## 🕒 2. Última Sesión de Trabajo
-* **Fecha:** 18 de Octubre de 2026
-* **Hito Completado:** **Sistema de Desarrollo Multi-PC y Sincronización Segura Git (Opciones 1010 y 1011)**.
+* **Fecha:** 19 de Octubre de 2026
+* **Hito Completado:** **Corrección integral de la Opción 10.3 (Impresora Predeterminada Remota Multi-Usuario) y Unificación de PsExec**.
 * **Cambios Clave Realizados:**
-  1. **Opción 1011 (Continuar y Sincronizar):** Implementada en `src/helpers.ps1`. Descarga cambios con `git pull origin main`, limpia bloqueos residuales (`*.lock`), protege cambios locales sin guardar (con submenú interactivo: commit 1010, stash o reset), y auto-compila inmediatamente con `build.ps1`.
-  2. **Opción 1010 (Publicar en GitHub):** Mejorada con auto-resolución de rechazos. Si la otra PC subió cambios previamente (`non-fast-forward`), la opción 1010 ofrece integrar automáticamente con `git pull --rebase` y reintentar el `push`.
-  3. **Seguridad / Modo Oculto:** Ambas opciones (1010 y 1011) se mantuvieron **ocultas de la visual del menú principal**, evitando que operadores finales o personal no autorizado las ejecuten por error. Funcionan escribiendo directamente `1010` o `1011` en la consola.
-  4. **Documentación:** Se generó la guía técnica completa en [Varios/manual_sincronizacion_multipc_git.md](Varios/manual_sincronizacion_multipc_git.md).
-  5. **Comando de Memoria:** Incorporación de la palabra clave `RECUERDAME` tanto en el asistente IA como en el menú del script.
+  1. **Resolución del congelamiento en pantalla negra (Opción 10.3):**
+     - Se eliminó el bloqueo síncrono infinito en PsExec (`Start-Process -Wait`) causado por la espera de `cmd /c` y `wscript.exe`.
+     - Se añadió el parámetro `/q` (quiet) a `PrintUIEntry` y `bWaitOnReturn = False` en `SetDefaultPrinter.vbs` para impedir que se levanten cuadros de diálogo modales invisibles en la Sesión 0 que paralizaban el sistema.
+     - PsExec ahora se invoca con `-d` (ejecución asíncrona fire & forget), `-n 8` (timeout de conexión), `-nobanner` e inyección precisa en el `SessionId` activo del usuario conectado (`-i $activeSessionId`).
+     - Se implementó un timeout estricto de seguridad de 6 segundos con `[System.Diagnostics.Process]::Start` y cancelación forzada (`Kill()`) en caso de falta de respuesta del host remoto.
+     - Se corrigió la consulta de confirmación donde `$targetIP?` evaluaba a vacío por sintaxis de PowerShell, quedando correctamente como `${targetIP}?`.
+  2. **Unificación y Portabilidad de PsExec:**
+     - Creación de la función centralizada `Get-PsExecPath` en [src/helpers.ps1](src/helpers.ps1), la cual resuelve dinámicamente `PsExec.exe` buscando en `C:\PSTools`, la raíz del proyecto (`E:\proyectosIA\shellWil`), `C:\Windows\System32` o la variable de entorno `PATH`.
+     - Actualización de todos los módulos ([src/subMenu25.ps1](src/subMenu25.ps1), [src/subMenu28.ps1](src/subMenu28.ps1), [src/helpers.ps1](src/helpers.ps1)) para consumir esta función.
+  3. **Verificación de la nueva ruta de trabajo:**
+     - Verificado el funcionamiento transparente en la nueva ubicación `E:\proyectosIA\shellWil`. Todas las funciones de resolución de entorno (`Get-ShellWorkspacePath`, `Get-GitDevContext`, compilación [build.ps1](build.ps1)) responden con total exactitud.
+  4. **Compilación y verificación:**
+     - Ejecutado [build.ps1](build.ps1) y validado que [ShellSW.bat](ShellSW.bat) y todos los módulos de `src/` compilan con 0 errores de sintaxis.
 
 ---
 
 ## 📍 3. ¿En qué punto nos hemos quedado?
-El proyecto tiene su infraestructura de desarrollo y sincronización entre 2 computadoras **100% probada, libre de errores de sintaxis y compilada en `ShellSW.bat`**.
+La Opción 10.3 del módulo [src/subMenu25.ps1](src/subMenu25.ps1) ha sido corregida y optimizada exhaustivamente, eliminando el fallo de congelamiento y garantizando la aplicación de directivas multi-usuario en equipos remotos de forma no bloqueante y segura.
 
-* **Estado de Git:** Rama `main`, sincronizada con `origin/main`.
-* **Próxima acción técnica:** Probar la descarga en la segunda computadora (PC 2) abriendo ShellSW y tecleando `1011`.
+* **Estado de Git:** Rama `main`, cambios listos para ser guardados y probados.
+* **Próxima acción técnica:** Probar la Opción 10.3 en el entorno de red Helpdesk y realizar commit con la Opción 1010 si se desea sincronizar a GitHub.
 
 ---
 

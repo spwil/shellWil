@@ -139,6 +139,40 @@ function Get-ShellLogsPath {
     return $tempLogs
 }
 
+function Get-PsExecPath {
+    <#
+    .SYNOPSIS
+        Busca y retorna de forma dinamica la ruta absoluta al ejecutable PsExec.exe,
+        verificando C:\PSTools, la raiz del proyecto, System32 o el PATH del sistema.
+    #>
+    $workspace = Get-ShellWorkspacePath
+    $candidatePaths = @(
+        "C:\PSTools\PsExec.exe",
+        "C:\PSTools\psexec.exe",
+        "C:\PSTools\PsExec64.exe",
+        (Join-Path $workspace "PSTools\PsExec.exe"),
+        (Join-Path $workspace "PSTools\psexec.exe"),
+        "C:\Windows\System32\PsExec.exe",
+        "C:\Windows\System32\psexec.exe"
+    )
+
+    foreach ($p in $candidatePaths) {
+        if (-not [string]::IsNullOrWhiteSpace($p) -and (Test-Path -LiteralPath $p)) {
+            return $p
+        }
+    }
+
+    $cmd = Get-Command psexec.exe -ErrorAction SilentlyContinue
+    if (-not $cmd) {
+        $cmd = Get-Command psexec -ErrorAction SilentlyContinue
+    }
+    if ($cmd) {
+        return $cmd.Definition
+    }
+
+    return ""
+}
+
 function psReconstruirSiDesarrollo {
     $parentDir = if ($env:SCRIPT_PATH) { 
         Split-Path $env:SCRIPT_PATH 
@@ -590,18 +624,8 @@ function psHabilitarAdministracionRemota {
     $exito = $false
 
     # A. Método 1: PsExec (Puerto SMB 445)
-    $psexecPath = "C:\PSTools\PsExec.exe"
-    $psexecFound = $false
-    if (Test-Path $psexecPath) {
-        $psexecFound = $true
-    }
-    else {
-        $where = Get-Command psexec -ErrorAction SilentlyContinue
-        if ($where) {
-            $psexecPath = $where.Definition
-            $psexecFound = $true
-        }
-    }
+    $psexecPath = Get-PsExecPath
+    $psexecFound = [bool]$psexecPath
 
     if ($psexecFound) {
         Write-Host "[*] Intentando habilitacion via PsExec (SMB puerto 445)..." -ForegroundColor Yellow
@@ -826,16 +850,8 @@ function psGestionarServiciosUpdateRemoto {
         # Intentar consultar via PsExec
         if (-not $queryExito) {
             # Localizar PsExec
-            $psexecPath = "C:\PSTools\PsExec.exe"
-            $psexecFound = $false
-            if (Test-Path $psexecPath) { $psexecFound = $true }
-            else {
-                if (Test-Path ".\PsExec.exe") { $psexecPath = ".\PsExec.exe"; $psexecFound = $true }
-                else {
-                    $where = Get-Command psexec -ErrorAction SilentlyContinue
-                    if ($where) { $psexecPath = $where.Definition; $psexecFound = $true }
-                }
-            }
+            $psexecPath = Get-PsExecPath
+            $psexecFound = [bool]$psexecPath
 
             if ($psexecFound) {
                 try {
@@ -1017,24 +1033,8 @@ function psGestionarServiciosUpdateRemoto {
     if (-not $exito) {
         Write-Host "`n[*] WinRM no disponible. Intentando via PsExec (SMB)..." -ForegroundColor Yellow
         
-        $psexecPath = "C:\PSTools\PsExec.exe"
-        $psexecFound = $false
-        if (Test-Path $psexecPath) {
-            $psexecFound = $true
-        }
-        else {
-            if (Test-Path ".\PsExec.exe") {
-                $psexecPath = ".\PsExec.exe"
-                $psexecFound = $true
-            }
-            else {
-                $where = Get-Command psexec -ErrorAction SilentlyContinue
-                if ($where) {
-                    $psexecPath = $where.Definition
-                    $psexecFound = $true
-                }
-            }
-        }
+        $psexecPath = Get-PsExecPath
+        $psexecFound = [bool]$psexecPath
 
         if ($psexecFound) {
             $psExito = $true
@@ -7983,12 +7983,8 @@ try {
 
         # Método C: PsExec
         if (-not $metodoExitoso -and $port445) {
-            $psexecPath = "C:\PSTools\PsExec.exe"
-            if (-not (Test-Path $psexecPath)) {
-                $where = Get-Command psexec -ErrorAction SilentlyContinue
-                if ($where) { $psexecPath = $where.Definition }
-            }
-            if (Test-Path $psexecPath) {
+            $psexecPath = Get-PsExecPath
+            if ($psexecPath) {
                 Write-Host "[*] Intentando configuracion via PsExec..." -ForegroundColor Gray
                 $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($setupRemoteScript))
                 $argBase = "-accepteula -s -h powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"
@@ -8491,12 +8487,8 @@ try {
         }
 
         if (-not $lanzado -and $port445) {
-            $psexecPath = "C:\PSTools\PsExec.exe"
-            if (-not (Test-Path $psexecPath)) {
-                $where = Get-Command psexec -ErrorAction SilentlyContinue
-                if ($where) { $psexecPath = $where.Definition }
-            }
-            if (Test-Path $psexecPath) {
+            $psexecPath = Get-PsExecPath
+            if ($psexecPath) {
                 Write-Host "[*] Intentando despliegue de tarea via PsExec..." -ForegroundColor Gray
                 try {
                     $remoteTemp = "\\$targetMachine\C$\Windows\Temp"
@@ -10679,10 +10671,10 @@ Write-RemoteLog "Proceso finalizado correctamente."
             Write-Host "[!] Excepcion WMI: $($_.Exception.Message)" -ForegroundColor Yellow
         }
 
-        # Intento 2: Fallback automatico con PsExec (C:\PSTools\psexec.exe)
+        # Intento 2: Fallback automatico con PsExec (C:\PSTools\psexec.exe o PATH)
         if (-not $procStarted -and -not $isLocal) {
-            $psexecPath = "C:\PSTools\psexec.exe"
-            if (Test-Path $psexecPath) {
+            $psexecPath = Get-PsExecPath
+            if ($psexecPath) {
                 Write-Host "[*] Intentando ejecucion alternativa mediante PsExec (modo SYSTEM)..." -ForegroundColor Cyan
                 if ($null -ne $cred) {
                     $uNet = $cred.UserName
@@ -12969,11 +12961,12 @@ try {
                         Read-Host "Presione ENTER para continuar..."
                         break
                     }
-                    $psExecPath = "C:\PSTools\psexec.exe"
+                    $psExecPath = Get-PsExecPath
 
-                    if (-not (Test-Path $psExecPath)) {
-                        Write-Host "[-] Error: No se encontró PsExec en C:\PSTools" -ForegroundColor Red
-                        return
+                    if (-not $psExecPath -or -not (Test-Path -LiteralPath $psExecPath)) {
+                        Write-Host "[-] Error: No se encontro PsExec en C:\PSTools, en el sistema ni en el proyecto." -ForegroundColor Red
+                        Read-Host "Presione ENTER para continuar..."
+                        break
                     }
 
                     if ($computer) {
@@ -13501,7 +13494,7 @@ try {
                         $portName = $selectedPrinter.PortName
 
                         Write-Host "`nHa seleccionado: '$printerName' (Puerto: $portName)" -ForegroundColor Cyan
-                        $confirm = Read-Host "¿Esta seguro de predeterminar esta impresora para TODOS los usuarios en $targetIP? (S/N)"
+                        $confirm = Read-Host "¿Esta seguro de predeterminar esta impresora para TODOS los usuarios en ${targetIP}? (S/N)"
                         if ($confirm -notmatch '^[sSyY]') {
                             Write-Host "Operacion cancelada por el usuario." -ForegroundColor Yellow
                             Read-Host "Presione ENTER para continuar..."
@@ -13585,12 +13578,14 @@ try {
                             $escapedName = $printerName.Replace("'", "''")
                             $wmiPrinterObj = Get-WmiObject -Class Win32_Printer -ComputerName $targetIP -Filter "Name='$escapedName'" -ErrorAction SilentlyContinue
                             if ($wmiPrinterObj) {
-                                $null = $wmiPrinterObj.SetDefaultPrinter()
-                                Write-Host "  [OK] Notificado al servicio Spooler de Windows." -ForegroundColor Green
+                                try {
+                                    $null = $wmiPrinterObj.SetDefaultPrinter()
+                                    Write-Host "  [OK] Notificado al servicio Spooler de Windows." -ForegroundColor Green
+                                } catch {}
                             }
                             $procWmi = [wmiclass]"\\$targetIP\root\cimv2:Win32_Process"
                             if ($procWmi) {
-                                $null = $procWmi.Create("rundll32.exe printui.dll,PrintUIEntry /y /n `"$printerName`"")
+                                $null = $procWmi.Create("rundll32.exe printui.dll,PrintUIEntry /y /q /n `"$printerName`"")
                             }
                         } catch {}
 
@@ -13612,8 +13607,8 @@ try {
                                 "WshShell.RegWrite ""HKCU\Software\Microsoft\Windows NT\CurrentVersion\Windows\UserSelectedDefault"", 1, ""REG_DWORD""",
                                 ("WshShell.RegWrite ""HKCU\Software\Microsoft\Windows NT\CurrentVersion\Windows\Device"", ""{0}"", ""REG_SZ""" -f $deviceVal),
                                 "",
-                                "' Refrescar entorno grafico de Dispositivos e Impresoras y activar el checkmark",
-                                ("WshShell.Run ""rundll32.exe printui.dll,PrintUIEntry /y /n """"{0}"""" "", 0, True" -f $printerName)
+                                "' Refrescar entorno grafico de Dispositivos e Impresoras sin bloquear",
+                                ("WshShell.Run ""rundll32.exe printui.dll,PrintUIEntry /y /q /n """"{0}"""" "", 0, False" -f $printerName)
                             )
                             $vbsContent = $vbsLines -join "`r`n"
                             [System.IO.File]::WriteAllText($vbsPath, $vbsContent, [System.Text.Encoding]::ASCII)
@@ -13625,24 +13620,60 @@ try {
 
                         # 6. CAPA 6: EJECUCION INMEDIATA EN SESION GRAFICA ACTIVA (Checkmark en Dispositivos e Impresoras)
                         try {
-                            $taskName = "ShellSW_SetDefPrinter"
-                            $cmdTask = "wscript.exe `"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp\SetDefaultPrinter.vbs`""
-                            $resTask = schtasks.exe /create /s $targetIP /tn $taskName /tr $cmdTask /sc once /st "00:00" /f /it 2>&1
-                            if ($LASTEXITCODE -eq 0) {
-                                $null = schtasks.exe /run /s $targetIP /tn $taskName 2>&1
-                                Start-Sleep -Milliseconds 800
-                                $null = schtasks.exe /delete /s $targetIP /tn $taskName /f 2>&1
-                                Write-Host "  [OK] Señal grafica enviada a la sesion activa: Checkmark establecido en Dispositivos e Impresoras." -ForegroundColor Green
-                            }
-                            else {
-                                $psExecPath = "C:\PSTools\psexec.exe"
-                                if (Test-Path $psExecPath) {
-                                    $argP = "\\$targetIP -accepteula -s -i cmd /c `"wscript.exe `\`"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp\SetDefaultPrinter.vbs`\`"`""
-                                    Start-Process -FilePath $psExecPath -ArgumentList $argP -NoNewWindow -Wait
-                                    Write-Host "  [OK] Señal grafica enviada via PsExec a la sesion activa." -ForegroundColor Green
+                            # Detectar ID de sesión interactiva activa
+                            $activeSessionId = $null
+                            try {
+                                $expProc = Get-WmiObject -Class Win32_Process -ComputerName $targetIP -Filter "Name='explorer.exe'" -ErrorAction SilentlyContinue | Select-Object -First 1
+                                if ($expProc -and $expProc.SessionId -ne $null) {
+                                    $activeSessionId = $expProc.SessionId
+                                }
+                            } catch {}
+
+                            $psExecPath = Get-PsExecPath
+                            $executedLive = $false
+
+                            if ($psExecPath -and (Test-Path -LiteralPath $psExecPath)) {
+                                # Inyección en la sesión gráfica del usuario activo sin congelar la consola
+                                # -d: no esperar terminación (fire & forget, evita congelamientos)
+                                # -n 8: timeout de conexión SMB/RPC
+                                # -nobanner: suprime encabezados
+                                # -s -i <sessionId>: interactúa directamente con el escritorio del usuario
+                                $sessionArg = if ($activeSessionId -ne $null) { "-i $activeSessionId" } else { "-i" }
+                                $cmdRun = "cscript.exe //B //Nologo `"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp\SetDefaultPrinter.vbs`""
+                                $argP = "\\$targetIP -accepteula -nobanner -d -n 8 -s $sessionArg cmd.exe /c `"$cmdRun`""
+
+                                $pInfo = New-Object System.Diagnostics.ProcessStartInfo
+                                $pInfo.FileName = $psExecPath
+                                $pInfo.Arguments = $argP
+                                $pInfo.UseShellExecute = $false
+                                $pInfo.CreateNoWindow = $true
+                                $proc = [System.Diagnostics.Process]::Start($pInfo)
+                                if ($proc.WaitForExit(6000)) {
+                                    $executedLive = $true
+                                    Write-Host "  [OK] Señal grafica enviada via PsExec a la sesion activa ($sessionArg)." -ForegroundColor Green
+                                } else {
+                                    try { $proc.Kill() } catch {}
+                                    Write-Host "  [-] PsExec demoro mas de 6s en conectar; proceso finalizado de forma segura." -ForegroundColor Yellow
                                 }
                             }
-                        } catch {}
+
+                            if (-not $executedLive) {
+                                # Fallback con schtasks no interactivo bajo SYSTEM
+                                $taskName = "ShellSW_SetDefPrinter"
+                                $cmdTask = "cscript.exe //B //Nologo `"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp\SetDefaultPrinter.vbs`""
+                                $resTask = schtasks.exe /create /s $targetIP /tn $taskName /tr $cmdTask /sc once /st "23:59" /ru "SYSTEM" /rl HIGHEST /f 2>&1
+                                if ($LASTEXITCODE -eq 0) {
+                                    $null = schtasks.exe /run /s $targetIP /tn $taskName 2>&1
+                                    Start-Sleep -Milliseconds 600
+                                    $null = schtasks.exe /delete /s $targetIP /tn $taskName /f 2>&1
+                                    Write-Host "  [OK] Notificacion local completada via Programador de Tareas." -ForegroundColor Green
+                                } else {
+                                    Write-Host "  [OK] Directiva aplicada en registro (se refrescara al iniciar sesion o reconectar)." -ForegroundColor Gray
+                                }
+                            }
+                        } catch {
+                            Write-Host "  [!] Aviso en capa de notificacion grafica: $($_.Exception.Message)" -ForegroundColor Gray
+                        }
 
                         Write-Host "`n========================================================================" -ForegroundColor Green
                         Write-Host " [EXITO] Impresora predeterminada configurada para TODOS los usuarios:" -ForegroundColor Green
@@ -13752,14 +13783,14 @@ try {
                         }
                         else {
                             Write-Host "WMI no responde. Intentando via PsExec si esta disponible..." -ForegroundColor Yellow
-                            $psexecPath = "C:\PSTools\PsExec.exe"
-                            if (Test-Path $psexecPath) {
+                            $psexecPath = Get-PsExecPath
+                            if ($psexecPath) {
                                 $arg = "\\$ipRemota -accepteula -s powershell.exe -NoProfile -Command `"try { Disable-PSRemoting -Force } catch {}; try { Set-ExecutionPolicy -ExecutionPolicy Restricted -Scope LocalMachine -Force } catch { Set-ExecutionPolicy -ExecutionPolicy Restricted -Scope CurrentUser -Force }`""
                                 Start-Process -FilePath $psexecPath -ArgumentList $arg -Wait -NoNewWindow
                                 Write-Host "Comando enviado via PsExec." -ForegroundColor Green
                             }
                             else {
-                                Write-Host "ERROR: No se pudo conectar via WMI ni se encontro PsExec en C:\PSTools\PsExec.exe" -ForegroundColor Red
+                                Write-Host "ERROR: No se pudo conectar via WMI ni se encontro PsExec en C:\PSTools ni en el sistema." -ForegroundColor Red
                             }
                         }
                     }
@@ -14039,10 +14070,10 @@ try {
                                     }
                                     
                                     $claTexto = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($cla))
-                                    $psexecPath = "C:\PSTools\PsExec.exe"
+                                    $psexecPath = Get-PsExecPath
                                     
-                                    if (-not (Test-Path $psexecPath)) {
-                                        Write-Host "[-] ERROR: PsExec.exe no detectado en $psexecPath" -ForegroundColor Red
+                                    if (-not $psexecPath) {
+                                        Write-Host "[-] ERROR: PsExec.exe no detectado en C:\PSTools ni en el sistema." -ForegroundColor Red
                                         Write-Host "Coloque PsExec.exe en C:\PSTools\ para habilitar esta funcion." -ForegroundColor Gray
                                         Read-Host "Presione ENTER para continuar..."
                                         break
@@ -15360,14 +15391,14 @@ function psSubMenu28 {
                             }
                         }
                         else {
-                            $psexecPath = "C:\PSTools\PsExec.exe"
-                            if (Test-Path $psexecPath) {
+                            $psexecPath = Get-PsExecPath
+                            if ($psexecPath) {
                                 $arg = "\\$ip -accepteula -s powershell.exe -NoProfile -Command `"try { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force } catch {}; try { Enable-PSRemoting -SkipNetworkProfileCheck -Force } catch {}`""
                                 Start-Process -FilePath $psexecPath -ArgumentList $arg -Wait -NoNewWindow
                                 Write-Host "[OK] Comando enviado via PsExec." -ForegroundColor Green
                             }
                             else {
-                                Write-Host "ERROR: No se pudo conectar via WMI ni se encontro PsExec en C:\PSTools\PsExec.exe" -ForegroundColor Red
+                                Write-Host "ERROR: No se pudo conectar via WMI ni se encontro PsExec en C:\PSTools ni en el sistema." -ForegroundColor Red
                             }
                         }
                     }
@@ -15401,8 +15432,8 @@ function psSubMenu28 {
                                 }
                             }
                             else {
-                                $psexecPath = "C:\PSTools\PsExec.exe"
-                                if (Test-Path $psexecPath) {
+                                $psexecPath = Get-PsExecPath
+                                if ($psexecPath) {
                                     & $psexecPath \\$ip -accepteula -s cmd.exe /c "gpupdate /force"
                                     Write-Host "[OK] GPUPDATE ejecutado via PsExec." -ForegroundColor Green
                                 }
