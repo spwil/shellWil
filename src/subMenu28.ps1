@@ -16,29 +16,48 @@ function psSubMenu28 {
             Write-Host "    5.2 || DESHABILITAR || Servicios de Actualizacion (Remoto)" -ForegroundColor Red
             Write-Host "    5.3 || ESTADO || de Servicios Windows Update (Remoto)" -ForegroundColor Cyan
             Write-Host "  ------------------------------------------------------"
+            Write-Host "  6. Gestion SIAF-SICE"
+            Write-Host "    6.1 || CONFIGURAR || Simbolos Regionales SIAF-SICE (.reg)" -ForegroundColor Cyan
+            Write-Host "  ------------------------------------------------------"
             Write-Host "  0. V O L V E R   A L   M E N U    P R I N C I P A L"
             Write-Host ""
             Write-Header "==============================="
             
             $op28 = Read-Host "Seleccione la tarea a realizar"
 
-            # Helper para pedir IP / Hostname y resolverlo
+            # Helper para pedir IP / Hostname y resolverlo (IP completa, 2 ultimos octetos, 1 octeto o Hostname)
             $obtenerDestino = {
-                $baseIP = "192.168.176."
-                $ultimoOcteto = Read-Host "Ingrese el ultimo octeto de la IP (192.168.176.XXX), IP completa o Nombre de Equipo"
-                if ($ultimoOcteto -eq "") { return $null }
+                $rawInput = Read-Host "Ingrese la IP completa (ej: 192.168.176.50), los 2 ultimos octetos (ej: 176.50) o Nombre de Equipo"
+                if ([string]::IsNullOrWhiteSpace($rawInput)) { return $null }
+                $rawInput = $rawInput.Trim()
                 
                 $ipRemota = ""
                 $targetMachine = ""
-                
-                if ($ultimoOcteto -match "^[a-zA-Z]") {
-                    # Es un hostname directo
-                    $targetMachine = $ultimoOcteto
+
+                # Modalidad Local
+                if ($rawInput -in @('.', 'localhost', '127.0.0.1', $env:COMPUTERNAME)) {
+                    return @{ IP = "127.0.0.1"; Hostname = $env:COMPUTERNAME; IsLocal = $true }
                 }
+
+                # Modalidad 1: IP Completa (formato X.X.X.X)
+                if ($rawInput -match '^(\d{1,3}\.){3}\d{1,3}$') {
+                    $ipRemota = $rawInput
+                }
+                # Modalidad 2: 2 ultimos octetos (ej: 176.50 o 13.15) -> Asume prefijo 192.168.
+                elseif ($rawInput -match '^\d{1,3}\.\d{1,3}$') {
+                    $ipRemota = "192.168.$rawInput"
+                }
+                # Tolerancia: 1 octeto (ej: 50) -> Asume prefijo 192.168.176.
+                elseif ($rawInput -match '^\d{1,3}$') {
+                    $ipRemota = "192.168.176.$rawInput"
+                }
+                # Modalidad 3: Nombre de equipo directo (Hostname)
                 else {
-                    # Es un octeto o IP
-                    $ipRemota = if ($ultimoOcteto -match "\.") { $ultimoOcteto } else { $baseIP + $ultimoOcteto }
-                    Write-Host "Resolviendo nombre de equipo (Hostname) necesario para WinRM..." -ForegroundColor Cyan
+                    $targetMachine = $rawInput
+                }
+
+                if (-not [string]::IsNullOrWhiteSpace($ipRemota)) {
+                    Write-Host "Resolviendo nombre de equipo (Hostname) para $ipRemota..." -ForegroundColor Cyan
                     try {
                         $sys = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $ipRemota -ErrorAction Stop
                         $targetMachine = $sys.CSName
@@ -50,10 +69,10 @@ function psSubMenu28 {
                             Write-Host "Nombre de equipo resuelto via DNS: $targetMachine" -ForegroundColor Green
                         }
                         catch {
-                            Write-Host "ADVERTENCIA: No se pudo resolver la IP automaticamente." -ForegroundColor Yellow
-                            $manualHost = Read-Host "Ingrese el NOMBRE DE EQUIPO (Hostname) del equipo remoto manualmente"
-                            if ($manualHost -ne "") {
-                                $targetMachine = $manualHost
+                            Write-Host "ADVERTENCIA: No se pudo resolver el Hostname automaticamente." -ForegroundColor Yellow
+                            $manualHost = Read-Host "Ingrese el NOMBRE DE EQUIPO (Hostname) del equipo remoto manualmente o presione ENTER para usar la IP"
+                            if (-not [string]::IsNullOrWhiteSpace($manualHost)) {
+                                $targetMachine = $manualHost.Trim()
                             }
                             else {
                                 $targetMachine = $ipRemota # fallback a la IP
@@ -61,7 +80,17 @@ function psSubMenu28 {
                         }
                     }
                 }
-                return @{ IP = $ipRemota; Hostname = $targetMachine }
+                elseif (-not [string]::IsNullOrWhiteSpace($targetMachine)) {
+                    try {
+                        $ipRemota = ([System.Net.Dns]::GetHostAddresses($targetMachine) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | Select-Object -First 1).IPAddressToString
+                        Write-Host "IP resuelta para ${targetMachine}: $ipRemota" -ForegroundColor Green
+                    } catch {
+                        $ipRemota = $targetMachine
+                    }
+                }
+
+                $isLoc = ($ipRemota -in @('127.0.0.1', '::1') -or $targetMachine.ToUpper() -eq $env:COMPUTERNAME.ToUpper())
+                return @{ IP = $ipRemota; Hostname = $targetMachine; IsLocal = $isLoc }
             }
 
             switch ($op28) {
@@ -145,11 +174,9 @@ function psSubMenu28 {
                     cabecera
                     menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op28"
                     
-                    # Para WMI, preferimos usar la IP si está disponible, o el Hostname
-                    $baseIP = "192.168.176."
-                    $ultimoOcteto = Read-Host "Ingrese el ultimo octeto de la IP (192.168.176.XXX), IP completa o Nombre de Equipo"
-                    if ($ultimoOcteto -ne "") {
-                        $ip = if ($ultimoOcteto -match "^[a-zA-Z]") { $ultimoOcteto } elseif ($ultimoOcteto -match "\.") { $ultimoOcteto } else { $baseIP + $ultimoOcteto }
+                    $destino = & $obtenerDestino
+                    if ($destino) {
+                        $ip = if ($destino.IP) { $destino.IP } else { $destino.Hostname }
                         
                         Write-Host "`nConsultando caracteristicas extendidas en: $ip..." -ForegroundColor Cyan
                         try {
@@ -362,6 +389,22 @@ function psSubMenu28 {
                 }
                 "5.3" {
                     psGestionarServiciosUpdateRemoto -accion "Estado"
+                }
+                "6" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op28"
+                    $destino = & $obtenerDestino
+                    if ($destino) {
+                        psConfigurarSimbolosSiafSice -Destino $destino
+                    }
+                }
+                "6.1" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op28"
+                    $destino = & $obtenerDestino
+                    if ($destino) {
+                        psConfigurarSimbolosSiafSice -Destino $destino
+                    }
                 }
                 "0" {
                     menuPrincipal

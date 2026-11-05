@@ -181,7 +181,7 @@ function psReconstruirSiDesarrollo {
             Write-Host "`n[DEV] Entorno de desarrollo detectado." -ForegroundColor Yellow
             Write-Host "[DEV] Ejecutando build.ps1 para actualizar ShellSW.bat..." -ForegroundColor Yellow
             try {
-                # Iniciar la reconstrucción de forma síncrona
+                # Iniciar la reconstrucciÃ³n de forma sÃ­ncrona
                 $p = Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$buildScript`"" -NoNewWindow -PassThru -Wait
                 if ($p.ExitCode -eq 0) {
                     Write-Host "[DEV] Reconstruccion completa y exitosa." -ForegroundColor Green
@@ -257,7 +257,7 @@ function Clear-GitLockFiles {
         Write-Host "`n[AVISO] Se detectaron archivos de bloqueo en .git (*.lock):" -ForegroundColor Yellow
         $lockFiles | ForEach-Object { Write-Host "  - $($_.FullName)" -ForegroundColor DarkYellow }
         Write-Host "Esto suele ocurrir si Google Drive esta sincronizando o un proceso previo se interrumpio." -ForegroundColor Yellow
-        $eliminar = Read-Host "¿Desea liberar los bloqueos automaticamente para continuar? (S/N) [S]"
+        $eliminar = Read-Host "Â¿Desea liberar los bloqueos automaticamente para continuar? (S/N) [S]"
         if ($eliminar -notmatch "^[nN]$") {
             $lockFiles | ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
             Write-Host "[OK] Archivos de bloqueo eliminados." -ForegroundColor Green
@@ -328,7 +328,7 @@ function Invoke-GitPublicar1010 {
         }
 
         # 6. Confirmacion de seguridad
-        $confirmar = Read-Host "¿Proceder con la actualizacion en GitHub? (S/N) [N]"
+        $confirmar = Read-Host "Â¿Proceder con la actualizacion en GitHub? (S/N) [N]"
         if ($confirmar -notmatch "^[sS]$") {
             Write-Host "`n[!] Operacion cancelada por el usuario." -ForegroundColor Yellow
             return
@@ -348,7 +348,7 @@ function Invoke-GitPublicar1010 {
         Write-Host $pushResult -ForegroundColor Gray
 
         if ($LASTEXITCODE -eq 0) {
-            Write-Host "`n[OK] ¡Repositorio de GitHub actualizado exitosamente en la rama '$activeBranch'!" -ForegroundColor Green
+            Write-Host "`n[OK] Â¡Repositorio de GitHub actualizado exitosamente en la rama '$activeBranch'!" -ForegroundColor Green
             Write-Host "[TIP] Para continuar en la otra PC, ejecuta la Opcion 1011 al iniciar." -ForegroundColor Cyan
         }
         else {
@@ -360,7 +360,7 @@ function Invoke-GitPublicar1010 {
 
             if ($esRechazoPrevio) {
                 Write-Host "`n[AVISO] GitHub rechazo la subida: La otra PC subio cambios que aun no tienes en este equipo." -ForegroundColor Yellow
-                $integrar = Read-Host "¿Deseas descargar e integrar los cambios de GitHub (git pull --rebase) y reintentar la subida? (S/N) [S]"
+                $integrar = Read-Host "Â¿Deseas descargar e integrar los cambios de GitHub (git pull --rebase) y reintentar la subida? (S/N) [S]"
                 if ($integrar -notmatch "^[nN]$") {
                     Write-Host "`n[*] Integrando cambios remotos con git pull --rebase origin $activeBranch..." -ForegroundColor Cyan
                     $rebaseResult = git pull --rebase origin $activeBranch 2>&1
@@ -370,7 +370,7 @@ function Invoke-GitPublicar1010 {
                         $retryPush = git push origin $activeBranch 2>&1
                         Write-Host $retryPush -ForegroundColor Gray
                         if ($LASTEXITCODE -eq 0) {
-                            Write-Host "`n[OK] ¡Cambios integrados y subidos exitosamente a GitHub!" -ForegroundColor Green
+                            Write-Host "`n[OK] Â¡Cambios integrados y subidos exitosamente a GitHub!" -ForegroundColor Green
                             Write-Host "[TIP] Para continuar en la otra PC, ejecuta la Opcion 1011 al iniciar." -ForegroundColor Cyan
                             psReconstruirSiDesarrollo
                         } else {
@@ -433,7 +433,7 @@ function Invoke-GitSincronizar1011 {
         if (-not [string]::IsNullOrEmpty($gitStatus)) {
             Write-Host "`n[AVISO] Tienes cambios locales pendientes de guardar:" -ForegroundColor Yellow
             Write-Host $gitStatus -ForegroundColor Gray
-            Write-Host "`n¿Como deseas proceder antes de descargar los cambios de GitHub?" -ForegroundColor Cyan
+            Write-Host "`nÂ¿Como deseas proceder antes de descargar los cambios de GitHub?" -ForegroundColor Cyan
             Write-Host "  1. Guardar y subir cambios locales primero (Opcion 1010) [Recomendado]" -ForegroundColor White
             Write-Host "  2. Guardar temporalmente en STASH, descargar cambios y re-aplicar" -ForegroundColor White
             Write-Host "  3. Descartar cambios locales (Reset) y sobrescribir con lo de GitHub" -ForegroundColor White
@@ -452,7 +452,7 @@ function Invoke-GitSincronizar1011 {
                 $stashed = $true
             }
             elseif ($opcConflicto -eq "3") {
-                $confirmReset = Read-Host "¿ESTA SEGURO de descartar TODOS los cambios locales no guardados? (S/N) [N]"
+                $confirmReset = Read-Host "Â¿ESTA SEGURO de descartar TODOS los cambios locales no guardados? (S/N) [N]"
                 if ($confirmReset -match "^[sS]$") {
                     Write-Host "`n[*] Descartando cambios locales..." -ForegroundColor Yellow
                     git reset --hard HEAD 2>&1 | Write-Host -ForegroundColor Gray
@@ -476,10 +476,10 @@ function Invoke-GitSincronizar1011 {
         Write-Host $pullOutput -ForegroundColor Gray
 
         if ($pullExitCode -eq 0) {
-            if ($pullOutput -like "*Already up to date*" -or $pullOutput -like "*Ya está actualizado*") {
+            if ($pullOutput -like "*Already up to date*" -or $pullOutput -like "*Ya estÃ¡ actualizado*") {
                 Write-Host "`n[OK] El proyecto ya se encuentra al dia con GitHub." -ForegroundColor Green
             } else {
-                Write-Host "`n[OK] ¡Descarga e integracion exitosa desde GitHub!" -ForegroundColor Green
+                Write-Host "`n[OK] Â¡Descarga e integracion exitosa desde GitHub!" -ForegroundColor Green
                 Write-Host "`n[*] Ultimo(s) commit(s) incorporado(s):" -ForegroundColor Cyan
                 git log -2 --oneline 2>$null | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkCyan }
             }
@@ -500,10 +500,10 @@ function Invoke-GitSincronizar1011 {
             Write-Host "`n[*] Reconstruyendo ShellSW.bat con el codigo actualizado..." -ForegroundColor Cyan
             psReconstruirSiDesarrollo
 
-            Write-Host "`n[LISTO] ¡El proyecto esta listo para continuar el desarrollo!" -ForegroundColor Green
+            Write-Host "`n[LISTO] Â¡El proyecto esta listo para continuar el desarrollo!" -ForegroundColor Green
 
             # 5. Ofrecer reinicio
-            $reiniciar = Read-Host "`n¿Desea reiniciar ShellSW ahora para recargar los modulos actualizados? (S/N) [S]"
+            $reiniciar = Read-Host "`nÂ¿Desea reiniciar ShellSW ahora para recargar los modulos actualizados? (S/N) [S]"
             if ($reiniciar -notmatch "^[nN]$") {
                 $rutaScript = if ($env:SCRIPT_PATH) { $env:SCRIPT_PATH } else { Join-Path $repoPath "ShellSW.bat" }
                 if (Test-Path $rutaScript) {
@@ -557,7 +557,7 @@ function psHabilitarAdministracionRemota {
         [string]$passwordText = $null
     )
 
-    # --- HABILITACIÓN REMOTA DE ADMINISTRACIÓN ---
+    # --- HABILITACIÃ“N REMOTA DE ADMINISTRACIÃ“N ---
     if ([string]::IsNullOrEmpty($targetInput)) {
         $targetInput = Read-Host "Ingrese el ultimo octeto de la IP (192.168.176.XXX) o la IP completa / Nombre de Equipo"
     }
@@ -572,7 +572,7 @@ function psHabilitarAdministracionRemota {
         $ipRemota = $baseIP + $targetInput
     }
 
-    # 1. Resolución de Hostname
+    # 1. ResoluciÃ³n de Hostname
     $computerTarget = $ipRemota
     Write-Host "`n[*] Resolviendo Hostname de $ipRemota para habilitar Kerberos..." -ForegroundColor Yellow
     try {
@@ -598,7 +598,7 @@ function psHabilitarAdministracionRemota {
         Write-Warning "El equipo $computerTarget no responde a ping. Es posible que este apagado o tenga el firewall activo."
     }
 
-    # 3. Construcción del Bloque de Comandos de Firewall y Servicios
+    # 3. ConstrucciÃ³n del Bloque de Comandos de Firewall y Servicios
     $cmds = @(
         'netsh advfirewall firewall set rule group="Windows Management Instrumentation (WMI)" new enable=yes',
         'netsh advfirewall firewall set rule group="Instrumentacion de administracion de Windows (WMI)" new enable=yes',
@@ -616,7 +616,7 @@ function psHabilitarAdministracionRemota {
 
     $exito = $false
 
-    # A. Método 1: PsExec (Puerto SMB 445)
+    # A. MÃ©todo 1: PsExec (Puerto SMB 445)
     $psexecPath = Get-PsExecPath
     $psexecFound = [bool]$psexecPath
 
@@ -641,7 +641,7 @@ function psHabilitarAdministracionRemota {
         Write-Host "[-] PsExec.exe no detectado en C:\PSTools ni en el PATH. Omitiendo." -ForegroundColor Gray
     }
 
-    # B. Método 2: WinRM / PSRemoting (WS-Man 5985)
+    # B. MÃ©todo 2: WinRM / PSRemoting (WS-Man 5985)
     if (-not $exito) {
         Write-Host "[*] Intentando habilitacion via WinRM (PowerShell Remoting)..." -ForegroundColor Yellow
         try {
@@ -672,7 +672,7 @@ function psHabilitarAdministracionRemota {
         }
     }
 
-    # C. Método 3: WMI (WMI 135)
+    # C. MÃ©todo 3: WMI (WMI 135)
     if (-not $exito) {
         Write-Host "[*] Intentando habilitacion via WMI (Win32_Process)..." -ForegroundColor Yellow
         try {
@@ -749,7 +749,7 @@ function psGestionarServiciosUpdateRemoto {
         $ipRemota = $baseIP + $targetInput
     }
 
-    # 1. Resolución de Hostname
+    # 1. ResoluciÃ³n de Hostname
     $computerTarget = $ipRemota
     Write-Host "`n[*] Resolviendo Hostname de $ipRemota para la conexion..." -ForegroundColor Yellow
     try {
@@ -931,7 +931,7 @@ function psGestionarServiciosUpdateRemoto {
 
     $exito = $false
 
-    # A. Método 1: WMI (WMI 135) - Muy compatible sin WinRM
+    # A. MÃ©todo 1: WMI (WMI 135) - Muy compatible sin WinRM
     Write-Host "`n[*] Intentando configurar servicios via WMI (RPC/DCOM)..." -ForegroundColor Yellow
     $wmiExito = $true
     foreach ($sConfig in $serviciosConfig) {
@@ -953,10 +953,10 @@ function psGestionarServiciosUpdateRemoto {
                     $resAct = $serviceWmi.StopService().ReturnValue
                 }
                 
-                # Validar éxito considerando códigos de retorno especiales en WMI:
-                # ChangeStartMode: 0 = Éxito. (Para dosvc a veces falla con 2 [Acceso Denegado] pero se corrige por WinRM/PsExec).
-                # StartService: 0 = Éxito, 10 = Ya iniciado (también éxito para nuestro propósito).
-                # StopService: 0 = Éxito, 5 = Detenido/No acepta control, 6 = No activo (también éxito).
+                # Validar Ã©xito considerando cÃ³digos de retorno especiales en WMI:
+                # ChangeStartMode: 0 = Ã‰xito. (Para dosvc a veces falla con 2 [Acceso Denegado] pero se corrige por WinRM/PsExec).
+                # StartService: 0 = Ã‰xito, 10 = Ya iniciado (tambiÃ©n Ã©xito para nuestro propÃ³sito).
+                # StopService: 0 = Ã‰xito, 5 = Detenido/No acepta control, 6 = No activo (tambiÃ©n Ã©xito).
                 $isModeOk = ($resMode -eq 0)
                 $isActOk = $false
                 
@@ -967,7 +967,7 @@ function psGestionarServiciosUpdateRemoto {
                     $isActOk = ($resAct -eq 0 -or $resAct -eq 5 -or $resAct -eq 6)
                 }
                 else {
-                    $isActOk = $true # Acción "None"
+                    $isActOk = $true # AcciÃ³n "None"
                 }
 
                 if ($isModeOk -and $isActOk) {
@@ -994,7 +994,7 @@ function psGestionarServiciosUpdateRemoto {
         $exito = $true
     }
 
-    # B. Método 2: WinRM / PSRemoting (WinRM 5985)
+    # B. MÃ©todo 2: WinRM / PSRemoting (WinRM 5985)
     if (-not $exito) {
         Write-Host "`n[*] WMI no completo todas las configuraciones de forma directa. Intentando via WinRM (PowerShell Remoting)..." -ForegroundColor Yellow
         try {
@@ -1022,7 +1022,7 @@ function psGestionarServiciosUpdateRemoto {
         }
     }
 
-    # C. Método 3: PsExec (SMB 445)
+    # C. MÃ©todo 3: PsExec (SMB 445)
     if (-not $exito) {
         Write-Host "`n[*] WinRM no disponible. Intentando via PsExec (SMB)..." -ForegroundColor Yellow
         
@@ -1087,22 +1087,615 @@ function psGestionarServiciosUpdateRemoto {
 }
 
 #**********************************************************************************************************************************
+#**********************************************************************************************************************************
+# MODULO: CONFIGURACION REGIONAL SIAF-SICE (.REG / SIMBOLOS MONETARIOS Y DECIMALES)
+#**********************************************************************************************************************************
+
+function psConfigurarSimbolosSiafSice {
+    <#
+    .SYNOPSIS
+        Configura los simbolos regionales para el funcionamiento correcto de SIAF-SICE (.reg)
+        en el equipo local o remoto, permitiendo seleccionar entre la sesion actual o todos los usuarios.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$false)]
+        [hashtable]$Destino = $null
+    )
+
+    cabecera
+    menuOpcion "ADMINISTRACION: CONFIGURACION DE SIMBOLOS REGIONALES SIAF-SICE"
+
+    # 1. Resolver destino si no fue suministrado
+    if (-not $Destino) {
+        $rawInput = Read-Host "Ingrese la IP completa (ej: 192.168.176.50), los 2 ultimos octetos (ej: 176.50) o Nombre de Equipo"
+        if ([string]::IsNullOrWhiteSpace($rawInput)) {
+            Write-Host "Operacion cancelada." -ForegroundColor Yellow
+            return
+        }
+        $rawInput = $rawInput.Trim()
+
+        $ipRemota = ""
+        $targetMachine = ""
+
+        if ($rawInput -in @('.', 'localhost', '127.0.0.1', $env:COMPUTERNAME)) {
+            $Destino = @{ IP = "127.0.0.1"; Hostname = $env:COMPUTERNAME; IsLocal = $true }
+        }
+        else {
+            if ($rawInput -match '^(\d{1,3}\.){3}\d{1,3}$') {
+                $ipRemota = $rawInput
+            }
+            elseif ($rawInput -match '^\d{1,3}\.\d{1,3}$') {
+                $ipRemota = "192.168.$rawInput"
+            }
+            elseif ($rawInput -match '^\d{1,3}$') {
+                $ipRemota = "192.168.176.$rawInput"
+            }
+            else {
+                $targetMachine = $rawInput
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($ipRemota)) {
+                Write-Host "Resolviendo nombre de equipo para $ipRemota..." -ForegroundColor Cyan
+                try {
+                    $sys = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $ipRemota -ErrorAction Stop
+                    $targetMachine = $sys.CSName
+                    Write-Host "Nombre de equipo resuelto: $targetMachine" -ForegroundColor Green
+                }
+                catch {
+                    try {
+                        $targetMachine = [System.Net.Dns]::GetHostEntry($ipRemota).HostName
+                        Write-Host "Nombre de equipo resuelto via DNS: $targetMachine" -ForegroundColor Green
+                    }
+                    catch {
+                        $targetMachine = $ipRemota
+                    }
+                }
+            }
+            elseif (-not [string]::IsNullOrWhiteSpace($targetMachine)) {
+                try {
+                    $ipRemota = ([System.Net.Dns]::GetHostAddresses($targetMachine) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | Select-Object -First 1).IPAddressToString
+                } catch {
+                    $ipRemota = $targetMachine
+                }
+            }
+
+            $isLoc = ($ipRemota -in @('127.0.0.1', '::1') -or $targetMachine.ToUpper() -eq $env:COMPUTERNAME.ToUpper())
+            $Destino = @{ IP = $ipRemota; Hostname = $targetMachine; IsLocal = $isLoc }
+        }
+    }
+
+    $targetIP = if ($Destino.IP) { $Destino.IP } else { $Destino.Hostname }
+    $targetHost = if ($Destino.Hostname) { $Destino.Hostname } else { $targetIP }
+    $isLocal = [bool]$Destino.IsLocal
+
+    # 2. Menu de seleccion de alcance
+    Write-Host "`n======================================================================" -ForegroundColor Cyan
+    Write-Host "           ALCANCE DE APLICACION PARA SIMBOLOS SIAF-SICE              " -ForegroundColor Cyan
+    Write-Host "======================================================================" -ForegroundColor Cyan
+    Write-Host " Equipo objetivo: $targetHost ($targetIP)" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  1. SESION ACTUAL: Aplicar solo al usuario activo con sesion iniciada" -ForegroundColor Green
+    Write-Host "  2. TODOS LOS USUARIOS: Aplicar a todos los perfiles de la maquina" -ForegroundColor Yellow
+    Write-Host "     (Sesiones activas + perfiles en disco + plantilla Default User)" -ForegroundColor Gray
+    Write-Host "  0. Cancelar operacion" -ForegroundColor Red
+    Write-Host "======================================================================" -ForegroundColor Cyan
+    $alcance = Read-Host "Seleccione una opcion (1/2/0)"
+
+    if ($alcance -notin @('1', '2')) {
+        Write-Host "Operacion cancelada por el usuario." -ForegroundColor Yellow
+        return
+    }
+
+    # Definicion centralizada del diccionario de valores SIAF-SICE para local .NET
+    $siafSettings = @{
+        International = @{
+            "Locale"          = "0000400a"
+            "LocaleName"      = "es-BO"
+            "s1159"           = "a.m."
+            "s2359"           = "p.m."
+            "sCountry"        = "MÃ©xico"
+            "sCurrency"       = "Bs."
+            "sDate"           = "/"
+            "sDecimal"        = "."
+            "sGrouping"       = "3;0"
+            "sLanguage"       = "ESM"
+            "sList"           = ","
+            "sLongDate"       = "dddd, dd' de 'MMMM' de 'yyyy"
+            "sMonDecimalSep"  = "."
+            "sMonGrouping"    = "3;0"
+            "sMonThousandSep" = ","
+            "sNativeDigits"   = "0123456789"
+            "sNegativeSign"   = "-"
+            "sPositiveSign"   = ""
+            "sShortDate"      = "dd/MM/yyyy"
+            "sThousand"       = ","
+            "sTime"           = ":"
+            "sTimeFormat"     = "HH:mm:ss"
+            "sShortTime"      = "HH:mm"
+            "sYearMonth"      = "MMMM' de 'yyyy"
+            "iCalendarType"   = "1"
+            "iCountry"        = "52"
+            "iCurrDigits"     = "2"
+            "iCurrency"       = "2"
+            "iDate"           = "1"
+            "iDigits"         = "2"
+            "NumShape"        = "1"
+            "iFirstDayOfWeek" = "6"
+            "iFirstWeekOfYear"= "0"
+            "iLZero"          = "1"
+            "iMeasure"        = "0"
+            "iNegCurr"        = "14"
+            "iNegNumber"      = "1"
+            "iPaperSize"      = "1"
+            "iTime"           = "0"
+            "iTimePrefix"     = "0"
+            "iTLZero"         = "1"
+            "HilightText"     = "0 0 0"
+        }
+        Geo = @{
+            "Nation" = "26"
+        }
+        UserProfile = @{
+            "ShowAutoCorrection"                  = 1
+            "ShowTextPrediction"                  = 1
+            "ShowCasing"                          = 1
+            "ShowShiftLock"                       = 1
+            "UserLocaleFromLanguageProfileOptOut" = 1
+        }
+        EsBo = @{
+            "400A:0000080A" = 1
+        }
+    }
+
+    # Helper interno para escribir las claves en un objeto RegistryKey (Local)
+    $aplicarEnKey = {
+        param([Microsoft.Win32.RegistryKey]$BaseKey, [string]$SubRuta)
+        
+        $pInt = if ($SubRuta) { "$SubRuta\Control Panel\International" } else { "Control Panel\International" }
+        $pGeo = if ($SubRuta) { "$SubRuta\Control Panel\International\Geo" } else { "Control Panel\International\Geo" }
+        $pUp  = if ($SubRuta) { "$SubRuta\Control Panel\International\User Profile" } else { "Control Panel\International\User Profile" }
+        $pEs  = if ($SubRuta) { "$SubRuta\Control Panel\International\User Profile\es-BO" } else { "Control Panel\International\User Profile\es-BO" }
+
+        # International
+        $kInt = $BaseKey.CreateSubKey($pInt)
+        if ($kInt) {
+            foreach ($item in $siafSettings.International.GetEnumerator()) {
+                $kInt.SetValue($item.Key, $item.Value, [Microsoft.Win32.RegistryValueKind]::String)
+            }
+            $kInt.Close()
+        }
+
+        # Geo
+        $kGeo = $BaseKey.CreateSubKey($pGeo)
+        if ($kGeo) {
+            $kGeo.SetValue("Nation", "26", [Microsoft.Win32.RegistryValueKind]::String)
+            $kGeo.Close()
+        }
+
+        # User Profile
+        $kUp = $BaseKey.CreateSubKey($pUp)
+        if ($kUp) {
+            $kUp.SetValue("Languages", [string[]]@("es-BO"), [Microsoft.Win32.RegistryValueKind]::MultiString)
+            foreach ($item in $siafSettings.UserProfile.GetEnumerator()) {
+                $kUp.SetValue($item.Key, $item.Value, [Microsoft.Win32.RegistryValueKind]::DWord)
+            }
+            $kUp.Close()
+        }
+
+        # es-BO
+        $kEs = $BaseKey.CreateSubKey($pEs)
+        if ($kEs) {
+            $kEs.SetValue("400A:0000080A", 1, [Microsoft.Win32.RegistryValueKind]::DWord)
+            $kEs.Close()
+        }
+    }
+
+    # Helper generador de comandos reg add para WMI / batch remoto
+    $getSiafRegAddCmd = {
+        param([string]$KeyRoot) # ej: "HKU\$sidActivo" o "HKLM\ShellSW_DefSiaf"
+        return "reg add `"$KeyRoot\Control Panel\International`" /v sDecimal /t REG_SZ /d . /f & " +
+            "reg add `"$KeyRoot\Control Panel\International`" /v sThousand /t REG_SZ /d , /f & " +
+            "reg add `"$KeyRoot\Control Panel\International`" /v sMonDecimalSep /t REG_SZ /d . /f & " +
+            "reg add `"$KeyRoot\Control Panel\International`" /v sMonThousandSep /t REG_SZ /d , /f & " +
+            "reg add `"$KeyRoot\Control Panel\International`" /v sCurrency /t REG_SZ /d `"Bs.`" /f & " +
+            "reg add `"$KeyRoot\Control Panel\International`" /v sShortDate /t REG_SZ /d `"dd/MM/yyyy`" /f & " +
+            "reg add `"$KeyRoot\Control Panel\International`" /v sDate /t REG_SZ /d / /f & " +
+            "reg add `"$KeyRoot\Control Panel\International`" /v sTimeFormat /t REG_SZ /d `"HH:mm:ss`" /f & " +
+            "reg add `"$KeyRoot\Control Panel\International`" /v Locale /t REG_SZ /d `"0000400a`" /f & " +
+            "reg add `"$KeyRoot\Control Panel\International`" /v LocaleName /t REG_SZ /d `"es-BO`" /f & " +
+            "reg add `"$KeyRoot\Control Panel\International`" /v GeoID /t REG_SZ /d `"26`" /f & " +
+            "reg add `"$KeyRoot\Control Panel\International\Geo`" /v Nation /t REG_SZ /d `"26`" /f & " +
+            "reg add `"$KeyRoot\Control Panel\International\User Profile`" /v Languages /t REG_MULTI_SZ /d `"es-BO`" /f & " +
+            "reg add `"$KeyRoot\Control Panel\International\User Profile`" /v UserLocaleFromLanguageProfileOptOut /t REG_DWORD /d 1 /f & " +
+            "reg add `"$KeyRoot\Control Panel\International\User Profile\es-BO`" /v `"400A:0000080A`" /t REG_DWORD /d 1 /f"
+    }
+
+    # Helper para notificar refresco al sistema sin reiniciar
+    $notificarRefresco = {
+        param([string]$hostTarget, [bool]$esLoc)
+        try {
+            if ($esLoc) {
+                $null = Start-Process -FilePath "rundll32.exe" -ArgumentList "user32.dll,UpdatePerUserSystemParameters 1, True" -NoNewWindow -Wait -ErrorAction SilentlyContinue
+            } else {
+                $proc = Get-WmiObject -Class Win32_Process -ComputerName $hostTarget -List -ErrorAction SilentlyContinue
+                if ($proc) {
+                    $null = $proc.Create("rundll32.exe user32.dll,UpdatePerUserSystemParameters 1, True")
+                }
+            }
+        } catch {}
+    }
+
+    # =========================================================================
+    # CASO 1: SESION ACTUAL
+    # =========================================================================
+    if ($alcance -eq '1') {
+        Write-Host "`n[*] Identificando usuario con sesion interactiva en $targetHost..." -ForegroundColor Cyan
+        
+        $usuarioActivo = $null
+        $sidActivo = $null
+
+        if ($isLocal) {
+            $usuarioActivo = "$env:USERDOMAIN\$env:USERNAME"
+            $sidActivo = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        }
+        else {
+            try {
+                $explorers = Get-WmiObject -Class Win32_Process -ComputerName $targetIP -Filter "Name='explorer.exe'" -ErrorAction Stop
+                foreach ($exp in $explorers) {
+                    $owner = $exp.GetOwner()
+                    $ownerSid = $exp.GetOwnerSid()
+                    if ($owner.ReturnValue -eq 0 -and $ownerSid.ReturnValue -eq 0) {
+                        $usuarioActivo = "$($owner.Domain)\$($owner.User)"
+                        $sidActivo = $ownerSid.Sid
+                        break
+                    }
+                }
+            } catch {
+                Write-Host "[-] Advertencia al consultar sesion remota via WMI: $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+        }
+
+        if (-not $usuarioActivo -or -not $sidActivo) {
+            Write-Host "[-] No se detecto ninguna sesion activa de usuario con 'explorer.exe' en $targetHost." -ForegroundColor Yellow
+            $aplicarTodos = Read-Host "Â¿Desea aplicar los simbolos a TODOS los usuarios en su lugar? (S/N)"
+            if ($aplicarTodos -match '^[sSyY]') {
+                $alcance = '2'
+            } else {
+                Write-Host "Operacion finalizada." -ForegroundColor Gray
+                return
+            }
+        }
+        else {
+            Write-Host "  -> Usuario activo detectado: $usuarioActivo (SID: $sidActivo)" -ForegroundColor Green
+            $confirma = Read-Host "Â¿Esta seguro de aplicar la configuracion SIAF-SICE a la sesion de '$usuarioActivo'? (S/N)"
+            if ($confirma -notmatch '^[sSyY]') {
+                Write-Host "Operacion cancelada." -ForegroundColor Yellow
+                return
+            }
+
+            Write-Host "`n[*] Aplicando simbolos SIAF-SICE en la colmena del usuario activo..." -ForegroundColor Cyan
+            $exitoSesion = $false
+
+            if ($isLocal) {
+                # Local: Aplicar via .NET en Users y en CurrentUser directamente
+                try {
+                    $regUsers = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::Users, [Microsoft.Win32.RegistryView]::Default)
+                    & $aplicarEnKey $regUsers $sidActivo
+                    $regUsers.Close()
+                    $exitoSesion = $true
+                    Write-Host "  [OK] Registro actualizado en HKEY_USERS\$sidActivo." -ForegroundColor Green
+                } catch {}
+
+                try {
+                    $regCu = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::CurrentUser, [Microsoft.Win32.RegistryView]::Default)
+                    & $aplicarEnKey $regCu ""
+                    $regCu.Close()
+                    $exitoSesion = $true
+                    Write-Host "  [OK] Registro actualizado directamente en HKCU." -ForegroundColor Green
+                } catch {}
+            }
+            else {
+                # Remoto: Inyeccion directa mediante WMI (sin depender del servicio Registro Remoto)
+                try {
+                    $procWmi = [wmiclass]"\\$targetIP\root\cimv2:Win32_Process"
+                    if ($procWmi) {
+                        $cmd = "cmd.exe /c " + (& $getSiafRegAddCmd "HKU\$sidActivo")
+                        $res = $procWmi.Create($cmd)
+                        if ($res.ReturnValue -eq 0) {
+                            $exitoSesion = $true
+                            Write-Host "  [OK] Inyeccion de claves completada via WMI en HKU\$sidActivo." -ForegroundColor Green
+                        } else {
+                            Write-Host "  [-] WMI devolvio codigo: $($res.ReturnValue)" -ForegroundColor Yellow
+                        }
+                    }
+                } catch {
+                    Write-Host "  [-] Error en ejecucion WMI: $($_.Exception.Message)" -ForegroundColor Red
+                }
+
+                # Fallback a PsExec si WMI fallo
+                if (-not $exitoSesion) {
+                    $psexecPath = Get-PsExecPath
+                    if ($psexecPath) {
+                        Write-Host "  [*] Ejecutando fallback alternativo via PsExec..." -ForegroundColor Yellow
+                        $argP = "\\$targetIP -accepteula -s cmd.exe /c `"" + (& $getSiafRegAddCmd "HKU\$sidActivo") + "`""
+                        $p = Start-Process -FilePath $psexecPath -ArgumentList $argP -Wait -NoNewWindow -PassThru -ErrorAction SilentlyContinue
+                        if ($p -and $p.ExitCode -eq 0) {
+                            $exitoSesion = $true
+                            Write-Host "  [OK] Simbolos configurados via PsExec." -ForegroundColor Green
+                        }
+                    }
+                }
+            }
+
+            # Notificar refresco de parametros
+            & $notificarRefresco $targetHost $isLocal
+
+            if ($exitoSesion) {
+                Write-Host "`n========================================================================" -ForegroundColor Green
+                Write-Host " [EXITO] CONFIGURACION SIAF-SICE APLICADA A LA SESION ACTUAL" -ForegroundColor White -BackgroundColor DarkGreen
+                Write-Host "========================================================================" -ForegroundColor Green
+                Write-Host " Usuario configurado: $usuarioActivo" -ForegroundColor Green
+                Write-Host " Separador decimal:   . (Punto)" -ForegroundColor Cyan
+                Write-Host " Separador de miles:  , (Coma)" -ForegroundColor Cyan
+                Write-Host " Moneda y Formato:    Bs. | dd/MM/yyyy | es-BO" -ForegroundColor Cyan
+                Write-Host "`n [!] NOTA HELPDESK: Si el usuario tenia SIAF o SICE abierto, solicitele que cierre y vuelva a abrir el programa." -ForegroundColor Yellow
+            } else {
+                Write-Host "`n[ERROR] No se pudo escribir en el registro del usuario activo." -ForegroundColor Red
+            }
+            return
+        }
+    }
+
+    # =========================================================================
+    # CASO 2: TODOS LOS USUARIOS (ESTRATEGIA MULTI-USUARIO POR CAPAS)
+    # =========================================================================
+    if ($alcance -eq '2') {
+        Write-Host "`n"
+        Write-Host "======================================================================" -ForegroundColor Yellow
+        Write-Host "        CONFIRMACION: APLICAR A TODOS LOS USUARIOS EN $targetHost      " -ForegroundColor Yellow
+        Write-Host "======================================================================" -ForegroundColor Yellow
+        Write-Host " Esta accion aplicara los simbolos de SIAF-SICE a:"
+        Write-Host "   1. Todas las sesiones activas cargadas en memoria (HKEY_USERS)"
+        Write-Host "   2. Todos los perfiles de usuario desconectados en disco (NTUSER.DAT)"
+        Write-Host "   3. La plantilla base (Default User) para cualquier usuario nuevo"
+        Write-Host "   4. La cuenta del sistema (.DEFAULT / Pantalla de bienvenida)"
+        Write-Host "----------------------------------------------------------------------"
+        $confirmaTodos = Read-Host "Â¿Esta seguro de continuar? (S/N)"
+        if ($confirmaTodos -notmatch '^[sSyY]') {
+            Write-Host "Operacion cancelada por el usuario." -ForegroundColor Yellow
+            return
+        }
+
+        Write-Host "`n[*] Iniciando aplicacion multi-capa de simbolos SIAF-SICE..." -ForegroundColor Cyan
+
+        $totalSesionesActivas = 0
+        $totalPerfilesDisco = 0
+        $defaultConfigurado = $false
+
+        # Inicializar handle de WMI para procesos si es remoto
+        $procWmi = $null
+        if (-not $isLocal) {
+            try {
+                $procWmi = [wmiclass]"\\$targetIP\root\cimv2:Win32_Process"
+            } catch {
+                Write-Host "[-] Error al conectar con WMI Win32_Process en ${targetIP}: $($_.Exception.Message)" -ForegroundColor Red
+            }
+        }
+
+        # --- CAPA 1: SESIONES ACTIVAS EN MEMORIA (HKEY_USERS) ---
+        Write-Host "`n[Capa 1/4] Actualizando sesiones cargadas en memoria (HKEY_USERS)..." -ForegroundColor Cyan
+        
+        if ($isLocal) {
+            try {
+                $regUsers = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::Users, [Microsoft.Win32.RegistryView]::Default)
+                if ($regUsers) {
+                    $subKeys = $regUsers.GetSubKeyNames()
+                    foreach ($k in $subKeys) {
+                        if (($k -match '^S-1-5-21-' -and $k -notmatch '_Classes$') -or $k -eq '.DEFAULT') {
+                            try {
+                                & $aplicarEnKey $regUsers $k
+                                if ($k -ne '.DEFAULT') {
+                                    $totalSesionesActivas++
+                                    Write-Host "  -> Perfil activo actualizado: $k" -ForegroundColor Green
+                                } else {
+                                    Write-Host "  -> Cuenta del sistema .DEFAULT actualizada [OK]" -ForegroundColor Green
+                                }
+                            } catch {}
+                        }
+                    }
+                    $regUsers.Close()
+                }
+
+                $regCu = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::CurrentUser, [Microsoft.Win32.RegistryView]::Default)
+                & $aplicarEnKey $regCu ""
+                $regCu.Close()
+                Write-Host "  -> HKCU del administrador local actualizado [OK]" -ForegroundColor Green
+            } catch {
+                Write-Host "  [!] Advertencia en Capa 1 local: $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+        }
+        else {
+            # Remoto: Deteccion de sesiones activas via WMI (sin depender de RemoteRegistry)
+            $sidsActivos = @()
+
+            # A. Consultar perfiles cargados en Win32_UserProfile
+            try {
+                $wmiLoaded = Get-WmiObject -Class Win32_UserProfile -ComputerName $targetIP -ErrorAction SilentlyContinue | 
+                    Where-Object { -not $_.Special -and $_.Loaded }
+                if ($wmiLoaded) {
+                    $sidsActivos += ($wmiLoaded | Select-Object -ExpandProperty SID)
+                }
+            } catch {}
+
+            # B. Consultar procesos interactivos explorer.exe
+            try {
+                $explorers = Get-WmiObject -Class Win32_Process -ComputerName $targetIP -Filter "Name='explorer.exe'" -ErrorAction SilentlyContinue
+                foreach ($exp in $explorers) {
+                    $osid = $exp.GetOwnerSid()
+                    if ($osid -and $osid.ReturnValue -eq 0 -and $osid.Sid -match '^S-1-5-21-') {
+                        $sidsActivos += $osid.Sid
+                    }
+                }
+            } catch {}
+
+            # C. Agregar .DEFAULT
+            $listaSids = ($sidsActivos + '.DEFAULT') | Select-Object -Unique
+
+            if ($procWmi) {
+                foreach ($sid in $listaSids) {
+                    try {
+                        $cmd = "cmd.exe /c " + (& $getSiafRegAddCmd "HKU\$sid")
+                        $res = $procWmi.Create($cmd)
+                        if ($res.ReturnValue -eq 0) {
+                            if ($sid -ne '.DEFAULT') {
+                                $totalSesionesActivas++
+                                Write-Host "  -> Perfil activo actualizado via WMI: $sid" -ForegroundColor Green
+                            } else {
+                                Write-Host "  -> Cuenta del sistema .DEFAULT actualizada via WMI [OK]" -ForegroundColor Green
+                            }
+                        } else {
+                            Write-Host "  [-] Aviso al actualizar $sid (Codigo WMI: $($res.ReturnValue))." -ForegroundColor Gray
+                        }
+                    } catch {
+                        Write-Host "  [-] Error al actualizar $sid : $($_.Exception.Message)" -ForegroundColor Gray
+                    }
+                }
+            }
+        }
+
+        # --- CAPA 2: PERFILES DESCONECTADOS EN DISCO (C:\Users\*\NTUSER.DAT) ---
+        Write-Host "`n[Capa 2/4] Verificando perfiles desconectados en disco..." -ForegroundColor Cyan
+        
+        $perfilesDisco = @()
+
+        if ($isLocal) {
+            try {
+                $localProfiles = Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue |
+                    Where-Object { -not $_.Special -and -not $_.Loaded -and $_.LocalPath -notmatch '(?i)systemprofile|LocalService|NetworkService' }
+                if ($localProfiles) {
+                    foreach ($lp in $localProfiles) {
+                        $pPath = $lp.LocalPath
+                        $suf = if ($lp.SID.Length -ge 4) { $lp.SID.Substring($lp.SID.Length - 4) } else { "User" }
+                        $hMount = "ShellSW_Siaf_$suf"
+                        Write-Host "  -> Procesando perfil local en disco: $pPath" -ForegroundColor Gray
+                        $cmdMontar = "cmd.exe /c reg load HKLM\$hMount `"$pPath\NTUSER.DAT`" & " + (& $getSiafRegAddCmd "HKLM\$hMount") + " & reg unload HKLM\$hMount"
+                        $null = cmd.exe /c $cmdMontar 2>&1
+                        $totalPerfilesDisco++
+                        Write-Host "     [OK] Perfil local $pPath actualizado." -ForegroundColor Green
+                    }
+                }
+            } catch {
+                Write-Host "  [!] Advertencia en Capa 2 local: $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+        }
+        else {
+            # Remoto: Consultar Win32_UserProfile para perfiles donde Loaded == $false
+            try {
+                $remProfiles = Get-WmiObject -Class Win32_UserProfile -ComputerName $targetIP -ErrorAction SilentlyContinue |
+                    Where-Object { -not $_.Special -and -not $_.Loaded -and $_.LocalPath -notmatch '(?i)systemprofile|LocalService|NetworkService' }
+                if ($remProfiles) {
+                    $perfilesDisco = $remProfiles
+                }
+            } catch {}
+
+            # Fallback: Si Win32_UserProfile no retorno perfiles, consultar directorios de C:\Users via WMI
+            if (-not $perfilesDisco -or $perfilesDisco.Count -eq 0) {
+                try {
+                    $userDirs = Get-WmiObject -Class Win32_Directory -ComputerName $targetIP -Filter "Drive='C:' and Path='\\\\Users\\\\'" -ErrorAction SilentlyContinue |
+                        Where-Object { $_.FileName -notmatch '(?i)^(Public|Default|All Users|Default User)$' }
+                    if ($userDirs) {
+                        $perfilesDisco = $userDirs | ForEach-Object {
+                            [PSCustomObject]@{
+                                LocalPath = $_.Name
+                                SID       = "TEMP_$($_.FileName)"
+                            }
+                        }
+                    }
+                } catch {}
+            }
+
+            if ($perfilesDisco -and $procWmi) {
+                foreach ($p in $perfilesDisco) {
+                    $profPath = $p.LocalPath
+                    $sufijo = if ($p.SID.Length -ge 4) { $p.SID.Substring($p.SID.Length - 4) } else { "User" }
+                    $hiveMount = "ShellSW_Siaf_$sufijo"
+
+                    Write-Host "  -> Procesando perfil en disco: $profPath" -ForegroundColor Gray
+                    $cmdMontar = "cmd.exe /c reg load HKLM\$hiveMount `"$profPath\NTUSER.DAT`" & " + (& $getSiafRegAddCmd "HKLM\$hiveMount") + " & reg unload HKLM\$hiveMount"
+                    try {
+                        $res = $procWmi.Create($cmdMontar)
+                        if ($res.ReturnValue -eq 0) {
+                            $totalPerfilesDisco++
+                            Write-Host "     [OK] Perfil en disco actualizado: $profPath" -ForegroundColor Green
+                        } else {
+                            Write-Host "     [-] Aviso: No se pudo montar $profPath (Codigo WMI: $($res.ReturnValue))." -ForegroundColor Gray
+                        }
+                    } catch {
+                        Write-Host "     [-] Error al procesar ${profPath}: $($_.Exception.Message)" -ForegroundColor Gray
+                    }
+                }
+            } else {
+                Write-Host "  -> No se detectaron perfiles desconectados adicionales en disco." -ForegroundColor Gray
+            }
+        }
+
+        # --- CAPA 3: PLANTILLA BASE PARA NUEVOS USUARIOS (DEFAULT USER) ---
+        Write-Host "`n[Capa 3/4] Configurando plantilla base (C:\Users\Default\NTUSER.DAT)..." -ForegroundColor Cyan
+        try {
+            $cmdDef = "cmd.exe /c reg load HKLM\ShellSW_DefSiaf `"C:\Users\Default\NTUSER.DAT`" & " + (& $getSiafRegAddCmd "HKLM\ShellSW_DefSiaf") + " & reg unload HKLM\ShellSW_DefSiaf"
+
+            if ($isLocal) {
+                $null = cmd.exe /c $cmdDef 2>&1
+                $defaultConfigurado = $true
+                Write-Host "  [OK] Default User configurado localmente." -ForegroundColor Green
+            } else {
+                if ($procWmi) {
+                    $res = $procWmi.Create($cmdDef)
+                    if ($res.ReturnValue -eq 0) {
+                        $defaultConfigurado = $true
+                        Write-Host "  [OK] Default User configurado en equipo remoto." -ForegroundColor Green
+                    }
+                }
+            }
+        } catch {
+            Write-Host "  [!] Advertencia en Capa 3 (Default User): $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+
+        # --- CAPA 4: NOTIFICACION DE CAMBIO DE PARAMETROS ---
+        Write-Host "`n[Capa 4/4] Enviando seÃ±al de refresco a la interfaz grafica..." -ForegroundColor Cyan
+        & $notificarRefresco $targetHost $isLocal
+        Write-Host "  [OK] Notificacion de refresco emitida." -ForegroundColor Green
+
+        # Reporte final
+        Write-Host "`n========================================================================" -ForegroundColor Green
+        Write-Host " [EXITO] CONFIGURACION MULTI-USUARIO SIAF-SICE COMPLETADA" -ForegroundColor White -BackgroundColor DarkGreen
+        Write-Host "========================================================================" -ForegroundColor Green
+        Write-Host " Equipo objetivo:               $targetHost ($targetIP)" -ForegroundColor Green
+        Write-Host " Perfiles activos en memoria:   $totalSesionesActivas" -ForegroundColor Cyan
+        Write-Host " Perfiles procesados en disco:  $totalPerfilesDisco" -ForegroundColor Cyan
+        Write-Host " Plantilla base (Default User): $(if ($defaultConfigurado) { 'Configurada [OK]' } else { 'No modificada' })" -ForegroundColor Cyan
+        Write-Host " Simbolos aplicados:            Punto decimal (.) | Coma de miles (,) | Moneda Bs. | dd/MM/yyyy" -ForegroundColor White
+        Write-Host "`n [!] NOTA HELPDESK: Cualquier usuario existente o nuevo que inicie sesion en $targetHost ya tendra SIAF-SICE configurado." -ForegroundColor Yellow
+    }
+}
+
 # MODULO: INFORMACION DEL USUARIO ACTIVO (LOCAL Y DE DOMINIO)
 #**********************************************************************************************************************************
 
 function psMostrarInformacionUsuarioActivo {
     <#
     .SYNOPSIS
-        Consulta y muestra en consola la información del usuario activo (local o de dominio)
-        en un equipo remoto o local, respetando el formato visual y paleta de colores estándar.
+        Consulta y muestra en consola la informaciÃ³n del usuario activo (local o de dominio)
+        en un equipo remoto o local, respetando el formato visual y paleta de colores estÃ¡ndar.
     .PARAMETER TargetIP
-        Dirección IP o Nombre de Equipo (Hostname) a consultar.
+        DirecciÃ³n IP o Nombre de Equipo (Hostname) a consultar.
     .PARAMETER Credential
-        Credencial opcional para autenticación en WMI/CIM.
+        Credencial opcional para autenticaciÃ³n en WMI/CIM.
     .PARAMETER TimeoutMs
-        Tiempo de espera para comprobación de red previa.
+        Tiempo de espera para comprobaciÃ³n de red previa.
     .PARAMETER ForceRefresh
-        Fuerza la consulta ignorando la caché en memoria de la sesión.
+        Fuerza la consulta ignorando la cachÃ© en memoria de la sesiÃ³n.
     .PARAMETER ReturnObject
         Devuelve el objeto con los datos en lugar de solo imprimirlo.
     #>
@@ -1127,12 +1720,12 @@ function psMostrarInformacionUsuarioActivo {
     $cleanTarget = $TargetIP.Trim()
     $cacheKey = $cleanTarget.ToUpper()
 
-    # Inicializar almacenamiento de caché de sesión si no existe
+    # Inicializar almacenamiento de cachÃ© de sesiÃ³n si no existe
     if (-not $global:ActiveUserCache) {
         $global:ActiveUserCache = @{}
     }
 
-    # Verificar si tenemos datos en caché válidos (vigencia de 45 segundos)
+    # Verificar si tenemos datos en cachÃ© vÃ¡lidos (vigencia de 45 segundos)
     if (-not $ForceRefresh -and $global:ActiveUserCache.ContainsKey($cacheKey)) {
         $cacheEntry = $global:ActiveUserCache[$cacheKey]
         if ($cacheEntry -and ((Get-Date) - $cacheEntry.Timestamp).TotalSeconds -lt 45) {
@@ -1173,7 +1766,7 @@ function psMostrarInformacionUsuarioActivo {
                       ($cleanTarget -eq "localhost") -or 
                       ($cleanTarget.ToUpper() -eq $env:COMPUTERNAME.ToUpper())
 
-    # 1. Verificación rápida de conectividad en destinos remotos para evitar cuelgues (timeout 600ms)
+    # 1. VerificaciÃ³n rÃ¡pida de conectividad en destinos remotos para evitar cuelgues (timeout 600ms)
     if (-not $isLocalMachine) {
         $pingOk = $false
         try {
@@ -1223,7 +1816,7 @@ function psMostrarInformacionUsuarioActivo {
         }
     }
 
-    # 2. Resolución de Hostname y Datos de Dominio
+    # 2. ResoluciÃ³n de Hostname y Datos de Dominio
     $targetHost = $cleanTarget
     try {
         $entry = [System.Net.Dns]::GetHostEntry($cleanTarget)
@@ -1246,10 +1839,10 @@ function psMostrarInformacionUsuarioActivo {
     $partOfDomain = if ($sysCS) { $sysCS.PartOfDomain } else { $false }
     $domainFQDN = if ($sysCS -and $sysCS.Domain) { $sysCS.Domain } else { "" }
 
-    # 3. Detección del Usuario Activo
+    # 3. DetecciÃ³n del Usuario Activo
     $usuariosActivos = @()
 
-    # Método A: Procesos explorer.exe interactivos vía WMI
+    # MÃ©todo A: Procesos explorer.exe interactivos vÃ­a WMI
     try {
         $procParams = @{
             Class = 'Win32_Process'
@@ -1280,7 +1873,7 @@ function psMostrarInformacionUsuarioActivo {
         }
     } catch {}
 
-    # Método B: Fallback a Win32_ComputerSystem.UserName
+    # MÃ©todo B: Fallback a Win32_ComputerSystem.UserName
     if ($usuariosActivos.Count -eq 0 -and $sysCS -and -not [string]::IsNullOrEmpty($sysCS.UserName)) {
         $parts = $sysCS.UserName.Split('\')
         $dom = if ($parts.Count -gt 1) { $parts[0] } else { "" }
@@ -1292,7 +1885,7 @@ function psMostrarInformacionUsuarioActivo {
         }
     }
 
-    # Método C: Fallback rápido mediante quser
+    # MÃ©todo C: Fallback rÃ¡pido mediante quser
     if ($usuariosActivos.Count -eq 0) {
         try {
             $quserOut = quser /server:$cleanTarget 2>$null
@@ -1317,7 +1910,7 @@ function psMostrarInformacionUsuarioActivo {
         } catch {}
     }
 
-    # Descartar duplicados manteniendo los únicos
+    # Descartar duplicados manteniendo los Ãºnicos
     $usuariosUnicos = @()
     $seen = @{}
     foreach ($u in $usuariosActivos) {
@@ -1329,7 +1922,7 @@ function psMostrarInformacionUsuarioActivo {
     }
     $usuariosActivos = $usuariosUnicos
 
-    # 4. Caso: Sin sesión interactiva activa
+    # 4. Caso: Sin sesiÃ³n interactiva activa
     if ($usuariosActivos.Count -eq 0) {
         Write-Host "`n============================================================" -ForegroundColor Cyan
         Write-Host "                INFORMACION DEL USUARIO ACTIVO              " -ForegroundColor Cyan
@@ -1363,7 +1956,7 @@ function psMostrarInformacionUsuarioActivo {
         $perfilesRemotos = Get-WmiObject @profParams
     } catch {}
 
-    # 6. Procesar y presentar la información de cada usuario activo
+    # 6. Procesar y presentar la informaciÃ³n de cada usuario activo
     $lastResultObj = $null
 
     foreach ($u in $usuariosActivos) {
@@ -1372,7 +1965,7 @@ function psMostrarInformacionUsuarioActivo {
                    ([string]::IsNullOrEmpty($u.Domain)) -or 
                    (-not $partOfDomain)
 
-        # Resolución de Nombre Completo
+        # ResoluciÃ³n de Nombre Completo
         $nombreCompleto = ""
         if (-not $esLocal) {
             try {
@@ -1402,7 +1995,7 @@ function psMostrarInformacionUsuarioActivo {
             $nombreCompleto = "No especificado / No disponible"
         }
 
-        # Resolución de Tipo de Cuenta
+        # ResoluciÃ³n de Tipo de Cuenta
         $tipoCuenta = ""
         if ($esLocal) {
             $tipoCuenta = "Usuario Local (.\$($u.User))"
@@ -1411,7 +2004,7 @@ function psMostrarInformacionUsuarioActivo {
             $tipoCuenta = "Usuario de Dominio ($nombreDominio)"
         }
 
-        # Resolución de Ruta de Perfil
+        # ResoluciÃ³n de Ruta de Perfil
         $rutaPerfil = ""
         if ($perfilesRemotos) {
             $perf = $perfilesRemotos | Where-Object { 
@@ -1464,7 +2057,7 @@ function psMostrarInformacionUsuarioActivo {
             User         = $u.User
         }
 
-        # Almacenar en caché de sesión
+        # Almacenar en cachÃ© de sesiÃ³n
         $global:ActiveUserCache[$cacheKey] = @{
             Timestamp = Get-Date
             Data      = $lastResultObj

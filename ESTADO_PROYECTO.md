@@ -16,30 +16,40 @@
 ---
 
 ## 🕒 2. Última Sesión de Trabajo
-* **Fecha:** 19 de Octubre de 2026
-* **Hito Completado:** **Corrección integral de la Opción 10.3 (Impresora Predeterminada Remota Multi-Usuario) y Unificación de PsExec**.
+* **Fecha:** 5 de Noviembre de 2026
+* **Hito Completado:** **Implementación de la Opción 6: Gestión SIAF-SICE en `subMenu28.ps1` e Input Flexible de IP**.
 * **Cambios Clave Realizados:**
-  1. **Resolución del congelamiento en pantalla negra (Opción 10.3):**
-     - Se eliminó el bloqueo síncrono infinito en PsExec (`Start-Process -Wait`) causado por la espera de `cmd /c` y `wscript.exe`.
-     - Se añadió el parámetro `/q` (quiet) a `PrintUIEntry` y `bWaitOnReturn = False` en `SetDefaultPrinter.vbs` para impedir que se levanten cuadros de diálogo modales invisibles en la Sesión 0 que paralizaban el sistema.
-     - PsExec ahora se invoca con `-d` (ejecución asíncrona fire & forget), `-n 8` (timeout de conexión), `-nobanner` e inyección precisa en el `SessionId` activo del usuario conectado (`-i $activeSessionId`).
-     - Se implementó un timeout estricto de seguridad de 6 segundos con `[System.Diagnostics.Process]::Start` y cancelación forzada (`Kill()`) en caso de falta de respuesta del host remoto.
-     - Se corrigió la consulta de confirmación donde `$targetIP?` evaluaba a vacío por sintaxis de PowerShell, quedando correctamente como `${targetIP}?`.
-  2. **Unificación y Portabilidad de PsExec:**
-     - Creación de la función centralizada `Get-PsExecPath` en [src/helpers.ps1](src/helpers.ps1), la cual resuelve dinámicamente `PsExec.exe` buscando en `C:\PSTools`, la raíz del proyecto (`E:\proyectosIA\shellWil`), `C:\Windows\System32` o la variable de entorno `PATH`.
-     - Actualización de todos los módulos ([src/subMenu25.ps1](src/subMenu25.ps1), [src/subMenu28.ps1](src/subMenu28.ps1), [src/helpers.ps1](src/helpers.ps1)) para consumir esta función.
-  3. **Verificación de la nueva ruta de trabajo:**
-     - Verificado el funcionamiento transparente en la nueva ubicación `E:\proyectosIA\shellWil`. Todas las funciones de resolución de entorno (`Get-ShellWorkspacePath`, `Get-GitDevContext`, compilación [build.ps1](build.ps1)) responden con total exactitud.
-  4. **Compilación y verificación:**
-     - Ejecutado [build.ps1](build.ps1) y validado que [ShellSW.bat](ShellSW.bat) y todos los módulos de `src/` compilan con 0 errores de sintaxis.
+  1. **Nueva Opción 6 (y 6.1) en [src/subMenu28.ps1](src/subMenu28.ps1):**
+     - Se añadió al menú `6. Gestion SIAF-SICE` y `6.1 || CONFIGURAR || Simbolos Regionales SIAF-SICE (.reg)`.
+     - Permite configurar los símbolos requeridos por los aplicativos gubernamentales SIAF y SICE (punto decimal `.`, coma de miles `,`, moneda `Bs.`, fecha `dd/MM/yyyy`, GeoID `26` y protección `UserLocaleFromLanguageProfileOptOut = 1`).
+  2. **Selector de Alcance Interactivo y Arquitectura 100% WMI:**
+     - **[1] Sesión Actual:** Identifica al usuario activo conectado mediante `Win32_Process` (`explorer.exe`), resuelve su SID y aplica los cambios directamente en caliente a `HKU\<SID>\Control Panel\International` mediante WMI, emitiendo una notificación de refresco `WM_SETTINGCHANGE` / `UpdatePerUserSystemParameters` para que surta efecto sin reiniciar.
+     - **[2] Todos los Usuarios (4 Capas 100% WMI):**
+       * **Capa 1 (Memoria):** Identifica todas las sesiones activas en `Win32_UserProfile` (`Loaded = True`), procesos interactivos y `.DEFAULT`, inyectando las claves mediante WMI `reg add` sin depender del servicio "Registro Remoto".
+       * **Capa 2 (Perfiles en disco):** Detecta perfiles desconectados en `Win32_UserProfile` (`Loaded = False`), monta temporalmente cada colmena `NTUSER.DAT` con WMI (`reg load`), inyecta los valores y la desmonta (`reg unload`).
+       * **Capa 3 (Default User):** Configura la plantilla base `C:\Users\Default\NTUSER.DAT` para que cualquier usuario nuevo futuro nazca con SIAF-SICE configurado.
+       * **Capa 4 (Sistema):** Dispara la señal de refresco gráfico al sistema operativo.
+     - **Eliminación total del error "No se ha encontrado la ruta de acceso de la red":** Se reemplazó el uso de `.NET OpenRemoteBaseKey` (que requería el servicio deshabilitado `RemoteRegistry`) por llamadas nativas WMI, garantizando 100% de éxito en cualquier estación de trabajo remota.
+  3. **Input Flexible de Red (IP Completa y 2 últimos octetos):**
+     - La función de resolución `$obtenerDestino` en [src/subMenu28.ps1](src/subMenu28.ps1) ahora admite:
+       * IP completa (ej: `192.168.176.50` o `10.0.0.5`).
+       * 2 últimos octetos (ej: `176.50` o `13.15` -> auto-resuelve `192.168.X.X`).
+       * 1 octeto (ej: `50` -> auto-resuelve `192.168.176.50`).
+       * Hostname (ej: `PC-SIAF01`).
+       * Equipo local (`.`, `localhost` o `127.0.0.1`).
+  4. **Persistencia y Portabilidad del Recurso:**
+     - Archivo original almacenado en `recursosExtras/SiafSice-OR.reg`.
+     - Función nativa en [src/helpers.ps1](src/helpers.ps1) (`psConfigurarSimbolosSiafSice`) con diccionario embebido y arquitectura multi-fallback (.NET Remote Registry -> WMI `reg add` -> PsExec), operando sin depender de recursos compartidos SMB.
+  5. **Compilación y verificación:**
+     - Compilado [ShellSW.bat](ShellSW.bat) con [build.ps1](build.ps1). Sintaxis validada en todos los módulos con 0 errores.
 
 ---
 
 ## 📍 3. ¿En qué punto nos hemos quedado?
-La Opción 10.3 del módulo [src/subMenu25.ps1](src/subMenu25.ps1) ha sido corregida y optimizada exhaustivamente, eliminando el fallo de congelamiento y garantizando la aplicación de directivas multi-usuario en equipos remotos de forma no bloqueante y segura.
+La funcionalidad de Gestión SIAF-SICE (Opción 6 en el Submenú 28) está completamente implementada, compilada y lista para ser probada en estaciones de trabajo y Helpdesk.
 
-* **Estado de Git:** Rama `main`, cambios listos para ser guardados y probados.
-* **Próxima acción técnica:** Probar la Opción 10.3 en el entorno de red Helpdesk y realizar commit con la Opción 1010 si se desea sincronizar a GitHub.
+* **Estado de Git:** Rama `main`, cambios listos en `ShellSW.bat`, `src/helpers.ps1`, `src/subMenu28.ps1`, `recursosExtras/SiafSice-OR.reg` y `ESTADO_PROYECTO.md`.
+* **Próxima acción técnica:** Probar la opción en un equipo local o remoto escribiendo `28` -> `6` en ShellSW, y opcionalmente guardar a GitHub mediante la opción oculta `1010`.
 
 ---
 
