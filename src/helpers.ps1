@@ -1,4 +1,4 @@
-
+﻿
 <#
 .SYNOPSIS
     Script de mantenimiento optimizado con correccion de sintaxis.
@@ -181,7 +181,7 @@ function psReconstruirSiDesarrollo {
             Write-Host "`n[DEV] Entorno de desarrollo detectado." -ForegroundColor Yellow
             Write-Host "[DEV] Ejecutando build.ps1 para actualizar ShellSW.bat..." -ForegroundColor Yellow
             try {
-                # Iniciar la reconstrucciÃ³n de forma sÃ­ncrona
+                # Iniciar la reconstrucciÃƒÂ³n de forma sÃƒÂ­ncrona
                 $p = Start-Process powershell.exe -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$buildScript`"" -NoNewWindow -PassThru -Wait
                 if ($p.ExitCode -eq 0) {
                     Write-Host "[DEV] Reconstruccion completa y exitosa." -ForegroundColor Green
@@ -257,7 +257,7 @@ function Clear-GitLockFiles {
         Write-Host "`n[AVISO] Se detectaron archivos de bloqueo en .git (*.lock):" -ForegroundColor Yellow
         $lockFiles | ForEach-Object { Write-Host "  - $($_.FullName)" -ForegroundColor DarkYellow }
         Write-Host "Esto suele ocurrir si Google Drive esta sincronizando o un proceso previo se interrumpio." -ForegroundColor Yellow
-        $eliminar = Read-Host "Â¿Desea liberar los bloqueos automaticamente para continuar? (S/N) [S]"
+        $eliminar = Read-Host "Ã‚Â¿Desea liberar los bloqueos automaticamente para continuar? (S/N) [S]"
         if ($eliminar -notmatch "^[nN]$") {
             $lockFiles | ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
             Write-Host "[OK] Archivos de bloqueo eliminados." -ForegroundColor Green
@@ -328,7 +328,7 @@ function Invoke-GitPublicar1010 {
         }
 
         # 6. Confirmacion de seguridad
-        $confirmar = Read-Host "Â¿Proceder con la actualizacion en GitHub? (S/N) [N]"
+        $confirmar = Read-Host "Ã‚Â¿Proceder con la actualizacion en GitHub? (S/N) [N]"
         if ($confirmar -notmatch "^[sS]$") {
             Write-Host "`n[!] Operacion cancelada por el usuario." -ForegroundColor Yellow
             return
@@ -348,7 +348,7 @@ function Invoke-GitPublicar1010 {
         Write-Host $pushResult -ForegroundColor Gray
 
         if ($LASTEXITCODE -eq 0) {
-            Write-Host "`n[OK] Â¡Repositorio de GitHub actualizado exitosamente en la rama '$activeBranch'!" -ForegroundColor Green
+            Write-Host "`n[OK] Ã‚Â¡Repositorio de GitHub actualizado exitosamente en la rama '$activeBranch'!" -ForegroundColor Green
             Write-Host "[TIP] Para continuar en la otra PC, ejecuta la Opcion 1011 al iniciar." -ForegroundColor Cyan
         }
         else {
@@ -360,7 +360,7 @@ function Invoke-GitPublicar1010 {
 
             if ($esRechazoPrevio) {
                 Write-Host "`n[AVISO] GitHub rechazo la subida: La otra PC subio cambios que aun no tienes en este equipo." -ForegroundColor Yellow
-                $integrar = Read-Host "Â¿Deseas descargar e integrar los cambios de GitHub (git pull --rebase) y reintentar la subida? (S/N) [S]"
+                $integrar = Read-Host "Ã‚Â¿Deseas descargar e integrar los cambios de GitHub (git pull --rebase) y reintentar la subida? (S/N) [S]"
                 if ($integrar -notmatch "^[nN]$") {
                     Write-Host "`n[*] Integrando cambios remotos con git pull --rebase origin $activeBranch..." -ForegroundColor Cyan
                     $rebaseResult = git pull --rebase origin $activeBranch 2>&1
@@ -370,7 +370,7 @@ function Invoke-GitPublicar1010 {
                         $retryPush = git push origin $activeBranch 2>&1
                         Write-Host $retryPush -ForegroundColor Gray
                         if ($LASTEXITCODE -eq 0) {
-                            Write-Host "`n[OK] Â¡Cambios integrados y subidos exitosamente a GitHub!" -ForegroundColor Green
+                            Write-Host "`n[OK] Ã‚Â¡Cambios integrados y subidos exitosamente a GitHub!" -ForegroundColor Green
                             Write-Host "[TIP] Para continuar en la otra PC, ejecuta la Opcion 1011 al iniciar." -ForegroundColor Cyan
                             psReconstruirSiDesarrollo
                         } else {
@@ -433,7 +433,7 @@ function Invoke-GitSincronizar1011 {
         if (-not [string]::IsNullOrEmpty($gitStatus)) {
             Write-Host "`n[AVISO] Tienes cambios locales pendientes de guardar:" -ForegroundColor Yellow
             Write-Host $gitStatus -ForegroundColor Gray
-            Write-Host "`nÂ¿Como deseas proceder antes de descargar los cambios de GitHub?" -ForegroundColor Cyan
+            Write-Host "`nÃ‚Â¿Como deseas proceder antes de descargar los cambios de GitHub?" -ForegroundColor Cyan
             Write-Host "  1. Guardar y subir cambios locales primero (Opcion 1010) [Recomendado]" -ForegroundColor White
             Write-Host "  2. Guardar temporalmente en STASH, descargar cambios y re-aplicar" -ForegroundColor White
             Write-Host "  3. Descartar cambios locales (Reset) y sobrescribir con lo de GitHub" -ForegroundColor White
@@ -452,7 +452,7 @@ function Invoke-GitSincronizar1011 {
                 $stashed = $true
             }
             elseif ($opcConflicto -eq "3") {
-                $confirmReset = Read-Host "Â¿ESTA SEGURO de descartar TODOS los cambios locales no guardados? (S/N) [N]"
+                $confirmReset = Read-Host "Ã‚Â¿ESTA SEGURO de descartar TODOS los cambios locales no guardados? (S/N) [N]"
                 if ($confirmReset -match "^[sS]$") {
                     Write-Host "`n[*] Descartando cambios locales..." -ForegroundColor Yellow
                     git reset --hard HEAD 2>&1 | Write-Host -ForegroundColor Gray
@@ -476,10 +476,10 @@ function Invoke-GitSincronizar1011 {
         Write-Host $pullOutput -ForegroundColor Gray
 
         if ($pullExitCode -eq 0) {
-            if ($pullOutput -like "*Already up to date*" -or $pullOutput -like "*Ya estÃ¡ actualizado*") {
+            if ($pullOutput -like "*Already up to date*" -or $pullOutput -like "*Ya estÃƒÂ¡ actualizado*") {
                 Write-Host "`n[OK] El proyecto ya se encuentra al dia con GitHub." -ForegroundColor Green
             } else {
-                Write-Host "`n[OK] Â¡Descarga e integracion exitosa desde GitHub!" -ForegroundColor Green
+                Write-Host "`n[OK] Ã‚Â¡Descarga e integracion exitosa desde GitHub!" -ForegroundColor Green
                 Write-Host "`n[*] Ultimo(s) commit(s) incorporado(s):" -ForegroundColor Cyan
                 git log -2 --oneline 2>$null | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkCyan }
             }
@@ -500,10 +500,10 @@ function Invoke-GitSincronizar1011 {
             Write-Host "`n[*] Reconstruyendo ShellSW.bat con el codigo actualizado..." -ForegroundColor Cyan
             psReconstruirSiDesarrollo
 
-            Write-Host "`n[LISTO] Â¡El proyecto esta listo para continuar el desarrollo!" -ForegroundColor Green
+            Write-Host "`n[LISTO] Ã‚Â¡El proyecto esta listo para continuar el desarrollo!" -ForegroundColor Green
 
             # 5. Ofrecer reinicio
-            $reiniciar = Read-Host "`nÂ¿Desea reiniciar ShellSW ahora para recargar los modulos actualizados? (S/N) [S]"
+            $reiniciar = Read-Host "`nÃ‚Â¿Desea reiniciar ShellSW ahora para recargar los modulos actualizados? (S/N) [S]"
             if ($reiniciar -notmatch "^[nN]$") {
                 $rutaScript = if ($env:SCRIPT_PATH) { $env:SCRIPT_PATH } else { Join-Path $repoPath "ShellSW.bat" }
                 if (Test-Path $rutaScript) {
@@ -557,7 +557,7 @@ function psHabilitarAdministracionRemota {
         [string]$passwordText = $null
     )
 
-    # --- HABILITACIÃ“N REMOTA DE ADMINISTRACIÃ“N ---
+    # --- HABILITACIÃƒâ€œN REMOTA DE ADMINISTRACIÃƒâ€œN ---
     if ([string]::IsNullOrEmpty($targetInput)) {
         $targetInput = Read-Host "Ingrese el ultimo octeto de la IP (192.168.176.XXX) o la IP completa / Nombre de Equipo"
     }
@@ -572,7 +572,7 @@ function psHabilitarAdministracionRemota {
         $ipRemota = $baseIP + $targetInput
     }
 
-    # 1. ResoluciÃ³n de Hostname
+    # 1. ResoluciÃƒÂ³n de Hostname
     $computerTarget = $ipRemota
     Write-Host "`n[*] Resolviendo Hostname de $ipRemota para habilitar Kerberos..." -ForegroundColor Yellow
     try {
@@ -598,7 +598,7 @@ function psHabilitarAdministracionRemota {
         Write-Warning "El equipo $computerTarget no responde a ping. Es posible que este apagado o tenga el firewall activo."
     }
 
-    # 3. ConstrucciÃ³n del Bloque de Comandos de Firewall y Servicios
+    # 3. ConstrucciÃƒÂ³n del Bloque de Comandos de Firewall y Servicios
     $cmds = @(
         'netsh advfirewall firewall set rule group="Windows Management Instrumentation (WMI)" new enable=yes',
         'netsh advfirewall firewall set rule group="Instrumentacion de administracion de Windows (WMI)" new enable=yes',
@@ -616,7 +616,7 @@ function psHabilitarAdministracionRemota {
 
     $exito = $false
 
-    # A. MÃ©todo 1: PsExec (Puerto SMB 445)
+    # A. MÃƒÂ©todo 1: PsExec (Puerto SMB 445)
     $psexecPath = Get-PsExecPath
     $psexecFound = [bool]$psexecPath
 
@@ -641,7 +641,7 @@ function psHabilitarAdministracionRemota {
         Write-Host "[-] PsExec.exe no detectado en C:\PSTools ni en el PATH. Omitiendo." -ForegroundColor Gray
     }
 
-    # B. MÃ©todo 2: WinRM / PSRemoting (WS-Man 5985)
+    # B. MÃƒÂ©todo 2: WinRM / PSRemoting (WS-Man 5985)
     if (-not $exito) {
         Write-Host "[*] Intentando habilitacion via WinRM (PowerShell Remoting)..." -ForegroundColor Yellow
         try {
@@ -672,7 +672,7 @@ function psHabilitarAdministracionRemota {
         }
     }
 
-    # C. MÃ©todo 3: WMI (WMI 135)
+    # C. MÃƒÂ©todo 3: WMI (WMI 135)
     if (-not $exito) {
         Write-Host "[*] Intentando habilitacion via WMI (Win32_Process)..." -ForegroundColor Yellow
         try {
@@ -749,7 +749,7 @@ function psGestionarServiciosUpdateRemoto {
         $ipRemota = $baseIP + $targetInput
     }
 
-    # 1. ResoluciÃ³n de Hostname
+    # 1. ResoluciÃƒÂ³n de Hostname
     $computerTarget = $ipRemota
     Write-Host "`n[*] Resolviendo Hostname de $ipRemota para la conexion..." -ForegroundColor Yellow
     try {
@@ -931,7 +931,7 @@ function psGestionarServiciosUpdateRemoto {
 
     $exito = $false
 
-    # A. MÃ©todo 1: WMI (WMI 135) - Muy compatible sin WinRM
+    # A. MÃƒÂ©todo 1: WMI (WMI 135) - Muy compatible sin WinRM
     Write-Host "`n[*] Intentando configurar servicios via WMI (RPC/DCOM)..." -ForegroundColor Yellow
     $wmiExito = $true
     foreach ($sConfig in $serviciosConfig) {
@@ -953,10 +953,10 @@ function psGestionarServiciosUpdateRemoto {
                     $resAct = $serviceWmi.StopService().ReturnValue
                 }
                 
-                # Validar Ã©xito considerando cÃ³digos de retorno especiales en WMI:
-                # ChangeStartMode: 0 = Ã‰xito. (Para dosvc a veces falla con 2 [Acceso Denegado] pero se corrige por WinRM/PsExec).
-                # StartService: 0 = Ã‰xito, 10 = Ya iniciado (tambiÃ©n Ã©xito para nuestro propÃ³sito).
-                # StopService: 0 = Ã‰xito, 5 = Detenido/No acepta control, 6 = No activo (tambiÃ©n Ã©xito).
+                # Validar ÃƒÂ©xito considerando cÃƒÂ³digos de retorno especiales en WMI:
+                # ChangeStartMode: 0 = Ãƒâ€°xito. (Para dosvc a veces falla con 2 [Acceso Denegado] pero se corrige por WinRM/PsExec).
+                # StartService: 0 = Ãƒâ€°xito, 10 = Ya iniciado (tambiÃƒÂ©n ÃƒÂ©xito para nuestro propÃƒÂ³sito).
+                # StopService: 0 = Ãƒâ€°xito, 5 = Detenido/No acepta control, 6 = No activo (tambiÃƒÂ©n ÃƒÂ©xito).
                 $isModeOk = ($resMode -eq 0)
                 $isActOk = $false
                 
@@ -967,7 +967,7 @@ function psGestionarServiciosUpdateRemoto {
                     $isActOk = ($resAct -eq 0 -or $resAct -eq 5 -or $resAct -eq 6)
                 }
                 else {
-                    $isActOk = $true # AcciÃ³n "None"
+                    $isActOk = $true # AcciÃƒÂ³n "None"
                 }
 
                 if ($isModeOk -and $isActOk) {
@@ -994,7 +994,7 @@ function psGestionarServiciosUpdateRemoto {
         $exito = $true
     }
 
-    # B. MÃ©todo 2: WinRM / PSRemoting (WinRM 5985)
+    # B. MÃƒÂ©todo 2: WinRM / PSRemoting (WinRM 5985)
     if (-not $exito) {
         Write-Host "`n[*] WMI no completo todas las configuraciones de forma directa. Intentando via WinRM (PowerShell Remoting)..." -ForegroundColor Yellow
         try {
@@ -1022,7 +1022,7 @@ function psGestionarServiciosUpdateRemoto {
         }
     }
 
-    # C. MÃ©todo 3: PsExec (SMB 445)
+    # C. MÃƒÂ©todo 3: PsExec (SMB 445)
     if (-not $exito) {
         Write-Host "`n[*] WinRM no disponible. Intentando via PsExec (SMB)..." -ForegroundColor Yellow
         
@@ -1194,7 +1194,7 @@ function psConfigurarSimbolosSiafSice {
             "LocaleName"      = "es-BO"
             "s1159"           = "a.m."
             "s2359"           = "p.m."
-            "sCountry"        = "MÃ©xico"
+            "sCountry"        = "MÃƒÂ©xico"
             "sCurrency"       = "Bs."
             "sDate"           = "/"
             "sDecimal"        = "."
@@ -1358,7 +1358,7 @@ function psConfigurarSimbolosSiafSice {
 
         if (-not $usuarioActivo -or -not $sidActivo) {
             Write-Host "[-] No se detecto ninguna sesion activa de usuario con 'explorer.exe' en $targetHost." -ForegroundColor Yellow
-            $aplicarTodos = Read-Host "Â¿Desea aplicar los simbolos a TODOS los usuarios en su lugar? (S/N)"
+            $aplicarTodos = Read-Host "Ã‚Â¿Desea aplicar los simbolos a TODOS los usuarios en su lugar? (S/N)"
             if ($aplicarTodos -match '^[sSyY]') {
                 $alcance = '2'
             } else {
@@ -1368,7 +1368,7 @@ function psConfigurarSimbolosSiafSice {
         }
         else {
             Write-Host "  -> Usuario activo detectado: $usuarioActivo (SID: $sidActivo)" -ForegroundColor Green
-            $confirma = Read-Host "Â¿Esta seguro de aplicar la configuracion SIAF-SICE a la sesion de '$usuarioActivo'? (S/N)"
+            $confirma = Read-Host "Ã‚Â¿Esta seguro de aplicar la configuracion SIAF-SICE a la sesion de '$usuarioActivo'? (S/N)"
             if ($confirma -notmatch '^[sSyY]') {
                 Write-Host "Operacion cancelada." -ForegroundColor Yellow
                 return
@@ -1461,7 +1461,7 @@ function psConfigurarSimbolosSiafSice {
         Write-Host "   3. La plantilla base (Default User) para cualquier usuario nuevo"
         Write-Host "   4. La cuenta del sistema (.DEFAULT / Pantalla de bienvenida)"
         Write-Host "----------------------------------------------------------------------"
-        $confirmaTodos = Read-Host "Â¿Esta seguro de continuar? (S/N)"
+        $confirmaTodos = Read-Host "Ã‚Â¿Esta seguro de continuar? (S/N)"
         if ($confirmaTodos -notmatch '^[sSyY]') {
             Write-Host "Operacion cancelada por el usuario." -ForegroundColor Yellow
             return
@@ -1663,7 +1663,7 @@ function psConfigurarSimbolosSiafSice {
         }
 
         # --- CAPA 4: NOTIFICACION DE CAMBIO DE PARAMETROS ---
-        Write-Host "`n[Capa 4/4] Enviando seÃ±al de refresco a la interfaz grafica..." -ForegroundColor Cyan
+        Write-Host "`n[Capa 4/4] Enviando seÃƒÂ±al de refresco a la interfaz grafica..." -ForegroundColor Cyan
         & $notificarRefresco $targetHost $isLocal
         Write-Host "  [OK] Notificacion de refresco emitida." -ForegroundColor Green
 
@@ -1680,22 +1680,315 @@ function psConfigurarSimbolosSiafSice {
     }
 }
 
+#**********************************************************************************************************************************
+# MODULO: CONSOLA REMOTA POWERSHELL (CONEXION DIRECTA INTERACTIVA)
+#**********************************************************************************************************************************
+
+function psHabilitarRemotingRapido {
+    <#
+    .SYNOPSIS
+        Rutina rapida para habilitar WinRM y abrir el firewall en un equipo remoto via WMI o PsExec.
+    #>
+    param(
+        [string]$TargetIP,
+        [string]$TargetHost,
+        [pscredential]$Credential = $null
+    )
+
+    $cmdFw = 'netsh advfirewall firewall set rule group="Windows Remote Management" new enable=yes & ' +
+             'netsh advfirewall firewall set rule group="Administracion remota de Windows" new enable=yes'
+    $cmdPs = 'powershell.exe -NoProfile -Command "try { Enable-PSRemoting -SkipNetworkProfileCheck -Force } catch {}; try { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force } catch {}; try { Start-Service WinRM } catch {}"'
+    $fullCmd = "cmd.exe /c $cmdFw & $cmdPs"
+
+    # Intento 1: WMI
+    try {
+        $procWmi = [wmiclass]"\\$TargetIP\root\cimv2:Win32_Process"
+        if ($procWmi) {
+            $res = $procWmi.Create($fullCmd)
+            if ($res.ReturnValue -eq 0) {
+                Write-Host "  [OK] Señal de habilitacion WinRM enviada via WMI." -ForegroundColor Green
+                return $true
+            }
+        }
+    } catch {}
+
+    # Intento 2: PsExec
+    $psexec = Get-PsExecPath
+    if ($psexec) {
+        $argList = "\\$TargetIP -accepteula -s $fullCmd"
+        if ($Credential) {
+            $uRaw = $Credential.UserName
+            $pRaw = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Credential.Password))
+            $argList = "\\$TargetIP -u `"$uRaw`" -p `"$pRaw`" -accepteula -s $fullCmd"
+        }
+        $p = Start-Process -FilePath $psexec -ArgumentList $argList -Wait -NoNewWindow -PassThru -ErrorAction SilentlyContinue
+        if ($p -and $p.ExitCode -eq 0) {
+            Write-Host "  [OK] WinRM habilitado via PsExec." -ForegroundColor Green
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function psConectarPowerShellRemoto {
+    <#
+    .SYNOPSIS
+        Inicia una sesion interactiva remota de PowerShell en una PC objetivo.
+        Prioriza WinRM (Enter-PSSession) nativo para ejecutar scripts como en la maquina fisica,
+        con diagnostico previo de puerto 5985, auto-habilitacion via WMI y fallback a PsExec.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$false)]
+        [hashtable]$Destino = $null
+    )
+
+    cabecera
+    menuOpcion "CONSOLA REMOTA: CONEXION DIRECTA POWERSHELL INTERACTIVA"
+
+    # 1. Resolver destino si no fue suministrado
+    if (-not $Destino) {
+        $rawInput = Read-Host "Ingrese la IP completa (ej: 192.168.176.50), los 2 ultimos octetos (ej: 176.50) o Nombre de Equipo"
+        if ([string]::IsNullOrWhiteSpace($rawInput)) {
+            Write-Host "Operacion cancelada." -ForegroundColor Yellow
+            return
+        }
+        $rawInput = $rawInput.Trim()
+
+        $ipRemota = ""
+        $targetMachine = ""
+
+        if ($rawInput -in @('.', 'localhost', '127.0.0.1', $env:COMPUTERNAME)) {
+            $Destino = @{ IP = "127.0.0.1"; Hostname = $env:COMPUTERNAME; IsLocal = $true }
+        }
+        else {
+            if ($rawInput -match '^(\d{1,3}\.){3}\d{1,3}$') {
+                $ipRemota = $rawInput
+            }
+            elseif ($rawInput -match '^\d{1,3}\.\d{1,3}$') {
+                $ipRemota = "192.168.$rawInput"
+            }
+            elseif ($rawInput -match '^\d{1,3}$') {
+                $ipRemota = "192.168.176.$rawInput"
+            }
+            else {
+                $targetMachine = $rawInput
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($ipRemota)) {
+                Write-Host "Resolviendo nombre de equipo para $ipRemota..." -ForegroundColor Cyan
+                try {
+                    $sys = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $ipRemota -ErrorAction Stop
+                    $targetMachine = $sys.CSName
+                    Write-Host "Nombre de equipo resuelto: $targetMachine" -ForegroundColor Green
+                }
+                catch {
+                    try {
+                        $targetMachine = [System.Net.Dns]::GetHostEntry($ipRemota).HostName
+                        Write-Host "Nombre de equipo resuelto via DNS: $targetMachine" -ForegroundColor Green
+                    }
+                    catch {
+                        $targetMachine = $ipRemota
+                    }
+                }
+            }
+            elseif (-not [string]::IsNullOrWhiteSpace($targetMachine)) {
+                try {
+                    $ipRemota = ([System.Net.Dns]::GetHostAddresses($targetMachine) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | Select-Object -First 1).IPAddressToString
+                } catch {
+                    $ipRemota = $targetMachine
+                }
+            }
+
+            $isLoc = ($ipRemota -in @('127.0.0.1', '::1') -or $targetMachine.ToUpper() -eq $env:COMPUTERNAME.ToUpper())
+            $Destino = @{ IP = $ipRemota; Hostname = $targetMachine; IsLocal = $isLoc }
+        }
+    }
+
+    $targetIP = if ($Destino.IP) { $Destino.IP } else { $Destino.Hostname }
+    $targetHost = if ($Destino.Hostname) { $Destino.Hostname } else { $targetIP }
+    $isLocal = [bool]$Destino.IsLocal
+
+    if ($isLocal) {
+        Write-Host "`n[*] El destino seleccionado es el equipo local ($env:COMPUTERNAME)." -ForegroundColor Cyan
+        Write-Host "[*] Abriendo sesion de PowerShell local elevada..." -ForegroundColor Green
+        Start-Process powershell.exe -ArgumentList "-NoExit -ExecutionPolicy Bypass" -Wait
+        return
+    }
+
+    # 2. Seleccion de Credenciales (SSO vs Alternativas)
+    Write-Host "`n======================================================================" -ForegroundColor Cyan
+    Write-Host "               AUTENTICACION PARA CONEXION REMOTA                    " -ForegroundColor Cyan
+    Write-Host "======================================================================" -ForegroundColor Cyan
+    Write-Host " Equipo objetivo: $targetHost ($targetIP)" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  1. Credencial actual de Windows / Dominio (Recomendado - SSO)" -ForegroundColor Green
+    Write-Host "  2. Ingresar credenciales alternativas (Usuario / Clave)" -ForegroundColor Yellow
+    Write-Host "  0. Cancelar operacion" -ForegroundColor Red
+    Write-Host "======================================================================" -ForegroundColor Cyan
+    $opCred = Read-Host "Seleccione una opcion (1/2/0) [1]"
+    if ([string]::IsNullOrWhiteSpace($opCred)) { $opCred = "1" }
+
+    if ($opCred -eq "0") {
+        Write-Host "Conexion cancelada." -ForegroundColor Yellow
+        return
+    }
+
+    $cred = $null
+    if ($opCred -eq "2") {
+        $uInput = Read-Host "Ingrese el usuario (ej: gmsantacruz\usuario o .\admin)"
+        if ([string]::IsNullOrWhiteSpace($uInput)) {
+            Write-Host "Operacion cancelada." -ForegroundColor Yellow
+            return
+        }
+        $pInput = Read-Host "Ingrese la contrasenia" -AsSecureString
+        $cred = New-Object System.Management.Automation.PSCredential($uInput, $pInput)
+    }
+
+    # 3. Comprobacion de conectividad a puerto WinRM (5985)
+    Write-Host "`n[*] Verificando servicio WinRM (Puerto 5985) en ${targetHost}..." -ForegroundColor Cyan
+    $port5985 = $false
+    try {
+        $tcp = New-Object System.Net.Sockets.TcpClient
+        $asyncResult = $tcp.BeginConnect($targetIP, 5985, $null, $null)
+        $wait = $asyncResult.AsyncWaitHandle.WaitOne(1200, $false)
+        if ($wait -and $tcp.Connected) {
+            $port5985 = $true
+            $tcp.EndConnect($asyncResult)
+        }
+        $tcp.Close()
+    } catch {}
+
+    # Si WinRM esta cerrado, ofrecer auto-habilitacion con WMI
+    if (-not $port5985) {
+        Write-Host "[-] El puerto WinRM (5985) no responde en $targetHost ($targetIP)." -ForegroundColor Yellow
+        Write-Host "    Para conectarse como en la maquina fisica se requiere WinRM / PSRemoting." -ForegroundColor Gray
+        $hab = Read-Host "¿Desea que ShellSW intente habilitar WinRM y abrir firewall remotamente ahora? (S/N) [S]"
+        if ([string]::IsNullOrWhiteSpace($hab) -or $hab -match '^[sSyY]') {
+            Write-Host "[*] Habilitando WinRM remotamente..." -ForegroundColor Cyan
+            $okHab = psHabilitarRemotingRapido -TargetIP $targetIP -TargetHost $targetHost -Credential $cred
+            if ($okHab) {
+                Write-Host "[*] Esperando 2 segundos para inicio de servicio..." -ForegroundColor Gray
+                Start-Sleep -Seconds 2
+                try {
+                    $tcp = New-Object System.Net.Sockets.TcpClient
+                    $asyncResult = $tcp.BeginConnect($targetIP, 5985, $null, $null)
+                    $wait = $asyncResult.AsyncWaitHandle.WaitOne(1500, $false)
+                    if ($wait -and $tcp.Connected) {
+                        $port5985 = $true
+                        $tcp.EndConnect($asyncResult)
+                    }
+                    $tcp.Close()
+                } catch {}
+            }
+        }
+    }
+
+    # 4. Modo de Visualizacion y Ejecucion Directa Nativa con Enter-PSSession
+    if ($port5985) {
+        $targetConnect = if (-not [string]::IsNullOrWhiteSpace($targetHost) -and $targetHost -ne $targetIP) { $targetHost } else { $targetIP }
+
+        Write-Host "`n======================================================================" -ForegroundColor Cyan
+        Write-Host "                MODO DE CONSOLA POWERSHELL REMOTA                     " -ForegroundColor Cyan
+        Write-Host "======================================================================" -ForegroundColor Cyan
+        Write-Host "  1. Ventana Nueva Independiente (Recomendado - Multitarea)" -ForegroundColor Green
+        Write-Host "  2. Misma Ventana (Consola actual de ShellSW)" -ForegroundColor Yellow
+        Write-Host "======================================================================" -ForegroundColor Cyan
+        $opModo = Read-Host "Seleccione modo de visualizacion (1/2) [1]"
+        if ([string]::IsNullOrWhiteSpace($opModo)) { $opModo = "1" }
+
+        # Armado de la orden de conexion interactiva para el proceso PowerShell
+        $titleString = "ShellSW :: Consola Remota - $targetHost ($targetIP)"
+        $authLabel = if ($cred) { $cred.UserName } else { 'Credencial Actual SSO (Dominio)' }
+
+        $bannerCmd = "`$Host.UI.RawUI.WindowTitle = '$titleString'; " +
+                     "Clear-Host; " +
+                     "Write-Host '========================================================================' -ForegroundColor Green; " +
+                     "Write-Host '    CONEXION DIRECTA A CONSOLA POWERSHELL REMOTA (INTERACTIVA)          ' -ForegroundColor White -BackgroundColor DarkGreen; " +
+                     "Write-Host '========================================================================' -ForegroundColor Green; " +
+                     "Write-Host ' Equipo Conectado:  $targetHost ($targetIP)' -ForegroundColor Cyan; " +
+                     "Write-Host ' Protocolo:         WinRM / WS-Man Nativo (Puerto 5985)' -ForegroundColor Green; " +
+                     "Write-Host ' Autenticacion:     $authLabel' -ForegroundColor Yellow; " +
+                     "Write-Host ' Ejecucion Scripts: Habilitada (RemoteSigned / Bypass)' -ForegroundColor White; " +
+                     "Write-Host '------------------------------------------------------------------------' -ForegroundColor Green; " +
+                     "Write-Host ' [TIP] Puede ejecutar cualquier comando, cmdlet o script .ps1 directamente.' -ForegroundColor White; " +
+                     "Write-Host ' [TIP] Para salir de la sesion remota, escriba: exit' -ForegroundColor Yellow; " +
+                     "Write-Host '========================================================================`n' -ForegroundColor Green; "
+
+        $enterCmd = if ($cred) {
+            $u = $cred.UserName
+            $p = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($cred.Password))
+            "`$pSec = ConvertTo-SecureString '$p' -AsPlainText -Force; `$cObj = New-Object System.Management.Automation.PSCredential('$u', `$pSec); try { Enter-PSSession -ComputerName '$targetConnect' -Credential `$cObj } catch { Write-Host 'Reintentando por IP ($targetIP)...' -ForegroundColor Yellow; Enter-PSSession -ComputerName '$targetIP' -Credential `$cObj }"
+        } else {
+            "try { Enter-PSSession -ComputerName '$targetConnect' } catch { Write-Host 'Reintentando por IP ($targetIP)...' -ForegroundColor Yellow; Enter-PSSession -ComputerName '$targetIP' }"
+        }
+
+        $fullPsCommand = "$bannerCmd try { $enterCmd } catch { Write-Host '`n[-] Error de conexion: ' `$_.Exception.Message -ForegroundColor Red; Write-Host 'Presione Enter para salir...' -ForegroundColor Yellow; [void][System.Console]::ReadLine() }"
+
+        $psArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", $fullPsCommand)
+
+        if ($opModo -eq "2") {
+            Write-Host "`n[*] Iniciando sesion remota en la consola actual..." -ForegroundColor Green
+            Write-Host "[*] Conectando a $targetHost ($targetIP)..." -ForegroundColor Cyan
+            & powershell.exe @psArgs
+            Write-Host "`n[OK] Sesion remota finalizada. Ha regresado a ShellSW." -ForegroundColor Green
+            return
+        }
+        else {
+            Write-Host "`n[+] Consola remota abierta en ventana independiente." -ForegroundColor Green
+            Write-Host "[*] Conectando a $targetHost ($targetIP)..." -ForegroundColor Cyan
+            Write-Host "[OK] Ventana principal liberada exitosamente para multitarea.`n" -ForegroundColor Green
+            Start-Process powershell.exe -ArgumentList $psArgs
+            return
+        }
+    }
+
+    # 5. Fallback a PsExec Interactivo Elevado
+    Write-Host "`n========================================================================" -ForegroundColor Yellow
+    Write-Host "       FALLBACK: ABRIR CONSOLA POWERSHELL REMOTA VIA PSEXEC            " -ForegroundColor Yellow
+    Write-Host "========================================================================" -ForegroundColor Yellow
+    Write-Host " WinRM no se encuentra accesible en $targetHost." -ForegroundColor Gray
+    Write-Host " ¿Desea abrir una consola interactiva elevada mediante PsExec (SMB 445)?"
+    $usarPsExec = Read-Host "¿Iniciar sesion interactiva con PsExec? (S/N) [S]"
+    if ([string]::IsNullOrWhiteSpace($usarPsExec) -or $usarPsExec -match '^[sSyY]') {
+        $psexecPath = Get-PsExecPath
+        if (-not $psexecPath) {
+            Write-Host "[-] Error: No se encontro PsExec en C:\PSTools ni en el sistema." -ForegroundColor Red
+            return
+        }
+
+        Write-Host "`n[*] Iniciando sesion remota PowerShell via PsExec en ventana independiente..." -ForegroundColor Cyan
+        Write-Host "[OK] Ventana principal liberada exitosamente para multitarea.`n" -ForegroundColor Green
+
+        $targetExec = if ($targetIP) { $targetIP } else { $targetHost }
+        $argList = @("\\$targetExec", "-accepteula", "-nobanner", "-h", "-i", "powershell.exe", "-NoExit", "-ExecutionPolicy", "Bypass")
+        if ($cred) {
+            $uRaw = $cred.UserName
+            $pRaw = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($cred.Password))
+            $argList = @("\\$targetExec", "-u", "$uRaw", "-p", "$pRaw", "-accepteula", "-nobanner", "-h", "-i", "powershell.exe", "-NoExit", "-ExecutionPolicy", "Bypass")
+        }
+
+        Start-Process -FilePath $psexecPath -ArgumentList $argList -ErrorAction SilentlyContinue
+    }
+}
+
 # MODULO: INFORMACION DEL USUARIO ACTIVO (LOCAL Y DE DOMINIO)
 #**********************************************************************************************************************************
 
 function psMostrarInformacionUsuarioActivo {
     <#
     .SYNOPSIS
-        Consulta y muestra en consola la informaciÃ³n del usuario activo (local o de dominio)
-        en un equipo remoto o local, respetando el formato visual y paleta de colores estÃ¡ndar.
+        Consulta y muestra en consola la informaciÃƒÂ³n del usuario activo (local o de dominio)
+        en un equipo remoto o local, respetando el formato visual y paleta de colores estÃƒÂ¡ndar.
     .PARAMETER TargetIP
-        DirecciÃ³n IP o Nombre de Equipo (Hostname) a consultar.
+        DirecciÃƒÂ³n IP o Nombre de Equipo (Hostname) a consultar.
     .PARAMETER Credential
-        Credencial opcional para autenticaciÃ³n en WMI/CIM.
+        Credencial opcional para autenticaciÃƒÂ³n en WMI/CIM.
     .PARAMETER TimeoutMs
-        Tiempo de espera para comprobaciÃ³n de red previa.
+        Tiempo de espera para comprobaciÃƒÂ³n de red previa.
     .PARAMETER ForceRefresh
-        Fuerza la consulta ignorando la cachÃ© en memoria de la sesiÃ³n.
+        Fuerza la consulta ignorando la cachÃƒÂ© en memoria de la sesiÃƒÂ³n.
     .PARAMETER ReturnObject
         Devuelve el objeto con los datos en lugar de solo imprimirlo.
     #>
@@ -1720,12 +2013,12 @@ function psMostrarInformacionUsuarioActivo {
     $cleanTarget = $TargetIP.Trim()
     $cacheKey = $cleanTarget.ToUpper()
 
-    # Inicializar almacenamiento de cachÃ© de sesiÃ³n si no existe
+    # Inicializar almacenamiento de cachÃƒÂ© de sesiÃƒÂ³n si no existe
     if (-not $global:ActiveUserCache) {
         $global:ActiveUserCache = @{}
     }
 
-    # Verificar si tenemos datos en cachÃ© vÃ¡lidos (vigencia de 45 segundos)
+    # Verificar si tenemos datos en cachÃƒÂ© vÃƒÂ¡lidos (vigencia de 45 segundos)
     if (-not $ForceRefresh -and $global:ActiveUserCache.ContainsKey($cacheKey)) {
         $cacheEntry = $global:ActiveUserCache[$cacheKey]
         if ($cacheEntry -and ((Get-Date) - $cacheEntry.Timestamp).TotalSeconds -lt 45) {
@@ -1766,7 +2059,7 @@ function psMostrarInformacionUsuarioActivo {
                       ($cleanTarget -eq "localhost") -or 
                       ($cleanTarget.ToUpper() -eq $env:COMPUTERNAME.ToUpper())
 
-    # 1. VerificaciÃ³n rÃ¡pida de conectividad en destinos remotos para evitar cuelgues (timeout 600ms)
+    # 1. VerificaciÃƒÂ³n rÃƒÂ¡pida de conectividad en destinos remotos para evitar cuelgues (timeout 600ms)
     if (-not $isLocalMachine) {
         $pingOk = $false
         try {
@@ -1816,7 +2109,7 @@ function psMostrarInformacionUsuarioActivo {
         }
     }
 
-    # 2. ResoluciÃ³n de Hostname y Datos de Dominio
+    # 2. ResoluciÃƒÂ³n de Hostname y Datos de Dominio
     $targetHost = $cleanTarget
     try {
         $entry = [System.Net.Dns]::GetHostEntry($cleanTarget)
@@ -1839,10 +2132,10 @@ function psMostrarInformacionUsuarioActivo {
     $partOfDomain = if ($sysCS) { $sysCS.PartOfDomain } else { $false }
     $domainFQDN = if ($sysCS -and $sysCS.Domain) { $sysCS.Domain } else { "" }
 
-    # 3. DetecciÃ³n del Usuario Activo
+    # 3. DetecciÃƒÂ³n del Usuario Activo
     $usuariosActivos = @()
 
-    # MÃ©todo A: Procesos explorer.exe interactivos vÃ­a WMI
+    # MÃƒÂ©todo A: Procesos explorer.exe interactivos vÃƒÂ­a WMI
     try {
         $procParams = @{
             Class = 'Win32_Process'
@@ -1873,7 +2166,7 @@ function psMostrarInformacionUsuarioActivo {
         }
     } catch {}
 
-    # MÃ©todo B: Fallback a Win32_ComputerSystem.UserName
+    # MÃƒÂ©todo B: Fallback a Win32_ComputerSystem.UserName
     if ($usuariosActivos.Count -eq 0 -and $sysCS -and -not [string]::IsNullOrEmpty($sysCS.UserName)) {
         $parts = $sysCS.UserName.Split('\')
         $dom = if ($parts.Count -gt 1) { $parts[0] } else { "" }
@@ -1885,7 +2178,7 @@ function psMostrarInformacionUsuarioActivo {
         }
     }
 
-    # MÃ©todo C: Fallback rÃ¡pido mediante quser
+    # MÃƒÂ©todo C: Fallback rÃƒÂ¡pido mediante quser
     if ($usuariosActivos.Count -eq 0) {
         try {
             $quserOut = quser /server:$cleanTarget 2>$null
@@ -1910,7 +2203,7 @@ function psMostrarInformacionUsuarioActivo {
         } catch {}
     }
 
-    # Descartar duplicados manteniendo los Ãºnicos
+    # Descartar duplicados manteniendo los ÃƒÂºnicos
     $usuariosUnicos = @()
     $seen = @{}
     foreach ($u in $usuariosActivos) {
@@ -1922,7 +2215,7 @@ function psMostrarInformacionUsuarioActivo {
     }
     $usuariosActivos = $usuariosUnicos
 
-    # 4. Caso: Sin sesiÃ³n interactiva activa
+    # 4. Caso: Sin sesiÃƒÂ³n interactiva activa
     if ($usuariosActivos.Count -eq 0) {
         Write-Host "`n============================================================" -ForegroundColor Cyan
         Write-Host "                INFORMACION DEL USUARIO ACTIVO              " -ForegroundColor Cyan
@@ -1956,7 +2249,7 @@ function psMostrarInformacionUsuarioActivo {
         $perfilesRemotos = Get-WmiObject @profParams
     } catch {}
 
-    # 6. Procesar y presentar la informaciÃ³n de cada usuario activo
+    # 6. Procesar y presentar la informaciÃƒÂ³n de cada usuario activo
     $lastResultObj = $null
 
     foreach ($u in $usuariosActivos) {
@@ -1965,7 +2258,7 @@ function psMostrarInformacionUsuarioActivo {
                    ([string]::IsNullOrEmpty($u.Domain)) -or 
                    (-not $partOfDomain)
 
-        # ResoluciÃ³n de Nombre Completo
+        # ResoluciÃƒÂ³n de Nombre Completo
         $nombreCompleto = ""
         if (-not $esLocal) {
             try {
@@ -1995,7 +2288,7 @@ function psMostrarInformacionUsuarioActivo {
             $nombreCompleto = "No especificado / No disponible"
         }
 
-        # ResoluciÃ³n de Tipo de Cuenta
+        # ResoluciÃƒÂ³n de Tipo de Cuenta
         $tipoCuenta = ""
         if ($esLocal) {
             $tipoCuenta = "Usuario Local (.\$($u.User))"
@@ -2004,7 +2297,7 @@ function psMostrarInformacionUsuarioActivo {
             $tipoCuenta = "Usuario de Dominio ($nombreDominio)"
         }
 
-        # ResoluciÃ³n de Ruta de Perfil
+        # ResoluciÃƒÂ³n de Ruta de Perfil
         $rutaPerfil = ""
         if ($perfilesRemotos) {
             $perf = $perfilesRemotos | Where-Object { 
@@ -2057,7 +2350,7 @@ function psMostrarInformacionUsuarioActivo {
             User         = $u.User
         }
 
-        # Almacenar en cachÃ© de sesiÃ³n
+        # Almacenar en cachÃƒÂ© de sesiÃƒÂ³n
         $global:ActiveUserCache[$cacheKey] = @{
             Timestamp = Get-Date
             Data      = $lastResultObj

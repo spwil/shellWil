@@ -19,6 +19,9 @@ function psSubMenu28 {
             Write-Host "  6. Gestion SIAF-SICE"
             Write-Host "    6.1 || CONFIGURAR || Simbolos Regionales SIAF-SICE (.reg)" -ForegroundColor Cyan
             Write-Host "  ------------------------------------------------------"
+            Write-Host "  7. Consola Remota"
+            Write-Host "    7.1 || CONECTAR || PowerShell Remoto (Sesion Directa / Interactiva)" -ForegroundColor Green
+            Write-Host "  ------------------------------------------------------"
             Write-Host "  0. V O L V E R   A L   M E N U    P R I N C I P A L"
             Write-Host ""
             Write-Header "==============================="
@@ -404,6 +407,22 @@ function psSubMenu28 {
                     $destino = & $obtenerDestino
                     if ($destino) {
                         psConfigurarSimbolosSiafSice -Destino $destino
+                    }
+                }
+                "7" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op28"
+                    $destino = & $obtenerDestino
+                    if ($destino) {
+                        psConectarPowerShellRemoto -Destino $destino
+                    }
+                }
+                "7.1" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op28"
+                    $destino = & $obtenerDestino
+                    if ($destino) {
+                        psConectarPowerShellRemoto -Destino $destino
                     }
                 }
                 "0" {

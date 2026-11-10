@@ -16,40 +16,34 @@
 ---
 
 ## 🕒 2. Última Sesión de Trabajo
-* **Fecha:** 5 de Noviembre de 2026
-* **Hito Completado:** **Implementación de la Opción 6: Gestión SIAF-SICE en `subMenu28.ps1` e Input Flexible de IP**.
+* **Fecha:** 10 de Noviembre de 2026
+* **Hito Completado:** **Implementación de la Opción 7: Consola Remota (PowerShell Remoto Directo e Interactivo) en `subMenu28.ps1`**.
 * **Cambios Clave Realizados:**
-  1. **Nueva Opción 6 (y 6.1) en [src/subMenu28.ps1](src/subMenu28.ps1):**
-     - Se añadió al menú `6. Gestion SIAF-SICE` y `6.1 || CONFIGURAR || Simbolos Regionales SIAF-SICE (.reg)`.
-     - Permite configurar los símbolos requeridos por los aplicativos gubernamentales SIAF y SICE (punto decimal `.`, coma de miles `,`, moneda `Bs.`, fecha `dd/MM/yyyy`, GeoID `26` y protección `UserLocaleFromLanguageProfileOptOut = 1`).
-  2. **Selector de Alcance Interactivo y Arquitectura 100% WMI:**
-     - **[1] Sesión Actual:** Identifica al usuario activo conectado mediante `Win32_Process` (`explorer.exe`), resuelve su SID y aplica los cambios directamente en caliente a `HKU\<SID>\Control Panel\International` mediante WMI, emitiendo una notificación de refresco `WM_SETTINGCHANGE` / `UpdatePerUserSystemParameters` para que surta efecto sin reiniciar.
-     - **[2] Todos los Usuarios (4 Capas 100% WMI):**
-       * **Capa 1 (Memoria):** Identifica todas las sesiones activas en `Win32_UserProfile` (`Loaded = True`), procesos interactivos y `.DEFAULT`, inyectando las claves mediante WMI `reg add` sin depender del servicio "Registro Remoto".
-       * **Capa 2 (Perfiles en disco):** Detecta perfiles desconectados en `Win32_UserProfile` (`Loaded = False`), monta temporalmente cada colmena `NTUSER.DAT` con WMI (`reg load`), inyecta los valores y la desmonta (`reg unload`).
-       * **Capa 3 (Default User):** Configura la plantilla base `C:\Users\Default\NTUSER.DAT` para que cualquier usuario nuevo futuro nazca con SIAF-SICE configurado.
-       * **Capa 4 (Sistema):** Dispara la señal de refresco gráfico al sistema operativo.
-     - **Eliminación total del error "No se ha encontrado la ruta de acceso de la red":** Se reemplazó el uso de `.NET OpenRemoteBaseKey` (que requería el servicio deshabilitado `RemoteRegistry`) por llamadas nativas WMI, garantizando 100% de éxito en cualquier estación de trabajo remota.
-  3. **Input Flexible de Red (IP Completa y 2 últimos octetos):**
-     - La función de resolución `$obtenerDestino` en [src/subMenu28.ps1](src/subMenu28.ps1) ahora admite:
-       * IP completa (ej: `192.168.176.50` o `10.0.0.5`).
-       * 2 últimos octetos (ej: `176.50` o `13.15` -> auto-resuelve `192.168.X.X`).
-       * 1 octeto (ej: `50` -> auto-resuelve `192.168.176.50`).
-       * Hostname (ej: `PC-SIAF01`).
-       * Equipo local (`.`, `localhost` o `127.0.0.1`).
-  4. **Persistencia y Portabilidad del Recurso:**
-     - Archivo original almacenado en `recursosExtras/SiafSice-OR.reg`.
-     - Función nativa en [src/helpers.ps1](src/helpers.ps1) (`psConfigurarSimbolosSiafSice`) con diccionario embebido y arquitectura multi-fallback (.NET Remote Registry -> WMI `reg add` -> PsExec), operando sin depender de recursos compartidos SMB.
-  5. **Compilación y verificación:**
-     - Compilado [ShellSW.bat](ShellSW.bat) con [build.ps1](build.ps1). Sintaxis validada en todos los módulos con 0 errores.
+  1. **Nuevo Grupo y Opción 7 en [src/subMenu28.ps1](src/subMenu28.ps1):**
+     - Se añadió al menú visual y a la lógica de selección:
+       * `7. Consola Remota`
+       * `7.1 || CONECTAR || PowerShell Remoto (Sesion Directa / Interactiva)`
+     - Integrado con la función de resolución flexible de destino `$obtenerDestino` (admite IP completa, 2 últimos octetos, 1 octeto o Hostname).
+  2. **Arquitectura de Conexión Remota Nativa de Alto Rendimiento en [src/helpers.ps1](src/helpers.ps1):**
+     - **Función `psConectarPowerShellRemoto`:**
+       * **Nivel 1 (WinRM / WS-Man Nativo - Puerto 5985):** Abre una sesión interactiva nativa mediante proceso PowerShell interactivo (`-NoExit`), resolviendo la limitación de PowerShell donde `Enter-PSSession` se cerraba inmediatamente al ejecutarse dentro de scripts por lotes (.bat). Permite elegir entre **Ventana Nueva Independiente (Multitarea Asíncrona)** o **Misma Consola**. En el modo de ventana independiente, libera inmediatamente la ventana principal de ShellSW sin bloquear la consola, permitiendo multitarea real. Soporta Kerberos SSO de dominio sin contraseñas, tuberías de objetos y ejecución de scripts remotos con prompt `[HOSTNAME]: PS>`.
+       * **Diagnóstico Pre-flight y Auto-reparación (`psHabilitarRemotingRapido`):** Comprueba conectividad al puerto 5985 con un timeout ultra-rápido de 1200ms. Si WinRM está cerrado, ofrece habilitar el servicio y abrir el firewall de forma remota y transparente vía WMI (`Win32_Process`) o PsExec con 1 solo clic.
+       * **Nivel 2 (Fallback PsExec interactivo):** Si WinRM no responde o el puerto está bloqueado por políticas de red, ofrece abrir de inmediato una consola interactiva elevada mediante PsExec sobre SMB (puerto 445) en ventana independiente sin interferir con la sesión de ShellSW.
+  3. **Hito Previo Consolidado (Opción 6: Gestión SIAF-SICE):**
+     - Configuración multi-capa 100% WMI de símbolos regionales (punto decimal `.`, miles `,`, moneda `Bs.`, fecha `dd/MM/yyyy`, GeoID `26` y `UserLocaleFromLanguageProfileOptOut = 1`).
+     - Admite aplicar a sesión actual o a todos los usuarios (sesiones activas, perfiles en disco y plantilla base `Default User`).
+  4. **Compilación y verificación:**
+     - Sintaxis validada con AST Parser (0 errores).
+     - Compilación exitosa con [build.ps1](build.ps1) generando el binario [ShellSW.bat](ShellSW.bat).
 
 ---
 
 ## 📍 3. ¿En qué punto nos hemos quedado?
-La funcionalidad de Gestión SIAF-SICE (Opción 6 en el Submenú 28) está completamente implementada, compilada y lista para ser probada en estaciones de trabajo y Helpdesk.
+La nueva funcionalidad **7. Consola Remota (PowerShell Remoto)** está completamente implementada, compilada en [ShellSW.bat](ShellSW.bat) y lista para producción.
 
-* **Estado de Git:** Rama `main`, cambios listos en `ShellSW.bat`, `src/helpers.ps1`, `src/subMenu28.ps1`, `recursosExtras/SiafSice-OR.reg` y `ESTADO_PROYECTO.md`.
-* **Próxima acción técnica:** Probar la opción en un equipo local o remoto escribiendo `28` -> `6` en ShellSW, y opcionalmente guardar a GitHub mediante la opción oculta `1010`.
+* **Estado de Git:** Rama `main`, cambios listos en `ShellSW.bat`, `src/helpers.ps1`, `src/subMenu28.ps1` y `ESTADO_PROYECTO.md`.
+* **Próxima acción técnica:** Probar la conexión ingresando a `ShellSW.bat` -> opción `28` -> opción `7` (o `7.1`) e ingresando la IP o los últimos dos octetos del equipo objetivo.
+* **Publicación:** Cuando desees sincronizar a GitHub, usa la opción oculta `1010` en el menú principal.
 
 ---
 
@@ -78,5 +72,7 @@ La funcionalidad de Gestión SIAF-SICE (Opción 6 en el Submenú 28) está compl
 - [x] Sincronización multi-PC automatizada (Opciones 1010 y 1011).
 - [x] Ocultamiento de opciones de desarrollo en el menú por seguridad.
 - [x] Documentación de sincronización y bitácora de memoria (`RECUERDAME`).
+- [x] Opción 6: Gestión de Símbolos SIAF-SICE multi-capa en Submenú 28.
+- [x] Opción 7: Consola Remota PowerShell Interactiva (WinRM + WMI auto-enable + PsExec fallback).
 - [ ] Probar flujo completo de bajada en la PC secundaria mediante la opción `1011`.
 - [ ] Revisión periódica de submódulos de administración según requerimientos del equipo de Helpdesk.
