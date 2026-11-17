@@ -71,5 +71,6 @@ La **Suite de Captura y Monitoreo Remoto (Opción 100)** en [src/subMenu25.ps1](
 - [x] Opción 6: Gestión de Símbolos SIAF-SICE multi-capa en Submenú 28.
 - [x] Opción 7: Consola Remota PowerShell Interactiva (WinRM + WMI auto-enable + PsExec fallback).
 - [x] Optimización Opción 100: Captura de pantalla remota con SSO por defecto y caché de credenciales en Submenú 25.
+- [x] Suite Completa de Monitoreo Remoto: Clip continuo de 15 segundos (GIF nativo .NET) y RDP Shadowing en tiempo real (mstsc /shadow).
 - [ ] Probar flujo completo de bajada en la PC secundaria mediante la opción `1011`.
 - [ ] Revisión periódica de submódulos de administración según requerimientos del equipo de Helpdesk.
