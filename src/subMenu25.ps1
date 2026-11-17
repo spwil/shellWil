@@ -6743,9 +6743,10 @@ try {
                     do {
                         try {
                             cabecera
-                            Write-Header " 100. CAPTURA DE PANTALLA REMOTA (SCREENSHOT) "
-                            Write-Host "  1. Tomar captura usando PsExec (Recomendado)." -ForegroundColor Green
-                            Write-Host "  2. Tomar captura usando Tarea Programada (Alternativa)." -ForegroundColor Yellow
+                            Write-Header " 100. CAPTURA Y MONITOREO DE PANTALLA REMOTA "
+                            Write-Host "  1. Captura estatica de pantalla (Screenshot PNG instantaneo)." -ForegroundColor Green
+                            Write-Host "  2. Grabacion de clip continuo de 15 segundos (GIF animado nativo .NET)." -ForegroundColor Cyan
+                            Write-Host "  3. Visualizacion en vivo en tiempo real (RDP Shadowing / Modo Sombra)." -ForegroundColor Yellow
                             Write-Host "  --------------------------------------------------"
                             Write-Host "  0. V O L V E R   A L   M E N U   A N T E R I O R"
                             Write-Header "==============================================================="
@@ -7007,10 +7008,417 @@ objShell.Run "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Byp
                                 "2" {
                                     cabecera
                                     menuOpcion "Se encuentra en el SUB_MENU: 100 ;;; Opcion: $op100"
-                                    Write-Host "`n--- CAPTURA DE PANTALLA REMOTA CON TAREA PROGRAMADA ---" -ForegroundColor Cyan
-                                    Write-Host "[INFO] Esta funcionalidad esta en fase de planificacion y diseño." -ForegroundColor Yellow
-                                    Write-Host "En proximas versiones podra ejecutarse sin requerir PsExec." -ForegroundColor Gray
+                                    Write-Host "`n--- GRABACION DE CLIP CONTINUO DE 15 SEGUNDOS (GIF ANIMADO) ---" -ForegroundColor Cyan
+                                    
+                                    # 1. Credenciales
+                                    $credOpt = $null
+                                    $usu = ""
+                                    $claTexto = ""
+                                    
+                                    Write-Host "`n======================================================================" -ForegroundColor Cyan
+                                    Write-Host "               AUTENTICACION PARA GRABACION REMOTA                   " -ForegroundColor Cyan
+                                    Write-Host "======================================================================" -ForegroundColor Cyan
+                                    Write-Host "  1. Credencial actual de Windows / Dominio (Recomendado - SSO: $env:USERDOMAIN\$env:USERNAME)" -ForegroundColor Green
+                                    if ($global:ShellCredencialCache) {
+                                        Write-Host "  2. Usar credenciales en memoria ($($global:ShellCredencialCache.UserName))" -ForegroundColor Cyan
+                                        Write-Host "  3. Ingresar nuevas credenciales alternativas (Usuario / Clave)" -ForegroundColor Yellow
+                                    } else {
+                                        Write-Host "  2. Ingresar credenciales alternativas (Usuario / Clave)" -ForegroundColor Yellow
+                                    }
+                                    Write-Host "  0. Cancelar operacion" -ForegroundColor Red
+                                    Write-Host "======================================================================" -ForegroundColor Cyan
+                                    
+                                    $opCred = Read-Host "Seleccione una opcion [1]"
+                                    if ([string]::IsNullOrWhiteSpace($opCred)) { $opCred = "1" }
+                                    
+                                    if ($opCred -eq "0") {
+                                        Write-Host "Operacion cancelada." -ForegroundColor Yellow
+                                        break
+                                    }
+                                    
+                                    if ($opCred -eq "1") {
+                                        Write-Host "[+] Utilizando credenciales activas de Windows ($env:USERDOMAIN\$env:USERNAME)..." -ForegroundColor Green
+                                    }
+                                    elseif ($global:ShellCredencialCache -and $opCred -eq "2") {
+                                        $credOpt = $global:ShellCredencialCache
+                                        $usu = $credOpt.UserName
+                                        $claTexto = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($credOpt.Password))
+                                        Write-Host "[+] Utilizando credenciales en memoria: $usu" -ForegroundColor Cyan
+                                    }
+                                    elseif (($global:ShellCredencialCache -and $opCred -eq "3") -or (-not $global:ShellCredencialCache -and $opCred -eq "2")) {
+                                        $domDefecto = $env:USERDOMAIN
+                                        $usuInput = Read-Host "Introduzca Usuario dominio ($domDefecto\usuario o .\admin)"
+                                        if ([string]::IsNullOrWhiteSpace($usuInput)) {
+                                            Write-Host "Operacion cancelada." -ForegroundColor Yellow
+                                            break
+                                        }
+                                        if ($usuInput -notmatch '\\|@') {
+                                            $usu = "$domDefecto\$usuInput"
+                                        } else {
+                                            $usu = $usuInput
+                                        }
+                                        $cla = Read-Host "Introduzca clave de usuario" -AsSecureString
+                                        $credOpt = New-Object System.Management.Automation.PSCredential($usu, $cla)
+                                        $claTexto = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($cla))
+                                        $global:ShellCredencialCache = $credOpt
+                                        Write-Host "[+] Credencial guardada en memoria de sesion para proximas operaciones." -ForegroundColor Green
+                                    }
+                                    else {
+                                        Write-Host "Opcion invalida. Cancelando..." -ForegroundColor Red
+                                        break
+                                    }
+                                    
+                                    $IPFinal = Get-StandardIPPrompt -Credential $credOpt
+                                    if ([string]::IsNullOrWhiteSpace($IPFinal)) {
+                                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                                        Read-Host "Presione ENTER para continuar..."
+                                        break
+                                    }
+                                    
+                                    $psexecPath = Get-PsExecPath
+                                    if (-not $psexecPath) {
+                                        Write-Host "[-] ERROR: PsExec.exe no detectado en C:\PSTools ni en el sistema." -ForegroundColor Red
+                                        Read-Host "Presione ENTER para continuar..."
+                                        break
+                                    }
+                                    
+                                    $computerTarget = $IPFinal
+                                    Write-Host "[*] Resolviendo Hostname de $IPFinal..." -ForegroundColor Gray
+                                    try {
+                                        $entry = [System.Net.Dns]::GetHostEntry($IPFinal)
+                                        $computerTarget = $entry.HostName.Split('.')[0]
+                                        Write-Host "[+] Hostname resuelto: $computerTarget (Kerberos habilitado)" -ForegroundColor Green
+                                    }
+                                    catch {
+                                        try {
+                                            $wmiSys = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $IPFinal -ErrorAction Stop
+                                            $computerTarget = $wmiSys.CSName
+                                            Write-Host "[+] Hostname resuelto via WMI: $computerTarget" -ForegroundColor Green
+                                        }
+                                        catch {
+                                            Write-Host "[-] Usando IP directamente: $IPFinal" -ForegroundColor Yellow
+                                        }
+                                    }
+                                    
+                                    if (-not [string]::IsNullOrWhiteSpace($usu) -and -not [string]::IsNullOrWhiteSpace($claTexto)) {
+                                        cmd.exe /c "net use \\$computerTarget\IPC$ /user:`"$usu`" `"$claTexto`"" 2>&1 | Out-Null
+                                    }
+                                    
+                                    # 2. Detectar sesión activa
+                                    Write-Host "[*] Detectando sesion de usuario activa..." -ForegroundColor Gray
+                                    $sessionId = $null
+                                    try {
+                                        $cimParams = @{
+                                            ClassName    = 'Win32_Process'
+                                            Filter       = "Name = 'explorer.exe'"
+                                            ComputerName = $computerTarget
+                                            ErrorAction  = 'Stop'
+                                        }
+                                        if ($credOpt) { $cimParams['Credential'] = $credOpt }
+                                        $sessionId = (Get-CimInstance @cimParams).SessionId | Select-Object -First 1
+                                    } catch {}
+                                    
+                                    if ($null -eq $sessionId) {
+                                        $qwinstaOut = qwinsta /server:$computerTarget
+                                        foreach ($line in $qwinstaOut) {
+                                            if ($line -like "*Active*") {
+                                                $parts = $line -split '\s+'
+                                                if ($parts[2] -match '^\d+$') { $sessionId = $parts[2] }
+                                                elseif ($parts[3] -match '^\d+$') { $sessionId = $parts[3] }
+                                            }
+                                        }
+                                    }
+                                    
+                                    if ($null -eq $sessionId) {
+                                        Write-Host "[-] ERROR: No se identifico una sesion activa en $computerTarget." -ForegroundColor Red
+                                        Read-Host "Presione ENTER para continuar..."
+                                        break
+                                    }
+                                    
+                                    Write-Host "[+] Sesion activa detectada: ID $sessionId" -ForegroundColor Green
+                                    
+                                    # 3. Preparar script remoto de captura de ráfaga (15 fotogramas en 15 segundos)
+                                    $localClipScript = Join-Path $env:TEMP "clip_temp.ps1"
+                                    $localClipVBS = Join-Path $env:TEMP "clip_run_temp.vbs"
+                                    $remoteTempDir = "\\$computerTarget\c$\Windows\Temp"
+                                    $remoteClipDir = "$remoteTempDir\clip_frames"
+                                    $remoteClipScript = "$remoteTempDir\clip.ps1"
+                                    $remoteClipVBS = "$remoteTempDir\clip.vbs"
+                                    
+                                    $clipScriptCode = @"
+[System.Reflection.Assembly]::LoadWithPartialName('System.Drawing') | Out-Null
+[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null
+try {
+    `$framesDir = 'C:\Windows\Temp\clip_frames'
+    if (Test-Path `$framesDir) { Remove-Item -Path `$framesDir -Recurse -Force | Out-Null }
+    New-Item -ItemType Directory -Path `$framesDir -Force | Out-Null
+    
+    `$bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    
+    for (`$i = 1; `$i -le 15; `$i++) {
+        try {
+            `$bmp = New-Object System.Drawing.Bitmap `$bounds.Width, `$bounds.Height
+            `$g = [System.Drawing.Graphics]::FromImage(`$bmp)
+            `$g.CopyFromScreen(`$bounds.Location, [System.Drawing.Point]::Empty, `$bounds.Size)
+            `$g.Dispose()
+            `$fPath = "`$framesDir\frame_`$(`$i.ToString('D2')).png"
+            `$bmp.Save(`$fPath, [System.Drawing.Imaging.ImageFormat]::Png)
+            `$bmp.Dispose()
+        } catch {}
+        if (`$i -lt 15) { Start-Sleep -Milliseconds 900 }
+    }
+} catch {}
+"@
+                                    
+                                    $clipVbsCode = @"
+Set objShell = CreateObject("WScript.Shell")
+objShell.Run "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\Windows\Temp\clip.ps1", 0, True
+"@
+                                    
+                                    try {
+                                        $clipScriptCode | Out-File -FilePath $localClipScript -Encoding utf8 -Force
+                                        $clipVbsCode | Out-File -FilePath $localClipVBS -Encoding ascii -Force
+                                        
+                                        if (Test-Path $remoteTempDir) {
+                                            Copy-Item -Path $localClipScript -Destination $remoteClipScript -Force | Out-Null
+                                            Copy-Item -Path $localClipVBS -Destination $remoteClipVBS -Force | Out-Null
+                                        } else {
+                                            throw "No se puede acceder al recurso administrativo en $remoteTempDir"
+                                        }
+                                    }
+                                    catch {
+                                        Write-Host "[-] ERROR: Fallo al copiar scripts remotos: $_" -ForegroundColor Red
+                                        Read-Host "Presione ENTER para continuar..."
+                                        break
+                                    }
+                                    
+                                    # 4. Ejecución silenciosa y espera de los 15 segundos
+                                    Write-Host "`n[*] Grabando clip continuo de 15 segundos en la sesion de $computerTarget..." -ForegroundColor Yellow
+                                    Write-Host "[*] Por favor espere ~15 segundos mientras se captura la actividad remota..." -ForegroundColor Cyan
+                                    
+                                    if (-not [string]::IsNullOrWhiteSpace($usu) -and -not [string]::IsNullOrWhiteSpace($claTexto)) {
+                                        $argumentos = "\\$computerTarget -u `"$usu`" -p `"$claTexto`" -s -i $sessionId -accepteula wscript.exe C:\Windows\Temp\clip.vbs"
+                                    } else {
+                                        $argumentos = "\\$computerTarget -s -i $sessionId -accepteula wscript.exe C:\Windows\Temp\clip.vbs"
+                                    }
+                                    
+                                    $proc = Start-Process -FilePath $psexecPath -ArgumentList $argumentos -NoNewWindow -PassThru -Wait
+                                    
+                                    # 5. Descargar fotogramas y ensamblar GIF
+                                    $localDestFolder = "C:\spscreen"
+                                    if (-not (Test-Path $localDestFolder)) { New-Item -ItemType Directory -Path $localDestFolder -Force | Out-Null }
+                                    
+                                    $localTempFramesDir = Join-Path $localDestFolder "temp_frames_$computerTarget"
+                                    if (Test-Path $localTempFramesDir) { Remove-Item -Path $localTempFramesDir -Recurse -Force | Out-Null }
+                                    New-Item -ItemType Directory -Path $localTempFramesDir -Force | Out-Null
+                                    
+                                    Start-Sleep -Milliseconds 800
+                                    
+                                    if (Test-Path $remoteClipDir) {
+                                        Write-Host "[*] Descargando fotogramas capturados..." -ForegroundColor Gray
+                                        Copy-Item -Path "$remoteClipDir\*.png" -Destination $localTempFramesDir -Force | Out-Null
+                                    }
+                                    
+                                    $gifName = "Clip15s_${computerTarget}_$(Get-Date -Format 'yyyyMMdd_HHmmss').gif"
+                                    $gifFullPath = Join-Path $localDestFolder $gifName
+                                    
+                                    Write-Host "[*] Ensamblando GIF animado con motor nativo .NET..." -ForegroundColor Cyan
+                                    $okGif = New-AnimatedGifFromFrames -FramesFolder $localTempFramesDir -OutputFile $gifFullPath
+                                    
+                                    if ($okGif -and (Test-Path $gifFullPath)) {
+                                        Write-Host "[+] EXITO: Clip animado de 15 segundos guardado en: $gifFullPath" -ForegroundColor Green
+                                        Start-Process $gifFullPath
+                                    } else {
+                                        Write-Host "[-] ERROR: No se pudo generar el clip animado. Verifique que se hayan capturado fotogramas." -ForegroundColor Red
+                                    }
+                                    
+                                    # 6. Limpieza
+                                    if (Test-Path $remoteClipDir) { Remove-Item -Path $remoteClipDir -Recurse -Force | Out-Null }
+                                    if (Test-Path $remoteClipScript) { Remove-Item -Path $remoteClipScript -Force | Out-Null }
+                                    if (Test-Path $remoteClipVBS) { Remove-Item -Path $remoteClipVBS -Force | Out-Null }
+                                    if (Test-Path $localClipScript) { Remove-Item -Path $localClipScript -Force | Out-Null }
+                                    if (Test-Path $localClipVBS) { Remove-Item -Path $localClipVBS -Force | Out-Null }
+                                    if (Test-Path $localTempFramesDir) { Remove-Item -Path $localTempFramesDir -Recurse -Force | Out-Null }
+                                    
                                     Read-Host "`nPresione ENTER para continuar..."
+                                }
+                                
+                                "3" {
+                                    cabecera
+                                    menuOpcion "Se encuentra en el SUB_MENU: 100 ;;; Opcion: $op100"
+                                    Write-Host "`n--- VISUALIZACION EN VIVO EN TIEMPO REAL (RDP SHADOWING) ---" -ForegroundColor Cyan
+                                    
+                                    # 1. Credenciales
+                                    $credOpt = $null
+                                    $usu = ""
+                                    $claTexto = ""
+                                    
+                                    Write-Host "`n======================================================================" -ForegroundColor Cyan
+                                    Write-Host "               AUTENTICACION PARA SHADOWING REMOTO                   " -ForegroundColor Cyan
+                                    Write-Host "======================================================================" -ForegroundColor Cyan
+                                    Write-Host "  1. Credencial actual de Windows / Dominio (Recomendado - SSO: $env:USERDOMAIN\$env:USERNAME)" -ForegroundColor Green
+                                    if ($global:ShellCredencialCache) {
+                                        Write-Host "  2. Usar credenciales en memoria ($($global:ShellCredencialCache.UserName))" -ForegroundColor Cyan
+                                        Write-Host "  3. Ingresar nuevas credenciales alternativas (Usuario / Clave)" -ForegroundColor Yellow
+                                    } else {
+                                        Write-Host "  2. Ingresar credenciales alternativas (Usuario / Clave)" -ForegroundColor Yellow
+                                    }
+                                    Write-Host "  0. Cancelar operacion" -ForegroundColor Red
+                                    Write-Host "======================================================================" -ForegroundColor Cyan
+                                    
+                                    $opCred = Read-Host "Seleccione una opcion [1]"
+                                    if ([string]::IsNullOrWhiteSpace($opCred)) { $opCred = "1" }
+                                    
+                                    if ($opCred -eq "0") {
+                                        Write-Host "Operacion cancelada." -ForegroundColor Yellow
+                                        break
+                                    }
+                                    
+                                    if ($opCred -eq "1") {
+                                        Write-Host "[+] Utilizando credenciales activas de Windows ($env:USERDOMAIN\$env:USERNAME)..." -ForegroundColor Green
+                                    }
+                                    elseif ($global:ShellCredencialCache -and $opCred -eq "2") {
+                                        $credOpt = $global:ShellCredencialCache
+                                        $usu = $credOpt.UserName
+                                        $claTexto = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($credOpt.Password))
+                                        Write-Host "[+] Utilizando credenciales en memoria: $usu" -ForegroundColor Cyan
+                                    }
+                                    elseif (($global:ShellCredencialCache -and $opCred -eq "3") -or (-not $global:ShellCredencialCache -and $opCred -eq "2")) {
+                                        $domDefecto = $env:USERDOMAIN
+                                        $usuInput = Read-Host "Introduzca Usuario dominio ($domDefecto\usuario o .\admin)"
+                                        if ([string]::IsNullOrWhiteSpace($usuInput)) {
+                                            Write-Host "Operacion cancelada." -ForegroundColor Yellow
+                                            break
+                                        }
+                                        if ($usuInput -notmatch '\\|@') {
+                                            $usu = "$domDefecto\$usuInput"
+                                        } else {
+                                            $usu = $usuInput
+                                        }
+                                        $cla = Read-Host "Introduzca clave de usuario" -AsSecureString
+                                        $credOpt = New-Object System.Management.Automation.PSCredential($usu, $cla)
+                                        $claTexto = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($cla))
+                                        $global:ShellCredencialCache = $credOpt
+                                        Write-Host "[+] Credencial guardada en memoria de sesion." -ForegroundColor Green
+                                    }
+                                    else {
+                                        Write-Host "Opcion invalida. Cancelando..." -ForegroundColor Red
+                                        break
+                                    }
+                                    
+                                    $IPFinal = Get-StandardIPPrompt -Credential $credOpt
+                                    if ([string]::IsNullOrWhiteSpace($IPFinal)) {
+                                        Write-Host "Operacion cancelada." -ForegroundColor Red
+                                        Read-Host "Presione ENTER para continuar..."
+                                        break
+                                    }
+                                    
+                                    $computerTarget = $IPFinal
+                                    Write-Host "[*] Resolviendo Hostname de $IPFinal..." -ForegroundColor Gray
+                                    try {
+                                        $entry = [System.Net.Dns]::GetHostEntry($IPFinal)
+                                        $computerTarget = $entry.HostName.Split('.')[0]
+                                        Write-Host "[+] Hostname resuelto: $computerTarget" -ForegroundColor Green
+                                    } catch {
+                                        try {
+                                            $wmiSys = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $IPFinal -ErrorAction Stop
+                                            $computerTarget = $wmiSys.CSName
+                                            Write-Host "[+] Hostname resuelto via WMI: $computerTarget" -ForegroundColor Green
+                                        } catch {
+                                            Write-Host "[-] Usando IP directamente: $IPFinal" -ForegroundColor Yellow
+                                        }
+                                    }
+                                    
+                                    # 2. Configurar el Registro Remoto para habilitar RDP Shadowing sin aviso al usuario
+                                    Write-Host "`n[*] Verificando y configurando directivas de Shadowing en $computerTarget..." -ForegroundColor Cyan
+                                    $shadowRegCmd = 'reg add "HKLM\System\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f & ' +
+                                                    'reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" /v Shadow /t REG_DWORD /d 2 /f & ' +
+                                                    'reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" /v DisableShadowConsent /t REG_DWORD /d 1 /f & ' +
+                                                    'netsh advfirewall firewall set rule group="Remote Desktop" new enable=Yes & ' +
+                                                    'netsh advfirewall firewall set rule group="Escritorio remoto" new enable=Yes & ' +
+                                                    'netsh advfirewall firewall set rule name="RemoteDesktop-Shadow-In-TCP" new enable=Yes'
+                                    
+                                    # Intentar vía WMI
+                                    $regOk = $false
+                                    try {
+                                        $procWmi = [wmiclass]"\\$computerTarget\root\cimv2:Win32_Process"
+                                        if ($procWmi) {
+                                            $res = $procWmi.Create("cmd.exe /c $shadowRegCmd")
+                                            if ($res.ReturnValue -eq 0) {
+                                                Write-Host "[+] Directivas de Shadowing configuradas remotamente via WMI." -ForegroundColor Green
+                                                $regOk = $true
+                                            }
+                                        }
+                                    } catch {}
+                                    
+                                    # Fallback vía PsExec si WMI no completó
+                                    if (-not $regOk) {
+                                        $psexecPath = Get-PsExecPath
+                                        if ($psexecPath) {
+                                            if (-not [string]::IsNullOrWhiteSpace($usu) -and -not [string]::IsNullOrWhiteSpace($claTexto)) {
+                                                $argFw = "\\$computerTarget -u `"$usu`" -p `"$claTexto`" -s -accepteula cmd.exe /c $shadowRegCmd"
+                                            } else {
+                                                $argFw = "\\$computerTarget -s -accepteula cmd.exe /c $shadowRegCmd"
+                                            }
+                                            Start-Process -FilePath $psexecPath -ArgumentList $argFw -Wait -NoNewWindow | Out-Null
+                                            Write-Host "[+] Directivas de Shadowing configuradas remotamente via PsExec." -ForegroundColor Green
+                                        }
+                                    }
+                                    
+                                    # 3. Detectar sesión activa
+                                    Write-Host "[*] Identificando ID de sesion activa en $computerTarget..." -ForegroundColor Gray
+                                    $sessionId = $null
+                                    try {
+                                        $cimParams = @{
+                                            ClassName    = 'Win32_Process'
+                                            Filter       = "Name = 'explorer.exe'"
+                                            ComputerName = $computerTarget
+                                            ErrorAction  = 'Stop'
+                                        }
+                                        if ($credOpt) { $cimParams['Credential'] = $credOpt }
+                                        $sessionId = (Get-CimInstance @cimParams).SessionId | Select-Object -First 1
+                                    } catch {}
+                                    
+                                    if ($null -eq $sessionId) {
+                                        $qwinstaOut = qwinsta /server:$computerTarget
+                                        foreach ($line in $qwinstaOut) {
+                                            if ($line -like "*Active*") {
+                                                $parts = $line -split '\s+'
+                                                if ($parts[2] -match '^\d+$') { $sessionId = $parts[2] }
+                                                elseif ($parts[3] -match '^\d+$') { $sessionId = $parts[3] }
+                                            }
+                                        }
+                                    }
+                                    
+                                    if ($null -eq $sessionId) {
+                                        Write-Host "[-] ERROR: No se encontro sesion activa para supervisar en $computerTarget." -ForegroundColor Red
+                                        Read-Host "Presione ENTER para continuar..."
+                                        break
+                                    }
+                                    
+                                    Write-Host "[+] Sesion activa detectada: ID $sessionId" -ForegroundColor Green
+                                    
+                                    # 4. Selector de Modalidad (Solo Ver vs Control Total)
+                                    Write-Host "`n======================================================================" -ForegroundColor Cyan
+                                    Write-Host "                 MODALIDAD DE SESION EN LA SOMBRA                     " -ForegroundColor Cyan
+                                    Write-Host "======================================================================" -ForegroundColor Cyan
+                                    Write-Host "  1. Solo Ver / Monitoreo en Vivo (Sin interferir con el usuario)" -ForegroundColor Green
+                                    Write-Host "  2. Control Total (Interactivo: controlar raton y teclado)" -ForegroundColor Yellow
+                                    Write-Host "======================================================================" -ForegroundColor Cyan
+                                    $opModoSombra = Read-Host "Seleccione modo [1]"
+                                    if ([string]::IsNullOrWhiteSpace($opModoSombra)) { $opModoSombra = "1" }
+                                    
+                                    $mstscArgs = "/v:$computerTarget /shadow:$sessionId /noConsentPrompt"
+                                    if ($opModoSombra -eq "2") {
+                                        $mstscArgs += " /control"
+                                    }
+                                    
+                                    Write-Host "`n[+] Abriendo sesion RDP Shadow en tiempo real hacia $computerTarget (Sesion $sessionId)..." -ForegroundColor Green
+                                    Write-Host "[*] Puede observar la pantalla continuamente. Para salir cierre la ventana o presione ALT + F4.`n" -ForegroundColor Yellow
+                                    
+                                    Start-Process -FilePath "mstsc.exe" -ArgumentList $mstscArgs
+                                    
+                                    Read-Host "Presione ENTER para continuar en ShellSW..."
                                 }
                                 
                                 "0" {

@@ -1,4 +1,4 @@
-﻿
+
 <#
 .SYNOPSIS
     Script de mantenimiento optimizado con correccion de sintaxis.
@@ -1971,6 +1971,86 @@ function psConectarPowerShellRemoto {
 
         Start-Process -FilePath $psexecPath -ArgumentList $argList -ErrorAction SilentlyContinue
     }
+}
+
+#**********************************************************************************************************************************
+# MODULO: GENERADOR DE GIF ANIMADO NATIVO (.NET / WPF)
+#**********************************************************************************************************************************
+
+function New-AnimatedGifFromFrames {
+    <#
+    .SYNOPSIS
+        Ensambla una secuencia de imágenes PNG en un archivo GIF animado continuo (.gif).
+        Utiliza el motor nativo de WPF (PresentationCore) y System.Drawing sin dependencias externas.
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$FramesFolder,
+        [Parameter(Mandatory=$true)]
+        [string]$OutputFile,
+        [string]$Filter = "frame_*.png"
+    )
+
+    Add-Type -AssemblyName PresentationCore -ErrorAction SilentlyContinue
+    Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
+
+    $gdiDef = @"
+using System;
+using System.Runtime.InteropServices;
+public class ShellGdiUtil {
+    [DllImport("gdi32.dll", EntryPoint="DeleteObject")]
+    public static extern bool DeleteObject(IntPtr hObject);
+}
+"@
+    if (-not ([System.Management.Automation.PSTypeName]"ShellGdiUtil").Type) {
+        Add-Type -TypeDefinition $gdiDef -ErrorAction SilentlyContinue
+    }
+
+    $frames = Get-ChildItem -Path $FramesFolder -Filter $Filter -ErrorAction SilentlyContinue | Sort-Object Name
+    if (-not $frames -or $frames.Count -eq 0) {
+        return $false
+    }
+
+    $gifEncoder = New-Object System.Windows.Media.Imaging.GifBitmapEncoder
+
+    foreach ($file in $frames) {
+        $bmp = [System.Drawing.Bitmap]::FromFile($file.FullName)
+        $hbmp = $bmp.GetHbitmap()
+        try {
+            $bmpSource = [System.Windows.Interop.Imaging]::CreateBitmapSourceFromHBitmap(
+                $hbmp,
+                [IntPtr]::Zero,
+                [System.Windows.Int32Rect]::Empty,
+                [System.Windows.Media.Imaging.BitmapSizeOptions]::FromEmptyOptions()
+            )
+            $frameObj = [System.Windows.Media.Imaging.BitmapFrame]::Create($bmpSource)
+            $gifEncoder.Frames.Add($frameObj)
+        }
+        finally {
+            [ShellGdiUtil]::DeleteObject($hbmp) | Out-Null
+            $bmp.Dispose()
+        }
+    }
+
+    $ms = New-Object System.IO.MemoryStream
+    $gifEncoder.Save($ms)
+    $bytes = $ms.ToArray()
+    $ms.Dispose()
+
+    # Bloque de extension de aplicacion Netscape 2.0 para repeticion continua infinita
+    $netscapeExt = [byte[]](33, 255, 11, 78, 69, 84, 83, 67, 65, 80, 69, 50, 46, 48, 3, 1, 0, 0, 0)
+
+    if ($bytes.Length -gt 13) {
+        $finalBytes = New-Object 'System.Collections.Generic.List[byte]'
+        $finalBytes.AddRange([byte[]]$bytes[0..12])
+        $finalBytes.AddRange($netscapeExt)
+        $finalBytes.AddRange([byte[]]$bytes[13..($bytes.Length - 1)])
+        [System.IO.File]::WriteAllBytes($OutputFile, $finalBytes.ToArray())
+    } else {
+        [System.IO.File]::WriteAllBytes($OutputFile, $bytes)
+    }
+
+    return (Test-Path $OutputFile)
 }
 
 # MODULO: INFORMACION DEL USUARIO ACTIVO (LOCAL Y DE DOMINIO)

@@ -17,16 +17,14 @@
 
 ## 🕒 2. Última Sesión de Trabajo
 * **Fecha:** 17 de Noviembre de 2026
-* **Hito Completado:** **Optimización de la Opción 100 (Captura de Pantalla Remota) en `subMenu25.ps1` con Autenticación Flexible (SSO / Caché de Memoria / Alternativas)**.
+* **Hito Completado:** **Suite Completa de Captura y Monitoreo Remoto (Opción 100 en `subMenu25.ps1`): Screenshot PNG, Clip Animado de 15s (GIF Nativo) y RDP Shadowing en Tiempo Real**.
 * **Cambios Clave Realizados:**
-  1. **Autenticación Inteligente en Submenú 100 (Opción 1: PsExec):**
-     - Se eliminó la obligación de digitar usuario y contraseña en cada captura individual.
-     - **Modo 1 (Recomendado - SSO por defecto):** Con presionar <kbd>Enter</kbd> (o marcar `1`), utiliza de inmediato las credenciales de la sesión activa de Windows (`$env:USERDOMAIN\$env:USERNAME`) sin solicitar contraseña.
-     - **Modo 2 (Caché en Memoria):** Si el operador introduce credenciales alternativas una vez, se guardan en la variable de sesión `$global:ShellCredencialCache` y se protegen de la limpieza de fin de ciclo en `finally`, permitiendo reutilizarlas en capturas subsiguientes con solo seleccionarlas.
-     - **Modo 3 (Credenciales Alternativas):** Permite ingresar usuario de dominio o local (`.\Administrador`) y clave, guardándolas en memoria para la sesión activa.
-  2. **Compatibilidad PsExec y WMI/CIM:**
-     - En modo SSO, PsExec se invoca limpiamente sin los modificadores `-u` y `-p`, permitiendo que Windows herede el token de seguridad corporativo de forma transparente.
-     - Si se usan credenciales alternativas, se enlaza automáticamente el recurso de red `\\$computerTarget\IPC$` con las credenciales explícitas para garantizar que la copia de scripts silenciosos a `\\$computerTarget\c$\Windows\Temp` y la detección de sesión interactiva (`explorer.exe`) no fallen por acceso denegado.
+  1. **Rediseño Integral de la Opción 100 en [src/subMenu25.ps1](src/subMenu25.ps1):**
+     - **Opción 100.1:** Captura de pantalla estática instantánea (.PNG) con selector SSO por defecto, memoria de sesión de credenciales alternativas (`$global:ShellCredencialCache`) y ejecución transparente vía PsExec.
+     - **Opción 100.2:** Grabación de clip continuo de 15 segundos generado silenciosamente en la sesión interactiva del usuario remoto y ensamblado automáticamente como archivo **GIF animado continuo (.gif)** en `C:\spscreen\` mediante la nueva función nativa [New-AnimatedGifFromFrames](src/helpers.ps1) (WPF `PresentationCore` + `System.Drawing`, 100% nativo sin dependencias ni software externo).
+     - **Opción 100.3:** Visualización en vivo en tiempo real mediante **RDP Shadowing (`mstsc /shadow`)**. Aplica de forma remota y transparente las directivas requeridas en el registro de Windows (`Shadow = 2`, `DisableShadowConsent = 1`, `fDenyTSConnections = 0` y apertura de firewall para Shadowing) vía WMI / PsExec, permitiendo supervisar la pantalla remota fluida a 60 fps en tiempo real (en modo Solo Ver o Control Total) sin interrumpir al usuario.
+  2. **Motor de Ensamblado de GIF Animado en [src/helpers.ps1](src/helpers.ps1):**
+     - Función `New-AnimatedGifFromFrames`: Procesa ráfagas de fotogramas, libera manejadores GDI con `DeleteObject` de `gdi32.dll` e inyecta la cabecera Netscape 2.0 para repetición continua infinita en cualquier visor de imágenes.
   3. **Compilación y verificación:**
      - Sintaxis validada en todos los módulos con AST Parser (0 errores).
      - Compilación exitosa con [build.ps1](build.ps1) generando el binario [ShellSW.bat](ShellSW.bat).
@@ -34,10 +32,13 @@
 ---
 
 ## 📍 3. ¿En qué punto nos hemos quedado?
-La optimización de la **Opción 100: Captura de Pantalla Remota** en [src/subMenu25.ps1](src/subMenu25.ps1) está 100% implementada y compilada en [ShellSW.bat](ShellSW.bat).
+La **Suite de Captura y Monitoreo Remoto (Opción 100)** en [src/subMenu25.ps1](src/subMenu25.ps1) está 100% implementada y compilada en [ShellSW.bat](ShellSW.bat).
 
-* **Estado de Git:** Rama `main`, cambios listos en `ShellSW.bat`, `src/subMenu25.ps1` y `ESTADO_PROYECTO.md`.
-* **Próxima acción técnica:** Probar la captura remota en `ShellSW.bat` -> opción `25` -> opción `100` -> opción `1`.
+* **Estado de Git:** Rama `main`, cambios listos en `ShellSW.bat`, `src/helpers.ps1`, `src/subMenu25.ps1` y `ESTADO_PROYECTO.md`.
+* **Próxima acción técnica:** Probar las opciones en `ShellSW.bat` -> opción `25` -> opción `100`:
+  * `1`: Captura instantánea PNG.
+  * `2`: Clip de 15 segundos GIF.
+  * `3`: Visualización en vivo (RDP Shadowing).
 * **Publicación:** Cuando desees sincronizar a GitHub, usa la opción oculta `1010` en el menú principal.
 
 ---
