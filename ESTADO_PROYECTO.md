@@ -16,33 +16,28 @@
 ---
 
 ## 🕒 2. Última Sesión de Trabajo
-* **Fecha:** 10 de Noviembre de 2026
-* **Hito Completado:** **Implementación de la Opción 7: Consola Remota (PowerShell Remoto Directo e Interactivo) en `subMenu28.ps1`**.
+* **Fecha:** 17 de Noviembre de 2026
+* **Hito Completado:** **Optimización de la Opción 100 (Captura de Pantalla Remota) en `subMenu25.ps1` con Autenticación Flexible (SSO / Caché de Memoria / Alternativas)**.
 * **Cambios Clave Realizados:**
-  1. **Nuevo Grupo y Opción 7 en [src/subMenu28.ps1](src/subMenu28.ps1):**
-     - Se añadió al menú visual y a la lógica de selección:
-       * `7. Consola Remota`
-       * `7.1 || CONECTAR || PowerShell Remoto (Sesion Directa / Interactiva)`
-     - Integrado con la función de resolución flexible de destino `$obtenerDestino` (admite IP completa, 2 últimos octetos, 1 octeto o Hostname).
-  2. **Arquitectura de Conexión Remota Nativa de Alto Rendimiento en [src/helpers.ps1](src/helpers.ps1):**
-     - **Función `psConectarPowerShellRemoto`:**
-       * **Nivel 1 (WinRM / WS-Man Nativo - Puerto 5985):** Abre una sesión interactiva nativa mediante proceso PowerShell interactivo (`-NoExit`), resolviendo la limitación de PowerShell donde `Enter-PSSession` se cerraba inmediatamente al ejecutarse dentro de scripts por lotes (.bat). Permite elegir entre **Ventana Nueva Independiente (Multitarea Asíncrona)** o **Misma Consola**. En el modo de ventana independiente, libera inmediatamente la ventana principal de ShellSW sin bloquear la consola, permitiendo multitarea real. Soporta Kerberos SSO de dominio sin contraseñas, tuberías de objetos y ejecución de scripts remotos con prompt `[HOSTNAME]: PS>`.
-       * **Diagnóstico Pre-flight y Auto-reparación (`psHabilitarRemotingRapido`):** Comprueba conectividad al puerto 5985 con un timeout ultra-rápido de 1200ms. Si WinRM está cerrado, ofrece habilitar el servicio y abrir el firewall de forma remota y transparente vía WMI (`Win32_Process`) o PsExec con 1 solo clic.
-       * **Nivel 2 (Fallback PsExec interactivo):** Si WinRM no responde o el puerto está bloqueado por políticas de red, ofrece abrir de inmediato una consola interactiva elevada mediante PsExec sobre SMB (puerto 445) en ventana independiente sin interferir con la sesión de ShellSW.
-  3. **Hito Previo Consolidado (Opción 6: Gestión SIAF-SICE):**
-     - Configuración multi-capa 100% WMI de símbolos regionales (punto decimal `.`, miles `,`, moneda `Bs.`, fecha `dd/MM/yyyy`, GeoID `26` y `UserLocaleFromLanguageProfileOptOut = 1`).
-     - Admite aplicar a sesión actual o a todos los usuarios (sesiones activas, perfiles en disco y plantilla base `Default User`).
-  4. **Compilación y verificación:**
-     - Sintaxis validada con AST Parser (0 errores).
+  1. **Autenticación Inteligente en Submenú 100 (Opción 1: PsExec):**
+     - Se eliminó la obligación de digitar usuario y contraseña en cada captura individual.
+     - **Modo 1 (Recomendado - SSO por defecto):** Con presionar <kbd>Enter</kbd> (o marcar `1`), utiliza de inmediato las credenciales de la sesión activa de Windows (`$env:USERDOMAIN\$env:USERNAME`) sin solicitar contraseña.
+     - **Modo 2 (Caché en Memoria):** Si el operador introduce credenciales alternativas una vez, se guardan en la variable de sesión `$global:ShellCredencialCache` y se protegen de la limpieza de fin de ciclo en `finally`, permitiendo reutilizarlas en capturas subsiguientes con solo seleccionarlas.
+     - **Modo 3 (Credenciales Alternativas):** Permite ingresar usuario de dominio o local (`.\Administrador`) y clave, guardándolas en memoria para la sesión activa.
+  2. **Compatibilidad PsExec y WMI/CIM:**
+     - En modo SSO, PsExec se invoca limpiamente sin los modificadores `-u` y `-p`, permitiendo que Windows herede el token de seguridad corporativo de forma transparente.
+     - Si se usan credenciales alternativas, se enlaza automáticamente el recurso de red `\\$computerTarget\IPC$` con las credenciales explícitas para garantizar que la copia de scripts silenciosos a `\\$computerTarget\c$\Windows\Temp` y la detección de sesión interactiva (`explorer.exe`) no fallen por acceso denegado.
+  3. **Compilación y verificación:**
+     - Sintaxis validada en todos los módulos con AST Parser (0 errores).
      - Compilación exitosa con [build.ps1](build.ps1) generando el binario [ShellSW.bat](ShellSW.bat).
 
 ---
 
 ## 📍 3. ¿En qué punto nos hemos quedado?
-La nueva funcionalidad **7. Consola Remota (PowerShell Remoto)** está completamente implementada, compilada en [ShellSW.bat](ShellSW.bat) y lista para producción.
+La optimización de la **Opción 100: Captura de Pantalla Remota** en [src/subMenu25.ps1](src/subMenu25.ps1) está 100% implementada y compilada en [ShellSW.bat](ShellSW.bat).
 
-* **Estado de Git:** Rama `main`, cambios listos en `ShellSW.bat`, `src/helpers.ps1`, `src/subMenu28.ps1` y `ESTADO_PROYECTO.md`.
-* **Próxima acción técnica:** Probar la conexión ingresando a `ShellSW.bat` -> opción `28` -> opción `7` (o `7.1`) e ingresando la IP o los últimos dos octetos del equipo objetivo.
+* **Estado de Git:** Rama `main`, cambios listos en `ShellSW.bat`, `src/subMenu25.ps1` y `ESTADO_PROYECTO.md`.
+* **Próxima acción técnica:** Probar la captura remota en `ShellSW.bat` -> opción `25` -> opción `100` -> opción `1`.
 * **Publicación:** Cuando desees sincronizar a GitHub, usa la opción oculta `1010` en el menú principal.
 
 ---
@@ -74,5 +69,6 @@ La nueva funcionalidad **7. Consola Remota (PowerShell Remoto)** está completam
 - [x] Documentación de sincronización y bitácora de memoria (`RECUERDAME`).
 - [x] Opción 6: Gestión de Símbolos SIAF-SICE multi-capa en Submenú 28.
 - [x] Opción 7: Consola Remota PowerShell Interactiva (WinRM + WMI auto-enable + PsExec fallback).
+- [x] Optimización Opción 100: Captura de pantalla remota con SSO por defecto y caché de credenciales en Submenú 25.
 - [ ] Probar flujo completo de bajada en la PC secundaria mediante la opción `1011`.
 - [ ] Revisión periódica de submódulos de administración según requerimientos del equipo de Helpdesk.

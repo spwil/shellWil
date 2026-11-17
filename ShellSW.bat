@@ -14942,12 +14942,64 @@ try {
                                     
                                     Write-Host "`n--- CAPTURA DE PANTALLA REMOTA CON PSEXEC ---" -ForegroundColor Cyan
                                     
-                                    $usu = Read-Host "Introduzca Usuario dominio (gmsantacruz\usuario)"
-                                    $cla = Read-Host "Introduzca clave de usuario" -AsSecureString
+                                    # 1. Selección y Gestión de Credenciales Administrativas
                                     $credOpt = $null
-                                    if (-not [string]::IsNullOrWhiteSpace($usu) -and $null -ne $cla) {
-                                        $credOpt = New-Object System.Management.Automation.PSCredential("gmsantacruz\$usu", $cla)
+                                    $usu = ""
+                                    $claTexto = ""
+                                    
+                                    Write-Host "`n======================================================================" -ForegroundColor Cyan
+                                    Write-Host "               AUTENTICACION PARA CAPTURA REMOTA                     " -ForegroundColor Cyan
+                                    Write-Host "======================================================================" -ForegroundColor Cyan
+                                    Write-Host "  1. Credencial actual de Windows / Dominio (Recomendado - SSO: $env:USERDOMAIN\$env:USERNAME)" -ForegroundColor Green
+                                    if ($global:ShellCredencialCache) {
+                                        Write-Host "  2. Usar credenciales en memoria ($($global:ShellCredencialCache.UserName))" -ForegroundColor Cyan
+                                        Write-Host "  3. Ingresar nuevas credenciales alternativas (Usuario / Clave)" -ForegroundColor Yellow
+                                    } else {
+                                        Write-Host "  2. Ingresar credenciales alternativas (Usuario / Clave)" -ForegroundColor Yellow
                                     }
+                                    Write-Host "  0. Cancelar operacion" -ForegroundColor Red
+                                    Write-Host "======================================================================" -ForegroundColor Cyan
+                                    
+                                    $opCred = Read-Host "Seleccione una opcion [1]"
+                                    if ([string]::IsNullOrWhiteSpace($opCred)) { $opCred = "1" }
+                                    
+                                    if ($opCred -eq "0") {
+                                        Write-Host "Operacion cancelada." -ForegroundColor Yellow
+                                        break
+                                    }
+                                    
+                                    if ($opCred -eq "1") {
+                                        Write-Host "[+] Utilizando credenciales activas de Windows ($env:USERDOMAIN\$env:USERNAME)..." -ForegroundColor Green
+                                    }
+                                    elseif ($global:ShellCredencialCache -and $opCred -eq "2") {
+                                        $credOpt = $global:ShellCredencialCache
+                                        $usu = $credOpt.UserName
+                                        $claTexto = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($credOpt.Password))
+                                        Write-Host "[+] Utilizando credenciales en memoria: $usu" -ForegroundColor Cyan
+                                    }
+                                    elseif (($global:ShellCredencialCache -and $opCred -eq "3") -or (-not $global:ShellCredencialCache -and $opCred -eq "2")) {
+                                        $domDefecto = $env:USERDOMAIN
+                                        $usuInput = Read-Host "Introduzca Usuario dominio ($domDefecto\usuario o .\admin)"
+                                        if ([string]::IsNullOrWhiteSpace($usuInput)) {
+                                            Write-Host "Operacion cancelada." -ForegroundColor Yellow
+                                            break
+                                        }
+                                        if ($usuInput -notmatch '\\|@') {
+                                            $usu = "$domDefecto\$usuInput"
+                                        } else {
+                                            $usu = $usuInput
+                                        }
+                                        $cla = Read-Host "Introduzca clave de usuario" -AsSecureString
+                                        $credOpt = New-Object System.Management.Automation.PSCredential($usu, $cla)
+                                        $claTexto = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($cla))
+                                        $global:ShellCredencialCache = $credOpt
+                                        Write-Host "[+] Credencial guardada en memoria de sesion para proximas capturas." -ForegroundColor Green
+                                    }
+                                    else {
+                                        Write-Host "Opcion invalida. Cancelando..." -ForegroundColor Red
+                                        break
+                                    }
+                                    
                                     $IPFinal = Get-StandardIPPrompt -Credential $credOpt
                                     if ([string]::IsNullOrWhiteSpace($IPFinal)) {
                                         Write-Host "Operacion cancelada." -ForegroundColor Red
@@ -14955,7 +15007,6 @@ try {
                                         break
                                     }
                                     
-                                    $claTexto = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($cla))
                                     $psexecPath = Get-PsExecPath
                                     
                                     if (-not $psexecPath) {
@@ -14974,7 +15025,19 @@ try {
                                         Write-Host "[+] Hostname resuelto: $computerTarget (Kerberos habilitado)" -ForegroundColor Green
                                     }
                                     catch {
-                                        Write-Host "[-] No se pudo resolver Hostname. Usando IP directamente: $IPFinal" -ForegroundColor Yellow
+                                        try {
+                                            $wmiSys = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $IPFinal -ErrorAction Stop
+                                            $computerTarget = $wmiSys.CSName
+                                            Write-Host "[+] Hostname resuelto via WMI: $computerTarget" -ForegroundColor Green
+                                        }
+                                        catch {
+                                            Write-Host "[-] No se pudo resolver Hostname. Usando IP directamente: $IPFinal" -ForegroundColor Yellow
+                                        }
+                                    }
+                                    
+                                    # Si se usan credenciales alternativas explícitas, asegurar enlace de red SMB con IPC$
+                                    if (-not [string]::IsNullOrWhiteSpace($usu) -and -not [string]::IsNullOrWhiteSpace($claTexto)) {
+                                        cmd.exe /c "net use \\$computerTarget\IPC$ /user:`"$usu`" `"$claTexto`"" 2>&1 | Out-Null
                                     }
                                     
                                     # 1. Detectar ID de sesión activa del usuario (con reintento de habilitación de administración remota)
@@ -14986,11 +15049,17 @@ try {
                                     while ($null -eq $sessionId -and $intento -lt $intentosMax) {
                                         $intento++
                                         try {
-                                            # Obtener ID de la sesión donde corre explorer.exe
-                                            $sessionId = (Get-CimInstance -ClassName Win32_Process -Filter "Name = 'explorer.exe'" -ComputerName $computerTarget).SessionId | Select-Object -First 1
+                                            $cimParams = @{
+                                                ClassName    = 'Win32_Process'
+                                                Filter       = "Name = 'explorer.exe'"
+                                                ComputerName = $computerTarget
+                                                ErrorAction  = 'Stop'
+                                            }
+                                            if ($credOpt) { $cimParams['Credential'] = $credOpt }
+                                            $sessionId = (Get-CimInstance @cimParams).SessionId | Select-Object -First 1
                                         }
                                         catch {
-                                            Write-Host "[-] No se pudo consultar la sesion via WMI (Intento $intento de $intentosMax)." -ForegroundColor Yellow
+                                            Write-Host "[-] No se pudo consultar la sesion via WMI/CIM (Intento $intento de $intentosMax)." -ForegroundColor Yellow
                                         }
                                         
                                         # Fallback a qwinsta si falla WMI
@@ -15007,8 +15076,12 @@ try {
                                         
                                         # Si falla la detección en el primer intento, ejecutamos el script de habilitación remota reutilizando la función
                                         if ($null -eq $sessionId -and $intento -lt $intentosMax) {
-                                            Write-Host "`n[!] No se pudo conectar a $computerTarget. Intentando habilitar WMI/RPC/WinRM con las credenciales proporcionadas..." -ForegroundColor Magenta
-                                            psHabilitarAdministracionRemota -targetInput $computerTarget -username $usu -passwordText $claTexto
+                                            Write-Host "`n[!] No se pudo conectar a $computerTarget. Intentando habilitar WMI/RPC/WinRM..." -ForegroundColor Magenta
+                                            if ($credOpt) {
+                                                psHabilitarAdministracionRemota -targetInput $computerTarget -username $usu -passwordText $claTexto
+                                            } else {
+                                                psHabilitarAdministracionRemota -targetInput $computerTarget
+                                            }
                                             Write-Host "[*] Reintentando conexion..." -ForegroundColor Cyan
                                             Start-Sleep -Seconds 3
                                         }
@@ -15074,7 +15147,11 @@ objShell.Run "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Byp
                                     
                                     # 3. Ejecutar de forma silenciosa mediante wscript.exe en la sesión interactiva del usuario
                                     Write-Host "[*] Ejecutando captura de pantalla de forma silenciosa..." -ForegroundColor Yellow
-                                    $argumentos = "\\$computerTarget -u gmsantacruz\$usu -p $claTexto -s -i $sessionId -accepteula wscript.exe C:\Windows\Temp\run.vbs"
+                                    if (-not [string]::IsNullOrWhiteSpace($usu) -and -not [string]::IsNullOrWhiteSpace($claTexto)) {
+                                        $argumentos = "\\$computerTarget -u `"$usu`" -p `"$claTexto`" -s -i $sessionId -accepteula wscript.exe C:\Windows\Temp\run.vbs"
+                                    } else {
+                                        $argumentos = "\\$computerTarget -s -i $sessionId -accepteula wscript.exe C:\Windows\Temp\run.vbs"
+                                    }
                                     
                                     $proc = Start-Process -FilePath $psexecPath -ArgumentList $argumentos -NoNewWindow -PassThru -Wait
                                     
@@ -15089,6 +15166,8 @@ objShell.Run "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Byp
                                     
                                     $localImageName = "Captura_${computerTarget}_$(Get-Date -Format 'yyyyMMdd_HHmmss').png"
                                     $localImageFullPath = Join-Path $localDestFolder $localImageName
+                                    
+                                    if (-not (Test-Path $remoteImage)) { Start-Sleep -Milliseconds 800 }
                                     
                                     if (Test-Path $remoteImage) {
                                         Move-Item -Path $remoteImage -Destination $localImageFullPath -Force
@@ -15200,7 +15279,7 @@ objShell.Run "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Byp
             # 2. Eliminar variables temporales de la sesión para evitar errores de "cadena de entrada"
             # Mantenemos variables críticas del script
             Get-Variable | Where-Object { 
-                $_.Name -notmatch 'salirPrincipal|opcion|SCRIPT_PATH|PWD|PS|HOME|Error|PID|RemoteTarget' 
+                $_.Name -notmatch 'salirPrincipal|opcion|SCRIPT_PATH|PWD|PS|HOME|Error|PID|RemoteTarget|ShellCredencialCache' 
             } | Remove-Variable -ErrorAction SilentlyContinue
 
             # 3. Pequeña pausa para estabilizar procesos de red si fuera necesario
