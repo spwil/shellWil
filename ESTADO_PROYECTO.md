@@ -16,29 +16,46 @@
 ---
 
 ## 🕒 2. Última Sesión de Trabajo
-* **Fecha:** 17 de Noviembre de 2026
-* **Hito Completado:** **Suite Completa de Captura y Monitoreo Remoto (Opción 100 en `subMenu25.ps1`): Screenshot PNG, Clip Animado de 15s (GIF Nativo) y RDP Shadowing en Tiempo Real**.
+* **Fecha:** 18 de Noviembre de 2026
+* **Hito Completado:** **Modularización, Compatibilidad Multi-OS (Win 7 a 11), Soporte Workgroup y Resiliencia de Servicios en la Opción 100 (`src/subMenu25.ps1`)**.
 * **Cambios Clave Realizados:**
-  1. **Rediseño Integral de la Opción 100 en [src/subMenu25.ps1](src/subMenu25.ps1):**
-     - **Opción 100.1:** Captura de pantalla estática instantánea (.PNG) con selector SSO por defecto, memoria de sesión de credenciales alternativas (`$global:ShellCredencialCache`) y ejecución transparente vía PsExec.
-     - **Opción 100.2:** Grabación de clip continuo de 15 segundos generado silenciosamente en la sesión interactiva del usuario remoto y ensamblado automáticamente como archivo **GIF animado continuo (.gif)** en `C:\spscreen\` mediante la nueva función nativa [New-AnimatedGifFromFrames](src/helpers.ps1) (WPF `PresentationCore` + `System.Drawing`, 100% nativo sin dependencias ni software externo).
-     - **Opción 100.3:** Visualización en vivo en tiempo real mediante **RDP Shadowing (`mstsc /shadow`)**. Aplica de forma remota y transparente las directivas requeridas en el registro de Windows (`Shadow = 2`, `DisableShadowConsent = 1`, `fDenyTSConnections = 0` y apertura de firewall para Shadowing) vía WMI / PsExec, permitiendo supervisar la pantalla remota fluida a 60 fps en tiempo real (en modo Solo Ver o Control Total) sin interrumpir al usuario.
-  2. **Motor de Ensamblado de GIF Animado en [src/helpers.ps1](src/helpers.ps1):**
-     - Función `New-AnimatedGifFromFrames`: Procesa ráfagas de fotogramas, libera manejadores GDI con `DeleteObject` de `gdi32.dll` e inyecta la cabecera Netscape 2.0 para repetición continua infinita en cualquier visor de imágenes.
-  3. **Compilación y verificación:**
-     - Sintaxis validada en todos los módulos con AST Parser (0 errores).
-     - Compilación exitosa con [build.ps1](build.ps1) generando el binario [ShellSW.bat](ShellSW.bat).
+  1. **Motor Centralizado de Preparación Remota (`Initialize-RemoteScreenEnvironment`):**
+     - Modularización integral de las opciones 1, 2 y 3 bajo una sola función resiliente.
+     - **Activación Interna y Automática de Servicios:** En las opciones 2 (GIF) y 3 (RDP Shadowing) ahora se auto-inician y configuran en cascada los servicios requeridos (`LanmanServer`, `RpcSs`, `winmgmt`, `RemoteRegistry` y para Shadowing `SessionEnv`, `UmRdpService`, `TermService`).
+  2. **Control Estricto de Tiempos (Anti-Congelamiento):**
+     - Comprobación previa de sockets en puertos 445 (SMB) y 135 (RPC) con timeout de **1000 ms** antes de invocar herramientas pesadas.
+     - PsExec configurado con parámetro de timeout `-n 4` / `-n 6` para evitar que la consola quede estancada ante equipos apagados o no receptivos.
+     - Detección de sesión interactiva limitada a 2 intentos con remediación automática entre intentos.
+  3. **Compatibilidad Total desde Windows 7 hasta Windows 11:**
+     - Fallback automático de `Get-CimInstance` (PS 3.0+) a `Get-WmiObject` (compatible con PS 2.0 y Windows 7).
+     - **Detección inteligente de versión de Windows:** Si el equipo remoto es Windows 7 / 8.0 (kernel NT < 6.3), la opción 3 advierte que el parámetro nativo `/shadow` no existe en Windows 7 y ofrece la alternativa oficial de Microsoft: **Asistencia Remota (`msra.exe /offerRA`)**.
+  4. **Soporte Avanzado para Equipos Fuera de Dominio (Workgroup):**
+     - Detección automática de usuarios locales o fuera de dominio (`.\admin`).
+     - Creación de túnel SMB autenticado (`net use \\Target\IPC$`) para prevenir errores de acceso denegado (Error 5) bajo NTLM.
+     - Inyección de directiva de bypass de Remote UAC (`LocalAccountTokenFilterPolicy = 1`) y `AutoShareWks = 1`.
+     - Apertura de reglas de firewall aplicadas a todos los perfiles (`profile=any`).
+     - Saneamiento en `src/helpers.ps1` (`psHabilitarAdministracionRemota`) eliminando el prefijo de dominio corporativo forzado.
+     - Configuración de `TrustedHosts = *` en el cliente local para permitir conexiones WinRM a cualquier IP.
+  5. **Mejoras Agregadas en el Menú 100:**
+     - **Captura Multi-Monitor:** Se sustituyó `PrimaryScreen` por `VirtualScreen` tanto en captura PNG como en ráfagas GIF, capturando todos los monitores si el usuario tiene 2 o más pantallas.
+     - **Opción 4:** Acceso directo a Asistencia Remota interactiva oficial (`msra.exe /offerRA`).
+     - **Opción 5:** Acceso directo para abrir el directorio local de capturas (`C:\spscreen`).
+  6. **Compilación y verificación:**
+     - Análisis sintáctico AST Parser ejecutado con 0 errores en todos los archivos modificados.
+     - Binario compilado y verificado con `build.ps1` -> [ShellSW.bat](ShellSW.bat).
 
 ---
 
 ## 📍 3. ¿En qué punto nos hemos quedado?
-La **Suite de Captura y Monitoreo Remoto (Opción 100)** en [src/subMenu25.ps1](src/subMenu25.ps1) está 100% implementada y compilada en [ShellSW.bat](ShellSW.bat).
+La **Opción 100 (Captura y Monitoreo Remoto)** está completamente modularizada, robustecida contra congelamientos, compatible con Windows 7/8/10/11 y equipos en Workgroup/Dominio. Compilado y listo en [ShellSW.bat](ShellSW.bat).
 
 * **Estado de Git:** Rama `main`, cambios listos en `ShellSW.bat`, `src/helpers.ps1`, `src/subMenu25.ps1` y `ESTADO_PROYECTO.md`.
 * **Próxima acción técnica:** Probar las opciones en `ShellSW.bat` -> opción `25` -> opción `100`:
-  * `1`: Captura instantánea PNG.
-  * `2`: Clip de 15 segundos GIF.
-  * `3`: Visualización en vivo (RDP Shadowing).
+  * `1`: Captura instantánea PNG (Multi-Monitor).
+  * `2`: Clip de 15 segundos GIF animado (con auto-habilitación interna de servicios).
+  * `3`: Visualización en vivo RDP Shadowing (con auto-inicio de TermService y fallback para Win 7).
+  * `4`: Asistencia Remota interactiva (MSRA).
+  * `5`: Abrir carpeta local de capturas `C:\spscreen`.
 * **Publicación:** Cuando desees sincronizar a GitHub, usa la opción oculta `1010` en el menú principal.
 
 ---

@@ -598,17 +598,23 @@ function psHabilitarAdministracionRemota {
         Write-Warning "El equipo $computerTarget no responde a ping. Es posible que este apagado o tenga el firewall activo."
     }
 
-    # 3. ConstrucciÃƒÂ³n del Bloque de Comandos de Firewall y Servicios
+    # 3. ConstrucciÃ³n del Bloque de Comandos de Firewall y Servicios
+    $resolvedUser = $username
+    if ($resolvedUser -and $resolvedUser -notmatch '\\|@') {
+        $resolvedUser = if ($env:USERDOMAIN) { "$($env:USERDOMAIN)\$resolvedUser" } else { ".\$resolvedUser" }
+    }
+
     $cmds = @(
-        'netsh advfirewall firewall set rule group="Windows Management Instrumentation (WMI)" new enable=yes',
-        'netsh advfirewall firewall set rule group="Instrumentacion de administracion de Windows (WMI)" new enable=yes',
-        'netsh advfirewall firewall set rule group="Windows Remote Management" new enable=yes',
-        'netsh advfirewall firewall set rule group="Administracion remota de Windows" new enable=yes',
-        'netsh advfirewall firewall set rule group="File and Printer Sharing" new enable=yes',
-        'netsh advfirewall firewall set rule group="Compartir archivos e impresoras" new enable=yes',
-        'netsh advfirewall firewall set rule group="Remote Administration" new enable=yes',
-        'netsh advfirewall firewall set rule group="Administracion remota" new enable=yes',
-        'reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f'
+        'netsh advfirewall firewall set rule group="Windows Management Instrumentation (WMI)" new enable=yes profile=any',
+        'netsh advfirewall firewall set rule group="Instrumentacion de administracion de Windows (WMI)" new enable=yes profile=any',
+        'netsh advfirewall firewall set rule group="Windows Remote Management" new enable=yes profile=any',
+        'netsh advfirewall firewall set rule group="Administracion remota de Windows" new enable=yes profile=any',
+        'netsh advfirewall firewall set rule group="File and Printer Sharing" new enable=yes profile=any',
+        'netsh advfirewall firewall set rule group="Compartir archivos e impresoras" new enable=yes profile=any',
+        'netsh advfirewall firewall set rule group="Remote Administration" new enable=yes profile=any',
+        'netsh advfirewall firewall set rule group="Administracion remota" new enable=yes profile=any',
+        'reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f',
+        'reg add "HKLM\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" /v AutoShareWks /t REG_DWORD /d 1 /f'
     )
     $cmdFirewall = $cmds -join " & "
     $cmdPS = "powershell.exe -NoProfile -Command `"try { Enable-PSRemoting -SkipNetworkProfileCheck -Force } catch {}; try { Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force } catch {}`""
@@ -616,16 +622,16 @@ function psHabilitarAdministracionRemota {
 
     $exito = $false
 
-    # A. MÃƒÂ©todo 1: PsExec (Puerto SMB 445)
+    # A. MÃ©todo 1: PsExec (Puerto SMB 445)
     $psexecPath = Get-PsExecPath
     $psexecFound = [bool]$psexecPath
 
     if ($psexecFound) {
-        Write-Host "[*] Intentando habilitacion via PsExec (SMB puerto 445)..." -ForegroundColor Yellow
-        if ($username -and $passwordText) {
-            $argsList = "\\$computerTarget -u gmsantacruz\$username -p $passwordText -accepteula -s cmd.exe /c $fullCommand"
+        Write-Host "[*] Intentando habilitacion via PsExec (SMB puerto 445 con timeout 4s)..." -ForegroundColor Yellow
+        if ($resolvedUser -and $passwordText) {
+            $argsList = "\\$computerTarget -u `"$resolvedUser`" -p $passwordText -accepteula -n 4 -s cmd.exe /c $fullCommand"
         } else {
-            $argsList = "\\$computerTarget -accepteula -s cmd.exe /c $fullCommand"
+            $argsList = "\\$computerTarget -accepteula -n 4 -s cmd.exe /c $fullCommand"
         }
         $p = Start-Process -FilePath $psexecPath -ArgumentList $argsList -Wait -NoNewWindow -PassThru -ErrorAction SilentlyContinue
         if ($p -and $p.ExitCode -eq 0) {
@@ -641,27 +647,31 @@ function psHabilitarAdministracionRemota {
         Write-Host "[-] PsExec.exe no detectado en C:\PSTools ni en el PATH. Omitiendo." -ForegroundColor Gray
     }
 
-    # B. MÃƒÂ©todo 2: WinRM / PSRemoting (WS-Man 5985)
+    # B. MÃ©todo 2: WinRM / PSRemoting (WS-Man 5985)
     if (-not $exito) {
         Write-Host "[*] Intentando habilitacion via WinRM (PowerShell Remoting)..." -ForegroundColor Yellow
         try {
             $icParams = @{
                 ComputerName = $computerTarget
                 ScriptBlock = {
-                    netsh advfirewall firewall set rule group="Windows Management Instrumentation (WMI)" new enable=yes
-                    netsh advfirewall firewall set rule group="Instrumentacion de administracion de Windows (WMI)" new enable=yes
-                    netsh advfirewall firewall set rule group="File and Printer Sharing" new enable=yes
-                    netsh advfirewall firewall set rule group="Compartir archivos e impresoras" new enable=yes
-                    netsh advfirewall firewall set rule group="Remote Administration" new enable=yes
-                    netsh advfirewall firewall set rule group="Administracion remota" new enable=yes
+                    netsh advfirewall firewall set rule group="Windows Management Instrumentation (WMI)" new enable=yes profile=any
+                    netsh advfirewall firewall set rule group="Instrumentacion de administracion de Windows (WMI)" new enable=yes profile=any
+                    netsh advfirewall firewall set rule group="File and Printer Sharing" new enable=yes profile=any
+                    netsh advfirewall firewall set rule group="Compartir archivos e impresoras" new enable=yes profile=any
+                    netsh advfirewall firewall set rule group="Remote Administration" new enable=yes profile=any
+                    netsh advfirewall firewall set rule group="Administracion remota" new enable=yes profile=any
                     reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f
                 }
                 ErrorAction = 'Stop'
             }
-            if ($username -and $passwordText) {
+            if ($resolvedUser -and $passwordText) {
                 $secPassword = ConvertTo-SecureString $passwordText -AsPlainText -Force
-                $icParams['Credential'] = New-Object System.Management.Automation.PSCredential("gmsantacruz\$username", $secPassword)
-                $icParams['Authentication'] = 'Kerberos'
+                $icParams['Credential'] = New-Object System.Management.Automation.PSCredential("$resolvedUser", $secPassword)
+                if ($resolvedUser -match '^\.\\') {
+                    $icParams['Authentication'] = 'Negotiate'
+                } else {
+                    $icParams['Authentication'] = 'Kerberos'
+                }
             }
             Invoke-Command @icParams | Out-Null
             Write-Host "[OK] Habilitacion remota ejecutada exitosamente via WinRM!" -ForegroundColor Green
@@ -672,7 +682,7 @@ function psHabilitarAdministracionRemota {
         }
     }
 
-    # C. MÃƒÂ©todo 3: WMI (WMI 135)
+    # C. MÃ©todo 3: WMI (WMI 135)
     if (-not $exito) {
         Write-Host "[*] Intentando habilitacion via WMI (Win32_Process)..." -ForegroundColor Yellow
         try {
@@ -683,9 +693,9 @@ function psHabilitarAdministracionRemota {
                 ArgumentList = $fullCommand
                 ErrorAction = 'Stop'
             }
-            if ($username -and $passwordText) {
+            if ($resolvedUser -and $passwordText) {
                 $secPassword = ConvertTo-SecureString $passwordText -AsPlainText -Force
-                $wmiParams['Credential'] = New-Object System.Management.Automation.PSCredential("gmsantacruz\$username", $secPassword)
+                $wmiParams['Credential'] = New-Object System.Management.Automation.PSCredential("$resolvedUser", $secPassword)
             }
             $result = Invoke-WmiMethod @wmiParams
             if ($result -and $result.ReturnValue -eq 0) {
