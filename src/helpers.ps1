@@ -1984,6 +1984,556 @@ function psConectarPowerShellRemoto {
 }
 
 #**********************************************************************************************************************************
+# MODULO: GESTION Y LISTADO DE PROCESOS REMOTOS (USUARIO VS SISTEMA)
+#**********************************************************************************************************************************
+
+function psListarProcesosRemotos {
+    <#
+    .SYNOPSIS
+        Lista y clasifica los procesos en ejecucion de un equipo remoto o local.
+        Permite visualizar por separado:
+         1. Procesos y aplicaciones del Usuario Final (Sesion interactiva / Apps activas).
+         2. Procesos del Sistema Operativo y Servicios (Session 0 / Background / Drivers).
+         3. Todos los procesos ordenados por consumo de Memoria RAM o CPU.
+         4. Busqueda y filtrado por nombre de proceso o titulo.
+        Compatible con Windows 7, 8, 10 y 11 tanto en Dominio como en Workgroup.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$false)]
+        [hashtable]$Destino = $null,
+        [Parameter(Mandatory=$false)]
+        [pscredential]$Credential = $null
+    )
+
+    cabecera
+    menuOpcion "CONSOLA REMOTA: LISTADO Y CLASIFICACION DE PROCESOS"
+
+    # 1. Resolver destino si no fue suministrado
+    if (-not $Destino) {
+        $rawInput = Read-Host "Ingrese la IP completa (ej: 192.168.176.50), los 2 ultimos octetos (ej: 176.50) o Nombre de Equipo"
+        if ([string]::IsNullOrWhiteSpace($rawInput)) {
+            Write-Host "Operacion cancelada." -ForegroundColor Yellow
+            return
+        }
+        $rawInput = $rawInput.Trim()
+
+        $ipRemota = ""
+        $targetMachine = ""
+
+        if ($rawInput -in @('.', 'localhost', '127.0.0.1', $env:COMPUTERNAME)) {
+            $Destino = @{ IP = "127.0.0.1"; Hostname = $env:COMPUTERNAME; IsLocal = $true }
+        }
+        else {
+            if ($rawInput -match '^(\d{1,3}\.){3}\d{1,3}$') { $ipRemota = $rawInput }
+            elseif ($rawInput -match '^\d{1,3}\.\d{1,3}$') { $ipRemota = "192.168.$rawInput" }
+            elseif ($rawInput -match '^\d{1,3}$') { $ipRemota = "192.168.176.$rawInput" }
+            else { $targetMachine = $rawInput }
+
+            if (-not [string]::IsNullOrWhiteSpace($ipRemota)) {
+                try {
+                    $targetMachine = [System.Net.Dns]::GetHostEntry($ipRemota).HostName.Split('.')[0]
+                } catch { $targetMachine = $ipRemota }
+            }
+            elseif (-not [string]::IsNullOrWhiteSpace($targetMachine)) {
+                try {
+                    $ipRemota = ([System.Net.Dns]::GetHostAddresses($targetMachine) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | Select-Object -First 1).IPAddressToString
+                } catch { $ipRemota = $targetMachine }
+            }
+
+            $isLoc = ($ipRemota -in @('127.0.0.1', '::1') -or $targetMachine.ToUpper() -eq $env:COMPUTERNAME.ToUpper())
+            $Destino = @{ IP = $ipRemota; Hostname = $targetMachine; IsLocal = $isLoc }
+        }
+    }
+
+    $targetIP = if ($Destino.IP) { $Destino.IP } else { $Destino.Hostname }
+    $targetHost = if ($Destino.Hostname) { $Destino.Hostname } else { $targetIP }
+    $isLocal = [bool]$Destino.IsLocal
+
+    $cred = $Credential
+    if (-not $isLocal -and $null -eq $cred) {
+        Write-Host "`n======================================================================" -ForegroundColor Cyan
+        Write-Host "               AUTENTICACION PARA CONSULTA DE PROCESOS                " -ForegroundColor Cyan
+        Write-Host "======================================================================" -ForegroundColor Cyan
+        Write-Host " Equipo objetivo: $targetHost ($targetIP)" -ForegroundColor Yellow
+        Write-Host "  1. Credencial actual de Windows / Dominio (SSO: $env:USERDOMAIN\$env:USERNAME)" -ForegroundColor Green
+        if ($global:ShellCredencialCache) {
+            Write-Host "  2. Usar credenciales en memoria ($($global:ShellCredencialCache.UserName))" -ForegroundColor Cyan
+            Write-Host "  3. Ingresar credenciales alternativas (Usuario / Clave)" -ForegroundColor Yellow
+        } else {
+            Write-Host "  2. Ingresar credenciales alternativas (Usuario / Clave)" -ForegroundColor Yellow
+        }
+        Write-Host "  0. Cancelar operacion" -ForegroundColor Red
+        Write-Host "======================================================================" -ForegroundColor Cyan
+        $opCred = Read-Host "Seleccione una opcion [1]"
+        if ([string]::IsNullOrWhiteSpace($opCred)) { $opCred = "1" }
+
+        if ($opCred -eq "0") {
+            Write-Host "Operacion cancelada." -ForegroundColor Yellow
+            return
+        }
+        elseif ($global:ShellCredencialCache -and $opCred -eq "2") {
+            $cred = $global:ShellCredencialCache
+        }
+        elseif (($global:ShellCredencialCache -and $opCred -eq "3") -or (-not $global:ShellCredencialCache -and $opCred -eq "2")) {
+            $uInput = Read-Host "Ingrese usuario (ej: DOMINIO\usuario o .\admin)"
+            if ([string]::IsNullOrWhiteSpace($uInput)) { return }
+            $pInput = Read-Host "Ingrese contrasenia" -AsSecureString
+            $cred = New-Object System.Management.Automation.PSCredential($uInput, $pInput)
+            $global:ShellCredencialCache = $cred
+        }
+    }
+
+    # Helper interno para consultar y categorizar procesos
+    $obtenerProcesos = {
+        Write-Host "`n[*] Consultando procesos en ${targetHost}..." -ForegroundColor Cyan
+        $lista = @()
+
+        # Modalidad A: Local
+        if ($isLocal) {
+            try {
+                $procs = Get-Process -IncludeUserName -ErrorAction SilentlyContinue
+                if (-not $procs) { $procs = Get-Process }
+                foreach ($p in $procs) {
+                    $u = ""
+                    try { $u = $p.UserName } catch {}
+                    $isSys = ($p.SessionId -eq 0 -or $u -match 'SYSTEM|LOCAL SERVICE|NETWORK SERVICE|DWM|UMFD|fontdrvhost')
+                    $cat = if ($isSys) { "Sistema" } else { "Usuario" }
+                    $lista += [PSCustomObject]@{
+                        Id        = $p.Id
+                        Name      = $p.ProcessName
+                        SessionId = $p.SessionId
+                        RAM_MB    = [math]::Round($p.WorkingSet64 / 1MB, 1)
+                        CPU       = if ($p.CPU) { [math]::Round($p.CPU, 1) } else { 0 }
+                        Title     = if ($p.MainWindowTitle) { $p.MainWindowTitle } else { "" }
+                        Owner     = if ($u) { $u } else { if ($p.SessionId -eq 0) { "NT AUTHORITY\SYSTEM" } else { "Sesion $($p.SessionId)" } }
+                        Category  = $cat
+                    }
+                }
+                return $lista
+            } catch {}
+        }
+
+        # Modalidad B: Remoto via WinRM (PowerShell Remoting) si el puerto 5985 está abierto
+        $port5985 = $false
+        try {
+            $tcp = New-Object System.Net.Sockets.TcpClient
+            $asyncResult = $tcp.BeginConnect($targetIP, 5985, $null, $null)
+            if ($asyncResult.AsyncWaitHandle.WaitOne(800, $false) -and $tcp.Connected) {
+                $port5985 = $true
+                $tcp.EndConnect($asyncResult)
+            }
+            $tcp.Close()
+        } catch {}
+
+        if ($port5985) {
+            try {
+                $sb = {
+                    try {
+                        $pList = Get-Process -IncludeUserName -ErrorAction SilentlyContinue
+                    } catch {
+                        $pList = Get-Process
+                    }
+                    $res = @()
+                    foreach ($p in $pList) {
+                        $u = ""
+                        try { $u = $p.UserName } catch {}
+                        $isSys = ($p.SessionId -eq 0 -or $u -match 'SYSTEM|LOCAL SERVICE|NETWORK SERVICE|DWM|UMFD|fontdrvhost')
+                        $cat = if ($isSys) { "Sistema" } else { "Usuario" }
+                        $res += [PSCustomObject]@{
+                            Id        = $p.Id
+                            Name      = $p.ProcessName
+                            SessionId = $p.SessionId
+                            RAM_MB    = [math]::Round($p.WorkingSet64 / 1MB, 1)
+                            CPU       = if ($p.CPU) { [math]::Round($p.CPU, 1) } else { 0 }
+                            Title     = if ($p.MainWindowTitle) { $p.MainWindowTitle } else { "" }
+                            Owner     = if ($u) { $u } else { if ($p.SessionId -eq 0) { "NT AUTHORITY\SYSTEM" } else { "Sesion $($p.SessionId)" } }
+                            Category  = $cat
+                        }
+                    }
+                    return $res
+                }
+                $icParams = @{ ComputerName = $targetHost; ScriptBlock = $sb; ErrorAction = 'Stop' }
+                if ($cred) { $icParams['Credential'] = $cred }
+                $lista = Invoke-Command @icParams
+                if ($lista -and $lista.Count -gt 0) {
+                    Write-Host "[+] $($lista.Count) procesos recuperados via WinRM." -ForegroundColor Green
+                    return $lista
+                }
+            } catch {
+                Write-Host "[-] WinRM aviso: $($_.Exception.Message). Intentando via WMI..." -ForegroundColor Yellow
+            }
+        }
+
+        # Modalidad C: Fallback WMI Win32_Process (Compatible Windows 7 a 11, Workgroup y Dominio)
+        try {
+            $wmiParams = @{
+                Class        = 'Win32_Process'
+                ComputerName = $targetIP
+                ErrorAction  = 'Stop'
+            }
+            if ($cred) { $wmiParams['Credential'] = $cred }
+            $wmiProcs = Get-WmiObject @wmiParams
+            
+            foreach ($wp in $wmiProcs) {
+                $sessId = if ($wp.SessionId -ne $null) { [int]$wp.SessionId } else { 0 }
+                $owner = ""
+                $cat = "Sistema"
+                if ($sessId -gt 0) {
+                    try {
+                        $ownerObj = $wp.GetOwner()
+                        if ($ownerObj -and $ownerObj.User) {
+                            $domain = if ($ownerObj.Domain) { "$($ownerObj.Domain)\" } else { "" }
+                            $owner = "$domain$($ownerObj.User)"
+                            if ($ownerObj.User -notmatch 'SYSTEM|LOCAL SERVICE|NETWORK SERVICE|DWM|UMFD|fontdrvhost') {
+                                $cat = "Usuario"
+                            }
+                        } else {
+                            $cat = "Usuario"
+                            $owner = "Sesion $sessId"
+                        }
+                    } catch {
+                        $cat = "Usuario"
+                        $owner = "Sesion $sessId"
+                    }
+                } else {
+                    $owner = "NT AUTHORITY\SYSTEM"
+                }
+
+                $ramMB = if ($wp.WorkingSetSize) { [math]::Round([int64]$wp.WorkingSetSize / 1MB, 1) } else { 0 }
+                $lista += [PSCustomObject]@{
+                    Id        = $wp.ProcessId
+                    Name      = $wp.Name
+                    SessionId = $sessId
+                    RAM_MB    = $ramMB
+                    CPU       = 0
+                    Title     = ""
+                    Owner     = $owner
+                    Category  = $cat
+                }
+            }
+            Write-Host "[+] $($lista.Count) procesos recuperados via WMI." -ForegroundColor Green
+            return $lista
+        } catch {
+            Write-Host "[-] Error al consultar procesos via WMI: $($_.Exception.Message)" -ForegroundColor Red
+            return $null
+        }
+    }
+
+    $procs = & $obtenerProcesos
+    if (-not $procs -or $procs.Count -eq 0) {
+        Write-Host "[-] No se pudieron obtener procesos de $targetHost." -ForegroundColor Red
+        return
+    }
+
+    # Bucle del Menu de Visualizacion
+    $salirVista = $false
+    do {
+        cabecera
+        Write-Host "========================================================================================" -ForegroundColor Cyan
+        Write-Host " PC: $targetHost ($targetIP) | TOTAL PROCESOS: $($procs.Count)" -ForegroundColor Yellow
+        $totRAM = ($procs | Measure-Object -Property RAM_MB -Sum).Sum
+        $totUserProcs = ($procs | Where-Object { $_.Category -eq "Usuario" }).Count
+        $totSysProcs = ($procs | Where-Object { $_.Category -eq "Sistema" }).Count
+        Write-Host " PROCESOS DE USUARIO: $totUserProcs | PROCESOS DE SISTEMA: $totSysProcs | RAM EN PROCESOS: $([math]::Round($totRAM, 1)) MB" -ForegroundColor Green
+        Write-Host "========================================================================================" -ForegroundColor Cyan
+        Write-Host "  1. Ver Procesos y Aplicaciones del USUARIO FINAL (Sesion Interactiva / Apps)" -ForegroundColor Green
+        Write-Host "  2. Ver Procesos del SISTEMA OPERATIVO y Servicios (Session 0 / Background)" -ForegroundColor Cyan
+        Write-Host "  3. Ver TODOS los Procesos (Ordenados por Consumo de Memoria RAM)" -ForegroundColor Yellow
+        Write-Host "  4. Ver TODOS los Procesos (Ordenados por Consumo de CPU)" -ForegroundColor Yellow
+        Write-Host "  5. Buscar / Filtrar Procesos por Nombre o Titulo (ej: chrome, excel, siaf)" -ForegroundColor Magenta
+        Write-Host "  --------------------------------------------------------------------------------------"
+        Write-Host "  K. Finalizar / Matar Proceso por PID" -ForegroundColor Red
+        Write-Host "  R. Refrescar lista de procesos (Nueva consulta a la PC)" -ForegroundColor White
+        Write-Host "  0. Volver al menu anterior" -ForegroundColor Gray
+        Write-Host "========================================================================================" -ForegroundColor Cyan
+
+        $opFiltro = Read-Host "Seleccione opcion [1]"
+        if ([string]::IsNullOrWhiteSpace($opFiltro)) { $opFiltro = "1" }
+
+        $mostrarTabla = {
+            param($items, $subtitulo)
+            cabecera
+            Write-Host "========================================================================================" -ForegroundColor Cyan
+            Write-Host " PC: $targetHost ($targetIP) | $subtitulo" -ForegroundColor Yellow
+            Write-Host "========================================================================================" -ForegroundColor Cyan
+            Write-Host ("{0,-7} {1,-26} {2,-24} {3,10}  {4}" -f "PID", "PROCESO", "USUARIO / SESION", "RAM (MB)", "TITULO DE VENTANA / ESTADO") -ForegroundColor Cyan
+            Write-Host ("{0,-7} {1,-26} {2,-24} {3,10}  {4}" -f "-------", "--------------------------", "------------------------", "----------", "------------------------------") -ForegroundColor Gray
+
+            foreach ($p in $items) {
+                $color = if ($p.Category -eq "Usuario") { "Green" } else { "Gray" }
+                $titleDisplay = if ($p.Title) { $p.Title } else { "-" }
+                if ($titleDisplay.Length -gt 35) { $titleDisplay = $titleDisplay.Substring(0, 32) + "..." }
+                $ownerDisplay = if ($p.Owner) { $p.Owner } else { "Sesion $($p.SessionId)" }
+                if ($ownerDisplay.Length -gt 24) { $ownerDisplay = $ownerDisplay.Substring(0, 21) + "..." }
+                
+                Write-Host ("{0,-7} {1,-26} {2,-24} {3,10}  {4}" -f $p.Id, $p.Name, $ownerDisplay, "$($p.RAM_MB) MB", $titleDisplay) -ForegroundColor $color
+            }
+            $sumRAM = ($items | Measure-Object -Property RAM_MB -Sum).Sum
+            Write-Host "----------------------------------------------------------------------------------------" -ForegroundColor Gray
+            Write-Host ("TOTAL: {0} procesos listados | CONSUMO TOTAL: {1} MB" -f $items.Count, [math]::Round($sumRAM, 1)) -ForegroundColor Green
+            Write-Host "========================================================================================" -ForegroundColor Cyan
+        }
+
+        switch ($opFiltro.ToUpper()) {
+            "1" {
+                $userItems = $procs | Where-Object { $_.Category -eq "Usuario" } | Sort-Object RAM_MB -Descending
+                & $mostrarTabla $userItems "PROCESOS Y APLICACIONES DEL USUARIO FINAL (SESION ACTIVA)"
+                Write-Host "`nOpciones: [K] Matar proceso por PID | [ENTER] Volver al selector" -ForegroundColor Yellow
+                $acc = Read-Host "Accion"
+                if ($acc.ToUpper() -eq "K") {
+                    psFinalizarProcesoRemoto -Destino $Destino -Credential $cred
+                    $procs = & $obtenerProcesos
+                }
+            }
+            "2" {
+                $sysItems = $procs | Where-Object { $_.Category -eq "Sistema" } | Sort-Object RAM_MB -Descending
+                & $mostrarTabla $sysItems "PROCESOS DEL SISTEMA OPERATIVO Y SERVICIOS (SESSION 0 / BACKGROUND)"
+                Write-Host "`nOpciones: [K] Matar proceso por PID | [ENTER] Volver al selector" -ForegroundColor Yellow
+                $acc = Read-Host "Accion"
+                if ($acc.ToUpper() -eq "K") {
+                    psFinalizarProcesoRemoto -Destino $Destino -Credential $cred
+                    $procs = & $obtenerProcesos
+                }
+            }
+            "3" {
+                $allItemsRAM = $procs | Sort-Object RAM_MB -Descending
+                & $mostrarTabla $allItemsRAM "TODOS LOS PROCESOS ORDENADOS POR MAYOR CONSUMO DE RAM"
+                Write-Host "`nOpciones: [K] Matar proceso por PID | [ENTER] Volver al selector" -ForegroundColor Yellow
+                $acc = Read-Host "Accion"
+                if ($acc.ToUpper() -eq "K") {
+                    psFinalizarProcesoRemoto -Destino $Destino -Credential $cred
+                    $procs = & $obtenerProcesos
+                }
+            }
+            "4" {
+                $allItemsCPU = $procs | Sort-Object CPU -Descending
+                & $mostrarTabla $allItemsCPU "TODOS LOS PROCESOS ORDENADOS POR TIEMPO/USO DE CPU"
+                Write-Host "`nOpciones: [K] Matar proceso por PID | [ENTER] Volver al selector" -ForegroundColor Yellow
+                $acc = Read-Host "Accion"
+                if ($acc.ToUpper() -eq "K") {
+                    psFinalizarProcesoRemoto -Destino $Destino -Credential $cred
+                    $procs = & $obtenerProcesos
+                }
+            }
+            "5" {
+                $buscar = Read-Host "Ingrese texto o nombre a buscar (ej: chrome, excel, siaf)"
+                if (-not [string]::IsNullOrWhiteSpace($buscar)) {
+                    $matchItems = $procs | Where-Object { $_.Name -like "*$buscar*" -or $_.Title -like "*$buscar*" -or $_.Owner -like "*$buscar*" } | Sort-Object RAM_MB -Descending
+                    if ($matchItems.Count -eq 0) {
+                        Write-Host "[-] No se encontraron procesos que coincidan con '$buscar'." -ForegroundColor Yellow
+                        Start-Sleep -Seconds 2
+                    } else {
+                        & $mostrarTabla $matchItems "PROCESOS QUE COINCIDEN CON '$buscar'"
+                        Write-Host "`nOpciones: [K] Matar proceso por PID | [ENTER] Volver al selector" -ForegroundColor Yellow
+                        $acc = Read-Host "Accion"
+                        if ($acc.ToUpper() -eq "K") {
+                            psFinalizarProcesoRemoto -Destino $Destino -Credential $cred
+                            $procs = & $obtenerProcesos
+                        }
+                    }
+                }
+            }
+            "K" {
+                psFinalizarProcesoRemoto -Destino $Destino -Credential $cred
+                $procs = & $obtenerProcesos
+            }
+            "R" {
+                $procs = & $obtenerProcesos
+            }
+            "0" {
+                $salirVista = $true
+            }
+        }
+    } while (-not $salirVista)
+}
+
+function psFinalizarProcesoRemoto {
+    <#
+    .SYNOPSIS
+        Permite terminar / forzar el cierre de un proceso en una PC remota por PID o por Nombre.
+        Compatible con Windows 7, 8, 10 y 11.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$false)]
+        [hashtable]$Destino = $null,
+        [Parameter(Mandatory=$false)]
+        [pscredential]$Credential = $null,
+        [Parameter(Mandatory=$false)]
+        [string]$TargetIdentifier = $null
+    )
+
+    cabecera
+    menuOpcion "CONSOLA REMOTA: FINALIZAR / MATAR PROCESO REMOTO"
+
+    # 1. Resolver destino si no fue suministrado
+    if (-not $Destino) {
+        $rawInput = Read-Host "Ingrese la IP completa (ej: 192.168.176.50), los 2 ultimos octetos (ej: 176.50) o Nombre de Equipo"
+        if ([string]::IsNullOrWhiteSpace($rawInput)) {
+            Write-Host "Operacion cancelada." -ForegroundColor Yellow
+            return
+        }
+        $rawInput = $rawInput.Trim()
+
+        $ipRemota = ""
+        $targetMachine = ""
+
+        if ($rawInput -in @('.', 'localhost', '127.0.0.1', $env:COMPUTERNAME)) {
+            $Destino = @{ IP = "127.0.0.1"; Hostname = $env:COMPUTERNAME; IsLocal = $true }
+        }
+        else {
+            if ($rawInput -match '^(\d{1,3}\.){3}\d{1,3}$') { $ipRemota = $rawInput }
+            elseif ($rawInput -match '^\d{1,3}\.\d{1,3}$') { $ipRemota = "192.168.$rawInput" }
+            elseif ($rawInput -match '^\d{1,3}$') { $ipRemota = "192.168.176.$rawInput" }
+            else { $targetMachine = $rawInput }
+
+            if (-not [string]::IsNullOrWhiteSpace($ipRemota)) {
+                try {
+                    $targetMachine = [System.Net.Dns]::GetHostEntry($ipRemota).HostName.Split('.')[0]
+                } catch { $targetMachine = $ipRemota }
+            }
+            elseif (-not [string]::IsNullOrWhiteSpace($targetMachine)) {
+                try {
+                    $ipRemota = ([System.Net.Dns]::GetHostAddresses($targetMachine) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | Select-Object -First 1).IPAddressToString
+                } catch { $ipRemota = $targetMachine }
+            }
+
+            $isLoc = ($ipRemota -in @('127.0.0.1', '::1') -or $targetMachine.ToUpper() -eq $env:COMPUTERNAME.ToUpper())
+            $Destino = @{ IP = $ipRemota; Hostname = $targetMachine; IsLocal = $isLoc }
+        }
+    }
+
+    $targetIP = if ($Destino.IP) { $Destino.IP } else { $Destino.Hostname }
+    $targetHost = if ($Destino.Hostname) { $Destino.Hostname } else { $targetIP }
+    $isLocal = [bool]$Destino.IsLocal
+
+    $cred = $Credential
+    if (-not $isLocal -and $null -eq $cred) {
+        if ($global:ShellCredencialCache) {
+            $cred = $global:ShellCredencialCache
+        }
+    }
+
+    # 2. Solicitar PID o Nombre si no fue provisto
+    if ([string]::IsNullOrWhiteSpace($TargetIdentifier)) {
+        Write-Host "`nEquipo objetivo: $targetHost ($targetIP)" -ForegroundColor Yellow
+        $TargetIdentifier = Read-Host "Ingrese el PID numerico (ej: 4812) o Nombre de proceso a finalizar (ej: excel.exe o chrome)"
+        if ([string]::IsNullOrWhiteSpace($TargetIdentifier)) {
+            Write-Host "Operacion cancelada." -ForegroundColor Yellow
+            return
+        }
+    }
+    $TargetIdentifier = $TargetIdentifier.Trim()
+
+    # 3. Comprobar existencia previa del proceso
+    Write-Host "`n[*] Buscando proceso '$TargetIdentifier' en $targetHost..." -ForegroundColor Cyan
+    $procsFound = @()
+
+    if ($isLocal) {
+        if ($TargetIdentifier -match '^\d+$') {
+            $p = Get-Process -Id ([int]$TargetIdentifier) -ErrorAction SilentlyContinue
+            if ($p) { $procsFound += $p }
+        } else {
+            $baseName = $TargetIdentifier.Replace('.exe', '')
+            $procsFound = @(Get-Process -Name $baseName -ErrorAction SilentlyContinue)
+        }
+    } else {
+        # Remoto WMI
+        try {
+            $filter = if ($TargetIdentifier -match '^\d+$') { "ProcessId = $TargetIdentifier" } else { 
+                $nameWithExe = if ($TargetIdentifier -notmatch '\.exe$') { "$TargetIdentifier.exe" } else { $TargetIdentifier }
+                "Name = '$nameWithExe'"
+            }
+            $wmiParams = @{ Class = 'Win32_Process'; Filter = $filter; ComputerName = $targetIP; ErrorAction = 'Stop' }
+            if ($cred) { $wmiParams['Credential'] = $cred }
+            $procsFound = @(Get-WmiObject @wmiParams)
+        } catch {
+            Write-Host "[-] No se pudo consultar el proceso via WMI: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+
+    if ($procsFound.Count -eq 0) {
+        Write-Host "[-] No se encontro ningun proceso activo con el identificador '$TargetIdentifier' en $targetHost." -ForegroundColor Red
+        Start-Sleep -Seconds 2
+        return
+    }
+
+    Write-Host "`n[!] Proceso(s) detectado(s) para finalizar:" -ForegroundColor Yellow
+    foreach ($pf in $procsFound) {
+        $pId = if ($pf.Id) { $pf.Id } else { $pf.ProcessId }
+        $pName = if ($pf.ProcessName) { $pf.ProcessName } else { $pf.Name }
+        $pWs = if ($pf.WorkingSet64) { [math]::Round($pf.WorkingSet64/1MB,1) } elseif ($pf.WorkingSetSize) { [math]::Round([int64]$pf.WorkingSetSize/1MB,1) } else { 0 }
+        Write-Host "  -> PID: $pId | Nombre: $pName | Memoria: $pWs MB" -ForegroundColor Cyan
+    }
+
+    # 4. Confirmacion de Seguridad
+    Write-Host ""
+    $conf = Read-Host "¿Esta seguro que desea FORZAR el cierre de $($procsFound.Count) proceso(s) en $targetHost? (S/N) [N]"
+    if ($conf.ToUpper() -ne "S") {
+        Write-Host "Operacion cancelada por el usuario." -ForegroundColor Yellow
+        return
+    }
+
+    # 5. Ejecutar la finalizacion
+    Write-Host "`n[*] Forzando terminacion de proceso(s)..." -ForegroundColor Cyan
+    $exitoCount = 0
+
+    if ($isLocal) {
+        foreach ($pf in $procsFound) {
+            try {
+                Stop-Process -Id $pf.Id -Force -ErrorAction Stop
+                Write-Host "  [+] Proceso PID $($pf.Id) ($($pf.ProcessName)) terminado." -ForegroundColor Green
+                $exitoCount++
+            } catch {
+                Write-Host "  [-] Error al terminar PID $($pf.Id): $($_.Exception.Message)" -ForegroundColor Red
+            }
+        }
+    } else {
+        # Remoto WMI o taskkill
+        foreach ($wp in $procsFound) {
+            $pId = $wp.ProcessId
+            $pName = $wp.Name
+            $terminated = $false
+
+            # Intento A: WMI Terminate()
+            try {
+                $res = $wp.Terminate()
+                if ($res -and $res.ReturnValue -eq 0) {
+                    Write-Host "  [+] Proceso PID $pId ($pName) terminado via WMI." -ForegroundColor Green
+                    $terminated = $true
+                    $exitoCount++
+                }
+            } catch {}
+
+            # Intento B: Fallback taskkill
+            if (-not $terminated) {
+                try {
+                    $tkArgs = "/S $targetIP /PID $pId /F"
+                    if ($cred) {
+                        $u = $cred.UserName
+                        $p = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($cred.Password))
+                        $tkArgs = "/S $targetIP /U `"$u`" /P `"$p`" /PID $pId /F"
+                    }
+                    cmd.exe /c "taskkill $tkArgs" 2>&1 | Out-Null
+                    Write-Host "  [+] Proceso PID $pId finalizado via taskkill." -ForegroundColor Green
+                    $exitoCount++
+                } catch {
+                    Write-Host "  [-] No se pudo finalizar PID $pId." -ForegroundColor Red
+                }
+            }
+        }
+    }
+
+    if ($exitoCount -gt 0) {
+        Write-Host "`n[OK] Se finalizaron con exito $exitoCount proceso(s) en $targetHost." -ForegroundColor Green
+    } else {
+        Write-Host "`n[-] No se pudo finalizar el proceso. Verifique permisos administrativos." -ForegroundColor Red
+    }
+    Start-Sleep -Seconds 2
+}
+
+#**********************************************************************************************************************************
 # MODULO: GENERADOR DE GIF ANIMADO NATIVO (.NET / WPF)
 #**********************************************************************************************************************************
 

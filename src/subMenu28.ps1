@@ -21,6 +21,8 @@ function psSubMenu28 {
             Write-Host "  ------------------------------------------------------"
             Write-Host "  7. Consola Remota"
             Write-Host "    7.1 || CONECTAR || PowerShell Remoto (Sesion Directa / Interactiva)" -ForegroundColor Green
+            Write-Host "    7.2 || PROCESOS || Listado de Procesos en PC Remota (Usuario / Sistema)" -ForegroundColor Cyan
+            Write-Host "    7.3 || TERMINAR || Finalizar / Matar Proceso Remoto (por PID o Nombre)" -ForegroundColor Red
             Write-Host "  ------------------------------------------------------"
             Write-Host "  0. V O L V E R   A L   M E N U    P R I N C I P A L"
             Write-Host ""
@@ -423,6 +425,22 @@ function psSubMenu28 {
                     $destino = & $obtenerDestino
                     if ($destino) {
                         psConectarPowerShellRemoto -Destino $destino
+                    }
+                }
+                "7.2" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op28"
+                    $destino = & $obtenerDestino
+                    if ($destino) {
+                        psListarProcesosRemotos -Destino $destino
+                    }
+                }
+                "7.3" {
+                    cabecera
+                    menuOpcion "Se encuentra en el SUB_MENU: $opcion ;;; Opcion: $op28"
+                    $destino = & $obtenerDestino
+                    if ($destino) {
+                        psFinalizarProcesoRemoto -Destino $destino
                     }
                 }
                 "0" {
