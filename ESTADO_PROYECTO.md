@@ -33,6 +33,7 @@
      - Validación previa de existencia del proceso con detalle de memoria consumida.
      - Confirmación de seguridad explícita antes de forzar el cierre.
      - Cierre redundante: Intento 1 vía WinRM/WMI (`.Terminate()`) con fallback a `taskkill /S /F`.
+     - **Corrección de variable reservada:** Se renombró la variable `$pId` a `$procPID` para evitar el bloqueo por la variable global de solo lectura `$PID` de PowerShell.
   3. **Compatibilidad Multi-Versión y Multi-Entorno:**
      - Conexión primaria ultra-rápida vía **WinRM** (`Get-Process -IncludeUserName`), con fallback automático a **WMI `Win32_Process`** (compatible desde Windows 7 hasta Windows 11).
      - Soporte transparente para equipos en Dominio (SSO Kerberos) y en Grupo de Trabajo / Workgroup (`.\admin` NTLM).

@@ -2461,10 +2461,10 @@ function psFinalizarProcesoRemoto {
 
     Write-Host "`n[!] Proceso(s) detectado(s) para finalizar:" -ForegroundColor Yellow
     foreach ($pf in $procsFound) {
-        $pId = if ($pf.Id) { $pf.Id } else { $pf.ProcessId }
+        $procPID = if ($pf.Id) { $pf.Id } else { $pf.ProcessId }
         $pName = if ($pf.ProcessName) { $pf.ProcessName } else { $pf.Name }
         $pWs = if ($pf.WorkingSet64) { [math]::Round($pf.WorkingSet64/1MB,1) } elseif ($pf.WorkingSetSize) { [math]::Round([int64]$pf.WorkingSetSize/1MB,1) } else { 0 }
-        Write-Host "  -> PID: $pId | Nombre: $pName | Memoria: $pWs MB" -ForegroundColor Cyan
+        Write-Host "  -> PID: $procPID | Nombre: $pName | Memoria: $pWs MB" -ForegroundColor Cyan
     }
 
     # 4. Confirmacion de Seguridad
@@ -2492,7 +2492,7 @@ function psFinalizarProcesoRemoto {
     } else {
         # Remoto WMI o taskkill
         foreach ($wp in $procsFound) {
-            $pId = $wp.ProcessId
+            $procPID = $wp.ProcessId
             $pName = $wp.Name
             $terminated = $false
 
@@ -2500,7 +2500,7 @@ function psFinalizarProcesoRemoto {
             try {
                 $res = $wp.Terminate()
                 if ($res -and $res.ReturnValue -eq 0) {
-                    Write-Host "  [+] Proceso PID $pId ($pName) terminado via WMI." -ForegroundColor Green
+                    Write-Host "  [+] Proceso PID $procPID ($pName) terminado via WMI." -ForegroundColor Green
                     $terminated = $true
                     $exitoCount++
                 }
@@ -2509,17 +2509,17 @@ function psFinalizarProcesoRemoto {
             # Intento B: Fallback taskkill
             if (-not $terminated) {
                 try {
-                    $tkArgs = "/S $targetIP /PID $pId /F"
+                    $tkArgs = "/S $targetIP /PID $procPID /F"
                     if ($cred) {
                         $u = $cred.UserName
                         $p = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($cred.Password))
-                        $tkArgs = "/S $targetIP /U `"$u`" /P `"$p`" /PID $pId /F"
+                        $tkArgs = "/S $targetIP /U `"$u`" /P `"$p`" /PID $procPID /F"
                     }
                     cmd.exe /c "taskkill $tkArgs" 2>&1 | Out-Null
-                    Write-Host "  [+] Proceso PID $pId finalizado via taskkill." -ForegroundColor Green
+                    Write-Host "  [+] Proceso PID $procPID finalizado via taskkill." -ForegroundColor Green
                     $exitoCount++
                 } catch {
-                    Write-Host "  [-] No se pudo finalizar PID $pId." -ForegroundColor Red
+                    Write-Host "  [-] No se pudo finalizar PID $procPID." -ForegroundColor Red
                 }
             }
         }
